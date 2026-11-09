@@ -7,8 +7,8 @@ model, and it is never a pin. A value from setup, the tuner or the model that
 equals the default is dropped.
 
 Only a user door may weaken a protected flag (see protect.py): setup and the
-tuner leave it, a command the model runs is refused and told to ask the user,
-and hubctl in a terminal is refused and pointed to /hub in Claude Code.
+tuner leave it, and a command the model runs is refused and told to ask the
+user, unless the user asked for that change in words (protect.WORDS_DOOR).
 """
 import copy
 import json
@@ -24,11 +24,10 @@ class ChangeError(ValueError):
 # set_flag's expected value when any value may be overwritten.
 ANY = object()
 
-PINNED_BY_USER = ("The user set {flag} by hand, so only the user can change it, with /hub in Claude Code. "
-                  "A command the model runs can not.")
-CHANGED_WHILE_RUNNING = ("Nothing changed, because {flag} changed while hubctl ran and this change would now "
+PINNED_BY_USER = ("The user set {flag} by hand, so it changes only when the user asks for it in their own words.")
+CHANGED_WHILE_RUNNING = ("Nothing changed, because {flag} changed while hub ran and this change would now "
                          "weaken it. Run it again to check against the new value.")
-USER_ONLY_VERB = "Only the user can {verb}, with /hub in Claude Code. A command the model runs can not."
+USER_ONLY_VERB = "Only the user can {verb}, with /hub where Claude Code loads plugin mods. A command the model runs can not."
 
 
 def refuse_in_tool_call(verb):
@@ -238,6 +237,9 @@ def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, r
     place = repo or cwd
     # The door is found at most once, and only when the change needs it, since finding it reads stdin.
     found = {}
+    if by == "model" and protect.take_words_ticket(flag_id, value, scope):
+        # The user asked for this change in the newest message they typed, and self-protection checked it.
+        by, door, found["door"] = "user", protect.WORDS_DOOR, protect.WORDS_DOOR
 
     def user_door():
         if "door" not in found:
@@ -274,7 +276,7 @@ def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, r
         old = stored["value"] if stored is not None else default
         if expected is not ANY and old != expected:
             raise ChangeError(f"{undoes or flag_id} can not be undone, because {flag_id} changed since. It is "
-                              f"{json.dumps(old, ensure_ascii=False)} now. Change it with hubctl set.")
+                              f"{json.dumps(old, ensure_ascii=False)} now. Set it again by name.")
         if by != "user" and value == default:
             settings.drop(data, flag_id)
         else:

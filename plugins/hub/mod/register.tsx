@@ -1,9 +1,9 @@
 // hub's mod for Claude Code: the band above the prompt, the /hub command, the tuner's side call and,
-// in the coordinator chat, the permission relay's dialogs. All of them run hubctl as a process, so
-// every door shares one Python library: the band draws `hubctl screen --json`, and each button,
-// each /hub call and each relay dialog is a hubctl call.
+// in the coordinator chat, the permission relay's dialogs. All of them run hub's step as a process,
+// so every door shares one Python library: the band draws `screen --json`, and each button, each
+// /hub call and each relay dialog is a call to the step.
 import { atom, read, update } from 'claude-code'
-import type { CatchHandler, CommandRunInput, EngineInterface, Hook, PromptOrigin, Register, Timer } from 'claude-code'
+import type { CommandRunInput, EngineInterface, Hook, PromptOrigin, Register, Timer } from 'claude-code'
 
 import type {
   HubBand,
@@ -25,13 +25,8 @@ const relay = atom({ plugin: 'hub', key: 'relay' } as const, { hub: false, waiti
 const tried = atom({ plugin: 'hub', key: 'tried' } as const, '')
 
 const COMMAND = 'hub'
-// Claude Code names the hubctl skill's command hub:hubctl, whether the user types /hubctl or
-// /hub:hubctl. The skill may run hubctl without a permission question, so this command gets the
-// same origin check as /hub.
-const SKILL = 'hub:hubctl'
-const SKILL_TYPED = 'hubctl'
 // The name the door takes when Claude Code gives /hub to something else, such as the
-// user's own skill named hub. The band and hubctl doctor both name the clash.
+// user's own skill named hub. The band and the doctor both name the clash.
 const FALLBACK = 'hub-flags'
 const SPEC = {
   description: "Show hub's parts and flags, or change one, without a model turn",
@@ -47,7 +42,7 @@ const READ_VERBS = new Set(['show', 'screen', 'doctor', 'offers', 'board', '-h',
 // such as a peer chat, a schedule or another plugin, can read a switch but not change it.
 const USER_ORIGINS = new Set<PromptOrigin['kind']>(['composer', 'bridge'])
 
-// A button either makes a change and redraws the band, or prints hubctl's answer in the
+// A button either makes a change and redraws the band, or prints the step's answer in the
 // transcript, which the model does not read.
 type ShownButton = { key: string; label: string; hotkey: string; args: string[]; prints?: boolean }
 
@@ -61,12 +56,12 @@ type Shown = {
 }
 
 // A change may take a while to apply, but reading the screen should be quick. The band keeps
-// its last state until a read ends. So a stuck hubctl never holds up a session start or a turn.
+// its last state until a read ends. So a stuck step never holds up a session start or a turn.
 const CHANGE_TIMEOUT = 30000
 const SCREEN_TIMEOUT = 5000
 
-async function hubctl($: EngineInterface, args: readonly string[], stdin?: string, timeoutMs = CHANGE_TIMEOUT) {
-  return $.process.run(['python3', '-I', `${$.plugin.root}/bin/hubctl`, ...args], { timeoutMs, stdin })
+async function runStep($: EngineInterface, args: readonly string[], stdin?: string, timeoutMs = CHANGE_TIMEOUT) {
+  return $.process.run(['python3', '-I', `${$.plugin.root}/lib/hub_switch.py`, ...args], { timeoutMs, stdin })
 }
 
 function hex(bytes: Uint8Array) {
@@ -75,7 +70,7 @@ function hex(bytes: Uint8Array) {
 
 // A change the user typed or clicked comes through the mod, the one door that may lower a
 // protected flag. The mod proves it with a single-use ticket: 32 random bytes, sent as the first
-// line of hubctl's stdin, and a file named by their sha256 in hub's doors folder. hubctl removes
+// line of the step's stdin, and a file named by their sha256 in hub's doors folder. The step removes
 // the file when it takes the ticket, and takes none older than a minute. With no doors folder
 // known yet, the change goes without a ticket, so it can not lower a protected flag.
 async function ticket($: EngineInterface): Promise<string | undefined> {
@@ -94,7 +89,7 @@ async function ticket($: EngineInterface): Promise<string | undefined> {
 }
 
 async function change($: EngineInterface, args: readonly string[]) {
-  return hubctl($, args, await ticket($))
+  return runStep($, args, await ticket($))
 }
 
 // Claude Code's refusal reads '"/hub" refused: it is the user's /hub'; the band shows the reason.
@@ -117,14 +112,14 @@ async function registerCommand($: EngineInterface): Promise<HubCommand> {
   return { used: null, refused }
 }
 
-// hubctl keeps the clash for hubctl doctor. A session that gets /hub again clears it.
-async function tellHubctl($: EngineInterface, got: HubCommand, screen: HubScreen | null) {
+// The step keeps the clash for the doctor. A session that gets /hub again clears it.
+async function tellStep($: EngineInterface, got: HubCommand, screen: HubScreen | null) {
   const clashed = Object.keys(got.refused).length > 0
   if (!clashed && (screen === null || screen.command_clash === null)) {
     return
   }
   try {
-    await hubctl($, ['mod-command', '--json'], JSON.stringify(got))
+    await runStep($, ['mod-command', '--json'], JSON.stringify(got))
   } catch {
     // The band already says what clashed; the doctor line waits for the next start.
   }
@@ -138,7 +133,7 @@ async function readScreen($: EngineInterface) {
   let next: HubBand
   try {
     // --band notes the line the band shows, so no start text repeats it. It also hides a line a chat told.
-    const done = await hubctl($, ['screen', '--json', '--band'], undefined, SCREEN_TIMEOUT)
+    const done = await runStep($, ['screen', '--json', '--band'], undefined, SCREEN_TIMEOUT)
     next =
       done.exitCode === 0
         ? { screen: JSON.parse(done.stdout) as HubScreen, failure: null }
@@ -161,7 +156,7 @@ async function readScreen($: EngineInterface) {
 }
 
 // The tuner's model call, made here beside the chat so the chat's context stays clean. The
-// model only picks among the candidates the rules found, and `hubctl tuner decide` makes only
+// model only picks among the candidates the rules found, and `tuner decide` makes only
 // those changes. When the call fails or the answer is no use, the list goes back to the chat.
 const MODEL_TIMEOUT = 20000
 const MODEL_TOKENS = 300
@@ -175,16 +170,16 @@ async function sideCall($: EngineInterface, since: string) {
   }
   if (!decided) {
     try {
-      await hubctl($, ['tuner', 'give-back', '--since', since])
+      await runStep($, ['tuner', 'give-back', '--since', since])
     } catch {
-      // hubctl did not run. The chat gets the list once the mod has gone two weeks without asking.
+      // The step did not run. The chat gets the list once the mod has gone two weeks without asking.
     }
   }
 }
 
 // Returns true when nothing is left to decide, because the pick landed or no candidate waits.
 async function decide($: EngineInterface) {
-  const asked = await hubctl($, ['tuner', 'ask'])
+  const asked = await runStep($, ['tuner', 'ask'])
   if (asked.exitCode !== 0) {
     return false
   }
@@ -204,7 +199,7 @@ async function decide($: EngineInterface) {
   if (pick === null) {
     return false
   }
-  const done = await hubctl($, ['tuner', 'decide', '--answer', '-'], pick)
+  const done = await runStep($, ['tuner', 'decide', '--answer', '-'], pick)
   if (done.exitCode !== 0) {
     return false
   }
@@ -231,7 +226,7 @@ function firstObject(text: string) {
 
 // In the coordinator chat the band rereads the board every BOARD_TICK while no main turn runs, so
 // the user sees other chats change while this one waits. Other chats reread after each turn.
-// hubctl decides which chat is the coordinator, and a failed read leaves the timer as it was.
+// The step decides which chat is the coordinator, and a failed read leaves the timer as it was.
 const BOARD_TICK = 2000
 let boardTimer: Timer | null = null
 let mainTurn = false
@@ -373,7 +368,7 @@ function waitingText(waiting: HubRelay) {
 function shown(state: HubBand, time: number, got: HubCommand, columns: number, waiting: HubRelay): Shown | null {
   const { screen, failure } = state
   if (failure !== null) {
-    return { label: '1 hub', waiting: '', text: `✗ hubctl did not answer: ${failure}`, buttons: [], zone: null, failed: null }
+    return { label: '1 hub', waiting: '', text: `✗ hub did not answer: ${failure}`, buttons: [], zone: null, failed: null }
   }
   if (screen === null || !screen.band.runs) {
     return null
@@ -397,7 +392,7 @@ function shown(state: HubBand, time: number, got: HubCommand, columns: number, w
 }
 
 async function press($: EngineInterface, button: ShownButton) {
-  const done = button.prints ? await hubctl($, button.args) : await change($, button.args)
+  const done = button.prints ? await runStep($, button.args) : await change($, button.args)
   if (done.exitCode !== 0) {
     $.ui.toast(firstLine(done.stderr || done.stdout))
   } else if (button.prints) {
@@ -420,13 +415,13 @@ function origin(from: PromptOrigin | undefined) {
 
 async function startRead($: EngineInterface, got: HubCommand) {
   await refresh($)
-  await tellHubctl($, got, (await read($, band)).screen)
+  await tellStep($, got, (await read($, band)).screen)
   await askRelay($)
 }
 
-// The permission relay runs in the coordinator chat only. hubctl keeps the prompts that wait in
+// The permission relay runs in the coordinator chat only. The step keeps the prompts that wait in
 // other chats and answers none of them. The mod asks it at a session start, at a main turn end,
-// and every RELAY_TICK while hubctl says this chat is the coordinator. It opens one dialog at a
+// and every RELAY_TICK while the step says this chat is the coordinator. It opens one dialog at a
 // time, only while the chat is idle. The buttons only open that chat's tab or put the prompt off.
 const RELAY_TICK = 2000
 // Each prompt the user dismissed or answered with typed text, passed over until /hub relay.
@@ -436,7 +431,7 @@ let asking = false
 let dialogOpen = false
 let questionsOpen = 0
 
-// Asks hubctl what waits, when the last screen read says the relay runs here.
+// Asks the step what waits, when the last screen read says the relay runs here.
 async function askRelay($: EngineInterface) {
   const screen = (await read($, band)).screen
   if (screen === null || !screen.relay) {
@@ -487,7 +482,7 @@ async function pollRelay($: EngineInterface) {
 async function relayNext($: EngineInterface, session: string): Promise<HubRelayNext> {
   const args = ['relay', 'next', '--session', session, '--json', ...[...skipped].flatMap(id => ['--skip', id])]
   try {
-    const done = await hubctl($, args, undefined, SCREEN_TIMEOUT)
+    const done = await runStep($, args, undefined, SCREEN_TIMEOUT)
     if (done.exitCode !== 0) {
       return { hub: false }
     }
@@ -522,12 +517,12 @@ async function offer($: EngineInterface, session: string, dialog: HubRelayDialog
         skipped.add(dialog.id)
         return
       }
-      const done = await hubctl($, ['relay', 'pick', dialog.id, label, '--session', session])
+      const done = await runStep($, ['relay', 'pick', dialog.id, label, '--session', session])
       if (done.exitCode !== 0) {
         $.ui.toast(firstLine(done.stderr || done.stdout))
       }
     } catch {
-      // hubctl did not run, so nothing was picked. The next tick shows the prompt again.
+      // The step did not run, so nothing was picked. The next tick shows the prompt again.
     } finally {
       dialogOpen = false
     }
@@ -542,7 +537,7 @@ async function relayAgain($: EngineInterface): Promise<{ text: string }> {
     return { text: 'The permission relay is off. Switch it on with /hub on permission_relay.' }
   }
   skipped.clear()
-  const done = await hubctl($, ['relay', 'again', '--session', await $.session.id()])
+  const done = await runStep($, ['relay', 'again', '--session', await $.session.id()])
   if (done.exitCode !== 0) {
     return { text: firstLine(done.stderr || done.stdout) }
   }
@@ -557,7 +552,7 @@ async function relayAgain($: EngineInterface): Promise<{ text: string }> {
   return { text: `${waits} in other chats. The ones you put off show again.` }
 }
 
-// Runs the words after a command through hubctl and answers with what it printed. A change
+// Runs the words after a command through hub's step and answers with what it printed. A change
 // runs only when the user typed the command or sent it through the bridge.
 async function run($: EngineInterface, e: CommandRunInput, typed: string): Promise<{ text: string }> {
   const args = words(e.args)
@@ -573,10 +568,10 @@ async function run($: EngineInterface, e: CommandRunInput, typed: string): Promi
   }
   let text: string
   try {
-    const done = changing ? await change($, asked) : await hubctl($, asked)
+    const done = changing ? await change($, asked) : await runStep($, asked)
     text = (done.exitCode === 0 ? done.stdout : done.stderr || done.stdout).trimEnd()
   } catch (error) {
-    text = `hubctl did not run: ${error instanceof Error ? error.message : String(error)}`
+    text = `hub did not run: ${error instanceof Error ? error.message : String(error)}`
   }
   if (changing) {
     await refresh($)
@@ -603,20 +598,6 @@ const answer: Hook<'command.run'> = async ($, e, next) => {
   }
   return run($, e, e.command)
 }
-
-// /hubctl from the user runs the skill. From anywhere else the mod answers in its place, so the
-// skill's text and its Bash call never reach the model. A read runs hubctl, and a change is refused.
-const guard: Hook<'command.run'> = async ($, e, next) => {
-  if (fromUser(e.origin)) {
-    return next(e)
-  }
-  return run($, e, SKILL_TYPED)
-}
-
-// Claude Code skips a guard that fails and runs the command anyway. So when the guard fails
-// before the skill starts, this refuses the command.
-const guardFailed: CatchHandler<Hook<'command.run'>> = ($, e, next) =>
-  next.called ? next(e) : { text: 'Nothing ran, because hub could not check where this /hubctl came from.' }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -662,7 +643,6 @@ export const register: Register = on => {
 
   on('command.run', { command: COMMAND }, answer)
   on('command.run', { command: FALLBACK }, answer)
-  on('command.run', { command: SKILL }, guard).catch(guardFailed)
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) {

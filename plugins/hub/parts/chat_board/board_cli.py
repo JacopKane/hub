@@ -3,11 +3,11 @@
 The user reads it with /hub board, the coordinator reads `board --json`, and
 chats write their tasks with `board task`. None of it is a terminal command.
 
-    hubctl board [--all] [--json] [--plain]
-    hubctl board tasks [--json] [--plain]
-    hubctl board show <chat> [--json] [--plain]
-    hubctl board task now|add|done <task> [--session <id>]
-    hubctl board task list [--json] [--session <id>]
+    board [--all] [--json] [--plain]
+    board tasks [--json] [--plain]
+    board show <chat> [--json] [--plain]
+    board task now|add|done <task> [--session <id>]
+    board task list [--json] [--session <id>]
 
 `board task` finds its chat by walking up its parent processes until it
 meets the process of a chat that hub holds a record of. --session names the
@@ -25,11 +25,11 @@ if LIB not in sys.path:
 from hub import board, resolve  # noqa: E402
 
 PART = "chat_board"
-NO_CHAT = ("hubctl board task could not find its chat, because none of its parent processes is a chat hub knows. "
+NO_CHAT = ("board task could not find its chat, because none of its parent processes is a chat hub knows. "
            "Name the chat with --session <id>.")
 BAD_SESSION = ("This session id has no letter, digit, - or _ in it. "
-               "Name the chat with --session <id>, using an id from hubctl board --json.")
-TASKS_OFF = "The task list is off. The user can turn it on with /hub on chat_board.tasks."
+               "Name the chat with --session <id>, using an id from board --json.")
+TASKS_OFF = "The task list is off. The user can turn it on by saying \"turn on chat_board.tasks\"."
 
 
 def runs(flag_id):
@@ -83,7 +83,7 @@ def task_command(args):
         return 0
     text = board.clean(" ".join(args.words))
     if not text:
-        print(f"hubctl board task {args.verb} needs the task, such as hubctl board task {args.verb} \"fix login\".",
+        print(f"board task {args.verb} needs the task, such as board task {args.verb} \"fix login\".",
               file=sys.stderr)
         return 2
     change_tasks(session, args.verb, text)
@@ -101,7 +101,7 @@ def main(argv):
     args = parser.parse_args(argv)
     if args.view == "task":
         if not args.rest or args.rest[0] not in ("now", "add", "done", "list"):
-            print("usage: hubctl board task now|add|done|list [<task>] [--session <id>]", file=sys.stderr)
+            print("usage: board task now|add|done|list [<task>] [--session <id>]", file=sys.stderr)
             return 2
         args.verb, args.words = args.rest[0], args.rest[1:]
         return task_command(args)

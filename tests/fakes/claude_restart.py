@@ -61,6 +61,8 @@ def runs(pid):
 def rows():
     found = []
     for name in sorted(os.listdir(ROWS)) if os.path.isdir(ROWS) else []:
+        if not name.endswith(".json"):  # write_row's <session>.json.tmp would list the chat twice
+            continue
         try:
             with open(os.path.join(ROWS, name)) as handle:
                 row = json.load(handle)

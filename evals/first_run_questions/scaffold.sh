@@ -22,4 +22,4 @@ mkdir -p "$HOME/.cursor" .github/workflows
 git init -q
 git remote add origin https://example.invalid/demo/app.git
 printf 'on: push\n' > .github/workflows/ci.yml
-python3 -I "$here/../../plugins/hub/bin/hubctl" apply
+python3 -I "$here/../../plugins/hub/lib/hub_switch.py" apply

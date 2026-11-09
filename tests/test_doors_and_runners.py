@@ -18,6 +18,7 @@ import contextlib
 import hashlib
 import json
 import os
+import sys
 import secrets
 import shlex
 import shutil
@@ -89,11 +90,11 @@ def test_no_terminal_lowers_a_protected_flag_and_only_a_fresh_mod_ticket_does(ho
     with when("the user runs hubctl off for the gate in their own terminal and types its id"):
         typed = home.hubctl_as_user("off", GATE, typed=GATE, check=False)
     with then("it is refused, the refusal points to /hub in Claude Code, and the gate still blocks"):
-        assert typed.returncode == 1 and "/hub" in typed.stderr, typed.stderr
+        assert typed.returncode == 1 and "in their own words" in typed.stderr, typed.stderr
         assert gate_value(home) == "block"
     with when("hubctl runs with HUB_DOOR=mod, no marker and no terminal"):
         env = {name: value for name, value in home.env.items() if name not in ("AI_AGENT", "CURSOR_AGENT")}
-        claimed = subprocess.run([home.plugin + "/bin/hubctl", "off", GATE], cwd=home.work,
+        claimed = subprocess.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "off", GATE], cwd=home.work,
                                  env={**env, "HUB_DOOR": "mod"}, input="", capture_output=True, text=True,
                                  timeout=60)
     with then("the claim is ignored and nothing changes"):
@@ -106,7 +107,7 @@ def test_no_terminal_lowers_a_protected_flag_and_only_a_fresh_mod_ticket_does(ho
         assert gate_value(home) == "block"
     with when("a tool call hands hubctl a fresh ticket"):
         stolen = home.mod_ticket()
-        in_tool_call = subprocess.run([home.plugin + "/bin/hubctl", "off", GATE], cwd=home.work,
+        in_tool_call = subprocess.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "off", GATE], cwd=home.work,
                                       env={**home.env, **TOOL_CALL}, input=stolen + "\n", capture_output=True,
                                       text=True, timeout=60)
     with then("it is refused, since a tool call never comes through a door"):
@@ -280,7 +281,7 @@ def test_keys_tmux_types_are_read_after_line_editing(home, command):
     with when(f"the model runs {command!r}"):
         result = home.hook("claude_code", "PreToolUse", command)
     with then("the hubctl check refuses it"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
@@ -298,7 +299,7 @@ def test_a_tool_call_that_types_a_hub_command_into_a_prompt_is_refused(home, com
     with when(f"the model runs {command!r}, which would type a /hub command into a Claude Code prompt"):
         result = home.hook("claude_code", "PreToolUse", command)
     with then("the hubctl check refuses it, since only the user types /hub"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [

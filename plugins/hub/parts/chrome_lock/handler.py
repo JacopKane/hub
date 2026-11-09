@@ -3,18 +3,20 @@
 A Chrome tool call from any chat but the lock's owner is refused, and the
 reason names the owner, its job and when it took the lock. A subagent sends
 its main chat's session id, so a chat and its agents count as one owner. A
-chat may not run `hubctl browser-lock clear`, because only the user clears a
+chat may not run the step's `browser-lock clear`, because only the user clears a
 lock. The lock itself is in lock.py. Claude Code only.
 """
 import importlib.util
 import os
 import re
 
+from hub import files
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PART = "chrome_lock"
 CLEAR = re.compile(r"\bbrowser-lock\s+clear\b|\block\.py\b[^;&|\n]*\bclear\b")
 STALE = ("If that chat has ended or crashed, the lock is stale, and the user clears it in a terminal with "
-         "hubctl browser-lock clear.")
+         f"{files.step_command()} browser-lock clear.")
 USER_ONLY = ("Only the user clears the Chrome lock, from a terminal, because a chat can not tell whether the "
              "chat that holds it is still working. Wait for the lock instead, or ask the user to clear it.")
 

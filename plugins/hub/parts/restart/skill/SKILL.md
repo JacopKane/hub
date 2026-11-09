@@ -15,7 +15,7 @@ The script is `<part>/restart.py`, where `<part>` is the folder above this skill
 4. Start the run with `python3 <part>/restart.py run --caller <your session id>`, with the same `--only`, `--skip` and `--upgrade`. It runs on its own and prints where its log and report go. You are restarted last, and a prompt then tells you to read the report.
 5. After you come back, read the report. Tell the user in a few lines which chats are back, which were held and why, and the version change. A chat marked NOT BACK has the command that resumes it by hand.
 
-With `restart.ask_first` off, a chat that is idle with nothing to lose restarts without an answer. With `restart.upgrade` off, `--upgrade` is refused, and `hubctl on restart.upgrade` allows it again.
+With `restart.ask_first` off, a chat that is idle with nothing to lose restarts without an answer. With `restart.upgrade` off, `--upgrade` is refused, until the user turns `restart.upgrade` on again.
 
 ## When you are asked whether you may be restarted
 

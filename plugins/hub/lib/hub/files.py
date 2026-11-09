@@ -12,6 +12,17 @@ import unicodedata
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PARTS_DIR = os.path.join(PLUGIN_ROOT, "parts")
+# hub's internal step, which the switch skill runs. It sits outside bin/, so no PATH holds it.
+STEP = os.path.join(PLUGIN_ROOT, "lib", "hub_switch.py")
+# The settings folder's name, under ~/.config. It sits in its own file, which pre_check.sh reads too.
+CONFIG_NAME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_name")
+with open(CONFIG_NAME_FILE, encoding="utf-8") as _name_file:
+    CONFIG_NAME = _name_file.read().strip()
+# The folder name the settings had before they moved to config_dir(), and the flags renamed with the move.
+OLD_CONFIG_NAME = "hubctl"
+RENAMED_FLAGS = {"self_protection.hubctl": "self_protection.lowering"}
+# Flags that went with the terminal link, which put hubctl on the PATH.
+DROPPED_FLAGS = ("core.terminal_link",)
 
 
 def home():
@@ -28,9 +39,61 @@ def in_tool_call():
     return os.environ.get("AI_AGENT", "").endswith("_agent") or os.environ.get("CURSOR_AGENT") == "1"
 
 
+def config_base():
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.join(home(), ".config")
+
+
 def config_dir():
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home(), ".config")
-    return os.path.join(base, "hubctl")
+    folder = os.path.join(config_base(), CONFIG_NAME)
+    move_old_config(old_config_dir(), folder)
+    return folder
+
+
+def old_config_dir():
+    """The settings folder's old name. self_protection guards it too, since hub moves what it finds there."""
+    return os.path.join(config_base(), OLD_CONFIG_NAME)
+
+
+def move_old_config(old, new):
+    """Move the settings folder from its old name on first use, with every choice in it.
+
+    A renamed flag keeps its value under the new name. When both folders
+    exist, the new one wins and the old one stays as it is.
+    """
+    if os.path.lexists(new) or not os.path.isdir(old) or os.path.islink(old):
+        return
+    try:
+        os.rename(old, new)
+    except OSError:
+        return
+    path = os.path.join(new, "hub.json")
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return  # hub reports a file it can not read when it loads the settings
+    flags = data.get("flags") if isinstance(data, dict) else None
+    if not isinstance(flags, dict) or not any(name in flags for name in (*RENAMED_FLAGS, *DROPPED_FLAGS)):
+        return
+    for name in DROPPED_FLAGS:
+        flags.pop(name, None)
+    for old_name, new_name in RENAMED_FLAGS.items():
+        if old_name in flags:
+            flags.setdefault(new_name, flags.pop(old_name))
+    write_json(path, data)
+
+
+def step_command():
+    """The shell words that run the internal step, for a text the model reads."""
+    import shlex
+    return f"python3 -I {shlex.quote(STEP)}"
+
+
+# A text the model reads writes {{step}} where it runs the step, since its path differs on each machine.
+STEP_PLACEHOLDER = "{{step}}"
+
+
+def fill_step(text):
+    return text.replace(STEP_PLACEHOLDER, step_command())
 
 
 def state_dir():

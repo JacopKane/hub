@@ -12,7 +12,7 @@ CHROME_TOOL = "mcp__claude-in-chrome__navigate"
 
 def lock_command(home, session, *words, check=True):
     env = dict(home.env, CLAUDE_CODE_SESSION_ID=session)
-    return subprocess.run([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "browser-lock", *words],
+    return subprocess.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "browser-lock", *words],
                           cwd=home.work, env=env, capture_output=True, text=True, timeout=60, check=check)
 
 
@@ -31,7 +31,7 @@ def test_only_the_chat_that_holds_the_chrome_lock_drives_chrome(home):
         assert result.refused
         assert SESSION_WEB in result.reason and '"docs check"' in result.reason
         assert "2026-03-02T09:00:00Z" in result.reason
-        assert 'hubctl browser-lock wait "<your job>"' in result.reason
+        assert f'python3 -I {os.path.join(home.plugin, "lib", "hub_switch.py")} browser-lock wait "<your job>"' in result.reason
     with and_("a tool from another server is not touched"):
         assert tool_call(home, "mcp__docs__search", {"query": "x"}, session=SESSION_DOCS).ran
 
@@ -49,7 +49,7 @@ def test_only_the_chat_that_holds_the_chrome_lock_drives_chrome(home):
 
     with when('DOCS runs hubctl browser-lock wait "page check", and WEB releases the lock'):
         env = dict(home.env, CLAUDE_CODE_SESSION_ID=SESSION_DOCS)
-        waiter = subprocess.Popen([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "browser-lock",
+        waiter = subprocess.Popen([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "browser-lock",
                                    "wait", "page check", "30"], cwd=home.work, env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         time.sleep(0.3)

@@ -156,7 +156,16 @@ def body_only(text, flags, where):
     For a file a skill reads, such as references/tells-and-fixes.md. Any
     front matter stays as it is.
     """
-    return sections(text, section_runs(flags, where), where)
+    built, dropped = sections(text, section_runs(flags, where), where)
+    return with_step(built, dropped)
+
+
+def with_step(text, changed):
+    """The text with {{step}} filled in. A file that names the step always needs a built copy."""
+    from . import files
+    if files.STEP_PLACEHOLDER not in text:
+        return text, changed
+    return files.fill_step(text), True
 
 
 def build(text, part, flags, where):
@@ -167,4 +176,5 @@ def build(text, part, flags, where):
     body, dropped = sections(body, section_runs(flags, where), where, offset)
     values = option_values(part, flags)
     changed = dropped or any(shipped.get(key) != value for key, value in values.items())
+    body, changed = with_step(body, changed)
     return join(set_keys(lines, values), body) if lines else body, changed

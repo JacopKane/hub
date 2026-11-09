@@ -67,7 +67,7 @@ def test_hubctl_written_in_an_odd_way_is_still_refused(home, tool, command):
     with when(f"the model runs {command!r}"):
         result = home.hook(tool, "PreToolUse", command)
     with then("the hubctl check refuses it, and the settings did not change"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
         assert home.settings() == before
 
 
@@ -258,7 +258,7 @@ LONG = 100_000
 
 @pytest.mark.parametrize("command, refused", [
     ("echo " + "word " * (LONG // 5) + "> ~/.config/hubctl/hub.json", "settings_files"),
-    ("true " + "&& true " * (LONG // 8) + "&& hubctl off public_text_gate", "hubctl"),
+    ("true " + "&& true " * (LONG // 8) + "&& hubctl off public_text_gate", "lowering"),
     ("echo " + "x" * LONG + " | wc -c", None),
     ("ls " + "./ " * (LONG // 3), None),
 ], ids=["a long write", "a long chain ending in hubctl", "one long word", "many short words"])

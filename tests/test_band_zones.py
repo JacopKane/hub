@@ -28,7 +28,7 @@ def chats(home):
 
 
 def hubctl_args(home, *args):
-    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "bin", "hubctl"), *args]
+    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"), *args]
 
 
 def screen_in(home, chat):

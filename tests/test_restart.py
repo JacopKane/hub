@@ -339,7 +339,7 @@ def test_a_chat_with_anything_to_lose_is_held_untouched(world):
         world.home.hubctl("off", "restart.upgrade")
         refused = world.restart("run", "--upgrade", check=False)
     with then("nothing runs, and the answer says how to allow it"):
-        assert refused.returncode == 1 and "hubctl on restart.upgrade" in refused.stderr
+        assert refused.returncode == 1 and "turn on restart.upgrade" in refused.stderr
         assert not [line for line in world.events() if line["event"] == "upgrade"]
 
 

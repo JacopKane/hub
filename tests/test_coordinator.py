@@ -246,7 +246,7 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
         group = next(child for child in manifest["children"] if child["id"] == "instructions")
         instructions = [f"coordinator.instructions.{child['id']}" for child in group["children"]]
     with then("~/.claude/skills/hub-coordinator links to the shipped skill, named hub-coordinator"):
-        assert os.readlink(link) == shipped
+        assert os.readlink(link) == os.path.join(home.state, "built", "skills", "hub-coordinator")
         with open(os.path.join(shipped, "SKILL.md")) as handle:
             text = handle.read()
         assert text.startswith("---\nname: hub-coordinator\n")
@@ -269,4 +269,4 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
     with when("the user turns it on again"):
         home.hubctl("on", "coordinator.instructions.relay")
     with then("the link points at the shipped skill again"):
-        assert os.readlink(link) == shipped
+        assert os.readlink(link) == os.path.join(home.state, "built", "skills", "hub-coordinator")

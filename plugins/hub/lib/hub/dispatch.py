@@ -42,14 +42,14 @@ CALLS = "calls"
 CALL_AGE = 24 * 3600  # stored answers older than this are removed
 GATE = "public_text_gate"
 SELF_PROTECTION = "self_protection"
-# Used only when self_protection itself can not load: a call that names hubctl, a marker or a hub file.
-ROUGH_HUB = re.compile(r"hubctl|AI_AGENT|CURSOR_AGENT|HUB_DOOR|\.hub/hub")
+# Used only when self_protection itself can not load: a call that names the switch step, a marker or a hub file.
+ROUGH_HUB = re.compile(r"hubctl|hub_switch|AI_AGENT|CURSOR_AGENT|HUB_DOOR|\.hub/hub")
 # Used only when the gate's own parser can not load: any git or gh call counts as public.
 ROUGH_PUBLIC = re.compile(r"\b(?:git|gh)\b")
 BROKEN = ("hub could not read its settings or parts, so it stopped this public step. "
           "Fix the error below, then send the command again.")
 BROKEN_SELF = ("hub could not read its settings or parts, so it stopped this call, which touches hub itself. "
-               "Ask the user to fix hub, or to make the change with /hub in Claude Code.")
+               "Ask the user to fix hub.")
 # Each write gate for MCP tools, with the word in its server names and its answer when hub fails before
 # the gate can decide. A call whose server name has that word gets that answer, unless the gate's read
 # list shows it is a read.
@@ -92,7 +92,7 @@ class Flags:
             return ""
         try:
             with open(path, encoding="utf-8") as handle:
-                return handle.read().strip()
+                return files.fill_step(handle.read().strip())
         except OSError:
             return ""
 

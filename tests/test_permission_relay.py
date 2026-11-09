@@ -95,7 +95,7 @@ class Relay:
     # the relay's own verbs, as the coordinator's mod runs them
 
     def verb(self, *words, env=None, check=True):
-        process = subprocess.run([sys.executable, os.path.join(self.home.plugin, "bin", "hubctl"), "relay", *words],
+        process = subprocess.run([sys.executable, os.path.join(self.home.plugin, "lib", "hub_switch.py"), "relay", *words],
                                  cwd=self.home.work, env=dict(self.home.env, **(env or {})), capture_output=True,
                                  text=True, timeout=60)
         if check and process.returncode != 0:
@@ -620,7 +620,7 @@ def test_the_relay_is_off_by_default_and_cursor_gets_nothing(home, relay):
         assert read.ran
     with and_("the verb says the part is off"):
         off = relay.verb("next", "--session", SESSIONS["HUB"], "--json", check=False)
-        assert off.returncode != 0 and "hubctl on permission_relay" in off.stderr
+        assert off.returncode != 0 and "turn on permission_relay" in off.stderr
     with and_("the screen model says the relay does not run, so the mod starts no relay call"):
         assert json.loads(home.hubctl("screen", "--json").stdout)["relay"] is False
     with when("the relay is switched on, Cursor is linked, and the user runs hubctl doctor"):

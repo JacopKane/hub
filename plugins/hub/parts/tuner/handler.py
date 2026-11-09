@@ -1,8 +1,8 @@
 """The tuner part: setup on the first run, then tuning from the signals.
 
-First run: a session starts and ~/.config/hubctl/hub.json is missing. The
+First run: a session starts and hub's settings file, hub.json, is missing. The
 start text then holds the scan of this machine and tells the chat to run hub
-setup before the user's task. `hubctl setup` writes hub.json, so this runs
+setup before the user's task. The step's `setup` writes hub.json, so this runs
 once per machine and covers both tools.
 
 After that, each session start first shows the tuner's waiting one-line
@@ -16,7 +16,6 @@ Elsewhere the chat gets them and the command that decides them. At SubagentStop
 a builder run that made no edit is logged, and a few of them offer researcher.
 """
 import os
-import shlex
 import sys
 
 from hub import files
@@ -29,17 +28,10 @@ HOW_TO_ASK = {"claude_code": "Ask them in one AskUserQuestion dialog.",
               "cursor": "Ask them in one plain message."}
 
 
-def hubctl_command(tool):
-    """How the chat calls hubctl. Claude Code puts the plugin's bin on its Bash PATH, and Cursor does not."""
-    if tool == "claude_code":
-        return "hubctl"
-    return f"python3 -I {shlex.quote(os.path.join(files.PLUGIN_ROOT, 'bin', 'hubctl'))}"
-
-
 def first_run_text(flags, cwd):
     from hub import scan
     found = scan.summary(scan.run(cwd)) if flags.runs("tuner.setup.scan") else "(the scan is off)"
-    return fill(FIRST_RUN, {"hubctl": hubctl_command(flags.tool), "how_to_ask": HOW_TO_ASK[flags.tool],
+    return fill(FIRST_RUN, {"step": files.step_command(), "how_to_ask": HOW_TO_ASK[flags.tool],
                             "scan": found})
 
 
@@ -52,7 +44,7 @@ def fill(path, values):
 
 def tune_text(flags, found):
     from hub import tuner
-    return fill(TUNE, {"hubctl": hubctl_command(flags.tool), "candidates": tuner.candidate_lines(found)})
+    return fill(TUNE, {"step": files.step_command(), "candidates": tuner.candidate_lines(found)})
 
 
 def shows_notices(flags):

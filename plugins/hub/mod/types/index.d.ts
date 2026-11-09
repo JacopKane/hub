@@ -1,4 +1,4 @@
-// The part of hubctl's screen model that the mod reads, as `hubctl screen --json` prints it.
+// The part of hub's screen model that the mod reads, as the step's `screen --json` prints it.
 // plugins/hub/lib/hub/screen.py builds it, and tests/test_doors.py checks the fixture in mod/tests.
 
 export type HubButton = { label: string; args: string[] }
@@ -24,7 +24,7 @@ export type HubBandFlags = {
   keep_hours: number
 }
 
-// What the mod's last session start found, as hubctl keeps it for the doctor.
+// What the mod's last session start found, as the step keeps it for the doctor.
 export type HubCommandClash = { used: string | null; refused: Record<string, string>; folder: string; time: string }
 
 // The band's chats zone: the other chats in full and folded to counters, with their width in
@@ -45,7 +45,7 @@ export type HubScreen = {
   board: { chats: HubChatsZone | null; failed: number; coordinator: boolean }
   hidden: number
   command_clash: HubCommandClash | null
-  // Whether permission_relay runs for this tool, so the mod asks `hubctl relay next`.
+  // Whether permission_relay runs for this tool, so the mod asks `relay next`.
   relay: boolean
   // How many tuner candidates wait, since when, and whether the mod's side call decides them.
   tuner: { pending: number; since: string; side_call: boolean }
@@ -53,7 +53,7 @@ export type HubScreen = {
   doors: string
 }
 
-// What `hubctl tuner ask` prints: the request the mod sends to the model, and the candidates in it.
+// What `tuner ask` prints: the request the mod sends to the model, and the candidates in it.
 export type HubTunerRequest = {
   model: string
   system: string
@@ -67,7 +67,7 @@ export type HubBand = { screen: HubScreen | null; failure: string | null }
 // and each name it refused, with the reason.
 export type HubCommand = { used: string | null; refused: Record<string, string> }
 
-// One prompt that waits in another chat, as `hubctl relay next --json` prints it.
+// One prompt that waits in another chat, as `relay next --json` prints it.
 export type HubRelayDialog = { id: string; text: string; buttons: string[] }
 
 export type HubRelayNext = { hub: false } | { hub: true; waiting: number; dialog: HubRelayDialog | null }

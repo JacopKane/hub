@@ -5,7 +5,7 @@
     status(name)        whether it is recorded, its files exist and it is loaded
     last_run(name)      what the job runner says about the last run, or None
     sync(wanted)        install the wanted jobs and remove every other recorded one
-    remove_all()        remove every recorded job, as hubctl uninstall does
+    remove_all()        remove every recorded job, as uninstalling hub does
 
 A job runs a command every_seconds, at_login, or keeps it running
 (keep_alive). Its start command runs once, right after its first install.
@@ -102,7 +102,7 @@ def write_shim(plugin_root=None):
             "# Written by hub. Jobs run this, so a plugin update only moves the folder below.\n"
             f"root={shlex.quote(root)}\n"
             'if [ "$1" = "--script" ]; then script=$2; shift 2; exec python3 -I "$root/$script" "$@"; fi\n'
-            'exec python3 -I "$root/bin/hubctl" "$@"\n')
+            'exec python3 -I "$root/lib/hub_switch.py" "$@"\n')
     path = shim_path()
     if files.read_text(path) == text:
         return False
@@ -390,7 +390,7 @@ def status(name, record=None):
     else:
         loaded, detail = False, NONE_NOTE
     if not present:
-        detail += "; a file of this job is missing, and hubctl apply writes it again"
+        detail += "; a file of this job is missing, and saying \"apply hub's settings\" writes it again"
     return {"name": name, "recorded": True, "loaded": loaded, "files_present": present, "backend": backend,
             "detail": detail}
 

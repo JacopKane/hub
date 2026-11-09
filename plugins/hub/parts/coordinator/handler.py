@@ -91,6 +91,10 @@ def bash_bookkeeping(command, cwd, flags):
         return False
     if words and os.path.basename(words[0]) == "hubctl":
         return True
+    if len(words) > 1 and re.fullmatch(r"python[\d.]*", os.path.basename(words[0])):
+        script = next((word for word in words[1:] if not word.startswith("-")), "")
+        if os.path.basename(script) == "hub_switch.py":
+            return True
     return any(bookkeeping(word, cwd, flags) for word in words if os.sep in word)
 
 

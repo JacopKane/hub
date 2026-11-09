@@ -1,10 +1,10 @@
-"""One Chrome lock for every chat of this user, and the `hubctl browser-lock` command.
+"""One Chrome lock for every chat of this user, and the step's `browser-lock` verb.
 
-    hubctl browser-lock take "<job>"            take it now, or exit 1 and say who holds it
-    hubctl browser-lock wait "<job>" [seconds]  keep trying (default 540, at most 570), exit 1 on time out
-    hubctl browser-lock release                 give it back, only from the chat that holds it
-    hubctl browser-lock status                  exit 0 when free, 1 when held
-    hubctl browser-lock clear                   for the user only: remove a stale lock, whoever holds it
+    browser-lock take "<job>"            take it now, or exit 1 and say who holds it
+    browser-lock wait "<job>" [seconds]  keep trying (default 540, at most 570), exit 1 on time out
+    browser-lock release                 give it back, only from the chat that holds it
+    browser-lock status                  exit 0 when free, 1 when held
+    browser-lock clear                   for the user only: remove a stale lock, whoever holds it
 
 The owner is the chat's session id, from CLAUDE_CODE_SESSION_ID, or --session
 <id>. A subagent's shell gets its main chat's id there. The lock is a folder in
@@ -62,7 +62,7 @@ def describe(record, me=""):
     if not record:
         seconds = age()
         return (f"held with no owner file for {int(seconds or 0)} s. If that is more than a few seconds, the "
-                "lock is stale, and the user clears it in a terminal with hubctl browser-lock clear")
+                f"lock is stale, and the user clears it in a terminal with {files.step_command()} browser-lock clear")
     who = "this chat" if record["session"] == me else f"another chat ({record['session']})"
     return f'held by {who}, job "{record["job"]}", since {record["start"]}'
 
@@ -103,7 +103,7 @@ def poll():
 
 
 def took(job):
-    print(f'took the Chrome lock for "{job}". Release it with hubctl browser-lock release')
+    print(f'took the Chrome lock for "{job}". Release it with {files.step_command()} browser-lock release')
 
 
 def main(words):

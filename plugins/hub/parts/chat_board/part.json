@@ -37,7 +37,7 @@
       "does": "What the board tells each chat.",
       "children": [
         {"id": "keep_task_line", "kind": "instruction", "default": "on", "text": "text/keep_task_line.md",
-         "cost": "start text", "does": "The chat keeps its task line and task list current with hubctl board task."}
+         "cost": "start text", "does": "The chat keeps its task line and task list on the board current."}
       ]
     }
   ]

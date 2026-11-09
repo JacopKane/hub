@@ -888,10 +888,10 @@ def main(argv):
         return answer(options)
     values = flag_values(os.getcwd())
     if values[PART] != "on":
-        print("The restart part is off. Turn it on with: hubctl on restart", file=sys.stderr)
+        print("The restart part is off. Say \"turn on restart\" to turn it on.", file=sys.stderr)
         return 1
     if options.upgrade and values[f"{PART}.upgrade"] != "on":
-        print("Upgrades are off for restarts. Allow them with: hubctl on restart.upgrade", file=sys.stderr)
+        print("Upgrades are off for restarts. Say \"turn on restart.upgrade\" to allow them.", file=sys.stderr)
         return 1
     if options.wait is None:
         options.wait = float(values.get(f"{PART}.wait_minutes") or 10)

@@ -10,8 +10,8 @@ case "$home_folder/" in
   *) echo "scaffold.sh changes hub's settings in HOME, so it runs only with HOME in a temp folder" >&2; exit 1 ;;
 esac
 here="$(cd "$(dirname "$0")" && pwd)"
-python3 "$here/../../plugins/hub/bin/hubctl" on working_rules
-python3 "$here/../../plugins/hub/bin/hubctl" apply
+python3 "$here/../../plugins/hub/lib/hub_switch.py" on working_rules
+python3 "$here/../../plugins/hub/lib/hub_switch.py" apply
 mkdir -p notes src
 cat > src/app.py <<'APP'
 def greet(name):

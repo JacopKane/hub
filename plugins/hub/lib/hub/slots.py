@@ -89,6 +89,8 @@ def render(node, flags):
 
     def value(match):
         name = match.group(1)
+        if name == "step":
+            return files.step_command()
         if name == NEEDS or name.startswith(NEEDS + "."):
             return _needs_value(node, flags, name.partition(".")[2] or None)
         return _shown(flags.get(name, {}).get("value"))

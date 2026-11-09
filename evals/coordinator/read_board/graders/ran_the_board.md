@@ -1,6 +1,6 @@
 ---
 type: tool_used
 tool: Bash
-input_match: 'hubctl\s+board\s+--json'
+input_match: 'hub_switch\.py\s+board\s+--json'
 arm: with-only
 ---

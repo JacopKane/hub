@@ -34,6 +34,8 @@ import pytest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(REPO, "tests", "fixtures")
 PLUGIN = os.path.join(REPO, "plugins", "hub")
+with open(os.path.join(PLUGIN, "lib", "hub", "config_name")) as _name_file:
+    CONFIG_NAME = _name_file.read().strip()  # the settings folder's name, under ~/.config
 DASH = chr(0x2014)  # the em dash, never typed as itself in this repo
 
 CURSOR_EVENTS = {"PreToolUse": "preToolUse", "PostToolUse": "postToolUse", "SessionStart": "sessionStart",
@@ -54,10 +56,11 @@ def real_home():
 
 def watched_folders():
     """hub's real settings and state folders, from the real home and the XDG values pytest started with."""
-    folders = {os.path.join(real_home(), ".config", "hubctl"), os.path.join(real_home(), ".local", "state", "hubctl")}
-    for name in ("XDG_CONFIG_HOME", "XDG_STATE_HOME"):
+    folders = {os.path.join(real_home(), ".config", CONFIG_NAME), os.path.join(real_home(), ".config", "hubctl"),
+               os.path.join(real_home(), ".local", "state", "hubctl")}
+    for name, folder in (("XDG_CONFIG_HOME", CONFIG_NAME), ("XDG_CONFIG_HOME", "hubctl"), ("XDG_STATE_HOME", "hubctl")):
         if os.environ.get(name):
-            folders.add(os.path.join(os.environ[name], "hubctl"))
+            folders.add(os.path.join(os.environ[name], folder))
     return sorted(folders)
 
 
@@ -138,7 +141,7 @@ class Home:
             raise RuntimeError("refusing to run in the real HOME")
         self.root = root
         self.plugin = os.path.join(root, "plugin-copy", "hub")
-        self.config = os.path.join(root, ".config", "hubctl")
+        self.config = os.path.join(root, ".config", CONFIG_NAME)
         self.state = os.path.join(root, ".local", "state", "hubctl")
         self.work = os.path.join(root, "work", "demo")
         replay = os.path.join(root, "replay-bin")
@@ -199,7 +202,7 @@ class Home:
         self.hubctl("apply")
 
     def hubctl(self, *args, cwd=None, check=True):
-        return self.run([sys.executable, os.path.join(self.plugin, "bin", "hubctl"), *args], cwd=cwd, check=check)
+        return self.run([sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args], cwd=cwd, check=check)
 
     def set_by(self, by, flag_id, value):
         """Write a value the way setup or the tuner does, through changes.set_flag with that setter."""
@@ -219,7 +222,7 @@ class Home:
         controller, terminal = pty.openpty()
         try:
             process = subprocess.Popen(
-                [sys.executable, os.path.join(self.plugin, "bin", "hubctl"), *args], cwd=cwd or self.work,
+                [sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args], cwd=cwd or self.work,
                 env=env, stdin=terminal, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             os.close(terminal)
@@ -257,7 +260,7 @@ class Home:
         terminal, and a fresh door ticket on stdin unless `ticket` gives the line to send."""
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
         line = self.mod_ticket() if ticket is None else ticket
-        process = subprocess.run([sys.executable, "-I", os.path.join(self.plugin, "bin", "hubctl"), *args],
+        process = subprocess.run([sys.executable, "-I", os.path.join(self.plugin, "lib", "hub_switch.py"), *args],
                                  cwd=cwd or self.work, env=env, input=line + "\n", capture_output=True, text=True,
                                  timeout=60)
         if check and process.returncode != 0:
@@ -268,7 +271,7 @@ class Home:
         """hubctl started as hubctl_from_mod starts it, with its fresh ticket already sent, and not waited
         for, so several can run at once."""
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
-        process = subprocess.Popen([sys.executable, "-I", os.path.join(self.plugin, "bin", "hubctl"), *args],
+        process = subprocess.Popen([sys.executable, "-I", os.path.join(self.plugin, "lib", "hub_switch.py"), *args],
                                    cwd=self.work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)
         process.stdin.write(self.mod_ticket() + "\n")
@@ -277,7 +280,7 @@ class Home:
 
     def hubctl_process(self, *args):
         return subprocess.Popen(
-            [sys.executable, os.path.join(self.plugin, "bin", "hubctl"), *args],
+            [sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args],
             cwd=self.work, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
 

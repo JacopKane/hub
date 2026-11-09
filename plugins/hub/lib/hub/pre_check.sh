@@ -14,11 +14,16 @@
 # read for sure. UserPromptSubmit also starts it while a notice waits for a
 # chat, since the dispatcher hands those over whichever parts run. The
 # dispatcher also starts when the settings changed after the last apply, or
-# when the repo has its own hub settings, since it must resolve them first.
+# when the repo has its own hub settings, since it must resolve them first,
+# and while the settings folder still has its old name, so the move happens.
 # In every other case the hook ends at once with no answer. The dispatcher
 # gets only the event name.
 state="${XDG_STATE_HOME:-$HOME/.local/state}/hubctl"
-config="${XDG_CONFIG_HOME:-$HOME/.config}/hubctl"
+config_name=  # the settings folder's name, from the one file that holds it
+read -r config_name 2>/dev/null < "${0%/*}/config_name" || :
+[ -n "$config_name" ] || exec python3 -I "${0%/*}/dispatch.py" "$1"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/$config_name"
+old_config="${XDG_CONFIG_HOME:-$HOME/.config}/hubctl"
 event=$1
 piped=
 dispatch() {
@@ -68,6 +73,9 @@ case "$1" in
 esac
 [ -e "$state/$marker" ] && dispatch
 [ -e "$state/resolved.json" ] || dispatch
+if [ -d "$old_config" ] && [ ! -L "$old_config" ] && [ ! -e "$config" ] && [ ! -L "$config" ]; then
+  dispatch
+fi
 for settings in "$config/hub.json" "$config/profile.json"; do
   [ "$settings" -nt "$state/resolved.json" ] && dispatch
 done

@@ -2,19 +2,21 @@
 
 Before a tool call runs, it refuses three kinds of call:
 
-- hubctl, when it would lower a protected flag, uninstall hub, or read the
-  screen as the band does, which marks the tuner's notices as shown. A flag is
-  protected when it is a privacy check, the mode of a gate, a guard or a
-  flag under one, or a pin (a value the user set). Lowering means a weaker
-  value, such as off or warn after block, a loosening option switched on,
-  an item taken out of a guarded list, or any change to a pin. Turning off a
-  part also lowers a flag when a protected flag or a value the user set by
-  hand would stop running under it. hubctl that only reads, or that raises a
-  flag, still runs, and so do flags for style only, such as
-  public_text_gate.dashes. The part also reads the command lines and keys
-  that tmux, screen, ssh, script, expect and similar programs run, because
-  hubctl started there has no tool-call marker. claude plugin disable or
-  uninstall of hub counts too.
+- hub's switch step, when it would lower a protected flag, uninstall hub,
+  or read the screen as the band does, which marks the tuner's notices as
+  shown. A flag is protected when it is a privacy check, the mode of a gate,
+  a guard or a flag under one, or a pin (a value the user set). Lowering
+  means a weaker value, such as off or warn after block, a loosening option
+  switched on, an item taken out of a guarded list, or any change to a pin.
+  Turning off a part also lowers a flag when a protected flag or a value the
+  user set by hand would stop running under it. The change runs after all
+  when the newest message the user typed in this chat asks for it (see
+  said.py), and then this part leaves a words ticket for the step. A step
+  call that only reads, or that raises a flag, still runs, and so do flags
+  for style only, such as public_text_gate.dashes. The part also reads the
+  command lines and keys that tmux, screen, ssh, script, expect and similar
+  programs run, because the step started there has no tool-call marker.
+  claude plugin disable or uninstall of hub counts too.
 - A command that unsets or overrides the marker that tells hub a tool call is
   running (AI_AGENT, CURSOR_AGENT, HUB_DOOR): env -u, env -i, unset, an
   assignment, exec -c, or interpreter code that names the marker.
@@ -28,14 +30,15 @@ Before a tool call runs, it refuses three kinds of call:
 It reads the command with the public text gate's shell parser, so it looks
 inside bash -c, eval, heredoc scripts and command substitutions as the gate
 does. It runs before the other gates. The refusal tells the model to ask the
-user to make the change with /hub in Claude Code.
+user to ask for the change in their own words.
 When hub can not read its settings, the dispatcher still asks this part, with
 every check on, so a broken hub still refuses a call that touches hub.
 
 Design limits. This part stops the model from helpfully unblocking itself in
 the commands it writes. It is not a sandbox, and a model set on getting around
-local checks on purpose can do so. The user's only supported way to lower a
-protection is the /hub door in Claude Code, with a single-use ticket.
+local checks on purpose can do so. The user lowers a protection by asking
+for it in the newest message they type, or with the /hub door where mods
+load, with a single-use ticket.
 """
 import contextlib
 import fnmatch
@@ -51,7 +54,7 @@ from hub import files
 PART = "self_protection"
 GATE_MODULE = "hub_part_public_text_gate"
 TEXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "text", "ask_the_user.md")
-CHECKS = ("hubctl", "agent_marker", "settings_files")
+CHECKS = ("lowering", "agent_marker", "settings_files")
 MAX_DEPTH = 4
 
 MARKERS = ("AI_AGENT", "CURSOR_AGENT", "HUB_DOOR")
@@ -59,7 +62,12 @@ MARKER_WORD = re.compile(r"(?<![\w$])(?:%s)(?!\w)" % "|".join(MARKERS))
 MARKER_ASSIGNMENT = re.compile(r"(?:%s)\+?=" % "|".join(MARKERS))
 ENV_PROGRAMS = {"env", "unset", "export", "declare", "typeset", "local", "readonly", "setenv", "unsetenv"}
 # hubctl as a word of code, not as a folder name in a path such as ~/.config/hubctl/hub.json
-HUBCTL_IN_CODE = re.compile(r"(?<![\w./-])hubctl(?![\w/.-])|\bhub\.cli\b", re.I)
+HUBCTL_IN_CODE = re.compile(r"(?<![\w./-])hubctl(?![\w/.-])|\bhub\.cli\b|\bhub_switch(?:\.py)?\b", re.I)
+# Interpreter code that loads hub's own modules, which could write a ticket or change a flag past the switch step.
+HUB_IMPORT = re.compile(r"\bfrom\s+hub(?:\.\w+)*\s+import\b|\bimport\s+(?:[\w.]+\s*,\s*)*hub\b|"
+                        r"import(?:_module)?\s*\(\s*['\"]hub\b|\b(?:leave|take)_(?:words|uninstall)_ticket\b")
+# The names of hub's switch step: the internal step, and hubctl, its name before it left the PATH.
+STEP_NAMES = {"hub_switch.py", "hubctl"}
 
 INTERPRETERS = re.compile(r"(?:python[\d.]*|pypy[\d.]*|perl|ruby|node|nodejs|deno|bun|php|lua|osascript|tclsh|expect|rscript)")
 CODE_OPTIONS = {"-c", "-e", "-E", "--eval", "-r", "-p", "--print", "-x"}
@@ -134,7 +142,7 @@ FIND_RUNS = {"-exec", "-execdir", "-ok", "-okdir"}
 RELAYED_VERBS = {"show", "screen", "doctor", "offers", "on", "off", "set"}
 # Claude Code reads a prompt line whose first word is one of these as the user's /hub. Only the user types
 # them, so a tool call that types or pastes one into a terminal is refused, whatever it does.
-DOOR_COMMANDS = {"/hub", "/hub-flags", "/hubctl", "/hub:hubctl"}
+DOOR_COMMANDS = {"/hub", "/hub-flags", "/hubctl", "/hub:hubctl", "/switch", "/hub:switch"}
 # Interpreters whose code can type keys or fill the clipboard, and how their strings are written and joined.
 TYPING_INTERPRETERS = {"osascript", "expect"}
 STRING_CHAIN = re.compile(r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?:\s*[&+]\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))*""")
@@ -145,11 +153,15 @@ MAX_BRACES = 1024
 VARIABLE = re.compile(r"\$\{(\w+)(?::?-([^}]*))?\}|\$(\w+)")
 
 WHAT = {
-    "hubctl": ("lower one of hub's protections, disable or uninstall hub, hide its notices, or run hubctl or "
-               "claude plugin through a program hub can not read"),
+    "lowering": ("lower one of hub's protections, disable or uninstall hub, hide its notices, or run hub's "
+               "switch step or claude plugin through a program hub can not read"),
     "agent_marker": "unset or change the marker that tells hub a tool call is running, or name HUB_DOOR",
     "settings_files": "write hub's settings or state files",
 }
+
+
+# The hook input of the call being checked, for the checks that read the chat.
+CALL = {}
 
 
 class Stop(Exception):
@@ -237,9 +249,16 @@ def expand(text):
     return VARIABLE.sub(fill, text)
 
 
+def hub_roots():
+    """The user's settings folder and its old name, the state folder and the folder hub's own code runs from.
+
+    hub moves what it finds in the old folder into the settings folder, so a write there is a write to the settings.
+    """
+    return (files.config_dir(), files.old_config_dir(), files.state_dir(), files.PLUGIN_ROOT)
+
+
 def hub_folders():
-    """The user's settings folder, the state folder and the folder hub's own code runs from."""
-    return [folded(os.path.realpath(folder)) for folder in (files.config_dir(), files.state_dir(), files.PLUGIN_ROOT)]
+    return [folded(os.path.realpath(folder)) for folder in hub_roots()]
 
 
 def folded(path):
@@ -247,8 +266,10 @@ def folded(path):
     return path.casefold()
 
 
-HUB_NAME = re.compile(r"\.config/hubctl|\.local/state/hubctl|(?:^|/)hubctl/")
-HUB_TEXTS = (".config/hubctl", ".local/state/hubctl", ".hub/hub")
+# The settings folder under ~/.config, by its name and by its old name.
+CONFIG_NAMES = "|".join(re.escape(name) for name in (files.CONFIG_NAME, files.OLD_CONFIG_NAME))
+HUB_NAME = re.compile(r"\.config/(?:%s)(?:/|$)|\.local/state/hubctl|(?:^|/)hubctl/" % CONFIG_NAMES)
+HUB_TEXT = re.compile(r"\.config/(?:%s)(?![\w.-])|\.local/state/hubctl|\.hub/hub" % CONFIG_NAMES)
 PROJECT_FILE = re.compile(r"(?:^|/)\.hub(?:/(?:hub[^/]*\.json)?)?/?$")
 
 
@@ -375,8 +396,7 @@ def glob_could_name_hub(text, cwd):
     expanded = braces(text)
     if expanded is None:  # too many words to read, so it counts when it could name hub at all
         return bool(re.search(r"[*?\[]|hub", folded(text)))
-    folders = [pattern_parts(folder) for root in (files.config_dir(), files.state_dir(), files.PLUGIN_ROOT)
-               for folder in {os.path.abspath(root), os.path.realpath(root)}]
+    folders = [pattern_parts(folder) for root in hub_roots() for folder in {os.path.abspath(root), os.path.realpath(root)}]
     tails = [[".hub"]] + [[".hub", name] for name in PROJECT_NAMES]
     for word in expanded:
         joined = os.path.normpath(os.path.join(cwd, word))
@@ -442,20 +462,20 @@ def hubctl_words(words, line):
     if index is None:
         return None
     program = base(words[index])
-    if hidden(os.path.basename(words[index])) and "hubctl" in line.casefold():
-        raise Stop("hubctl", "a variable names the program")
+    if hidden(os.path.basename(words[index])) and any(name in line.casefold() for name in ("hubctl", "hub_switch")):
+        raise Stop("lowering", "a variable names the program")
     if program in NAMES_ONLY or (program == "command" and any(word in ("-v", "-V") for word in words)):
         return None
     for spot in range(index, len(words)):
         word = words[spot]
-        if base(word) == "hubctl":
+        if base(word) in STEP_NAMES:
             found = spot + 1
         elif plain(word) == "-m" and spot + 1 < len(words) and plain(words[spot + 1]) in ("hub.cli", "hub"):
             found = spot + 2
         else:
             continue
         if any(base(before) in gate().FEEDERS for before in words[:spot]):
-            raise Stop("hubctl", "xargs fills in its words")
+            raise Stop("lowering", "xargs fills in its words")
         return without_redirects(words[found:])
     return None
 
@@ -484,30 +504,34 @@ def check_hubctl(args, flags, cwd, relayed=False):
         return
     verb = args[0]
     if hidden(verb):
-        raise Stop("hubctl", "a variable fills in the verb")
+        raise Stop("lowering", "a variable fills in the verb")
     if verb.startswith("-") and not relayed:
         return
     if verb in CHANGE_VERBS | {"uninstall", "screen"} and any(hidden(word) for word in args):
-        raise Stop("hubctl", "a variable fills in a word")
+        raise Stop("lowering", "a variable fills in a word")
     try:
         parsed = parsed_hubctl(args)
     except Exception:  # hub's own parser broke, so it can not tell what hubctl would do
         if relayed or verb in CHANGE_VERBS | {"uninstall", "screen"}:
-            raise Stop("hubctl", "hub could not read the words") from None
+            raise Stop("lowering", "hub could not read the words") from None
         return
     if relayed and (parsed is None or parsed.command not in RELAYED_VERBS or getattr(parsed, "band", False)):
         # find and xargs fill in words hub can not see, so words hubctl would reject count too
-        raise Stop("hubctl", "a hubctl verb that only the user may run, started by another program")
+        raise Stop("lowering", "a hubctl verb that only the user may run, started by another program")
     if parsed is None:
         return
     if parsed.command == "uninstall":
-        raise Stop("hubctl", "uninstall")
+        if relayed or not asked_to_uninstall():
+            raise Stop("lowering", "uninstall")
+        from hub import protect
+        protect.leave_uninstall_ticket(CALL.get("session_id"))
+        return
     if parsed.command == "screen" and parsed.band:
-        raise Stop("hubctl", "the band's read, which marks notices as shown")
+        raise Stop("lowering", "the band's read, which marks notices as shown")
     if parsed.command not in CHANGE_VERBS:
         return
     if flags.record is None:  # hub could not read its settings, so every change counts
-        raise Stop("hubctl", parsed.command)
+        raise Stop("lowering", parsed.command)
     from hub import changes, cli, tree as tree_module
     tree = tree_module.load(files.PARTS_DIR)
     if parsed.command == "undo":
@@ -542,11 +566,41 @@ def check_hubctl(args, flags, cwd, relayed=False):
     old = record.get("set", record.get("value"))
     if new == old:
         return
+    lowering = is_protected(node) and lowers(node, new, old)
     if record.get("by") == "user":
-        raise Stop("hubctl", f"{flag_id} is pinned")
-    if is_protected(node) and lowers(node, new, old):
-        raise Stop("hubctl", flag_id)
-    check_stopped(tree, node, new, scope, cwd)
+        stop = Stop("lowering", f"{flag_id} is pinned")
+    elif lowering:
+        stop = Stop("lowering", flag_id)
+    else:
+        try:
+            check_stopped(tree, node, new, scope, cwd)
+            return
+        except Stop as found:
+            stop, lowering = found, True
+    if relayed or not asked_in_words(flag_id, lowering):
+        raise stop
+    try:
+        value = changes.check_value(node, new)
+    except changes.ChangeError:
+        raise stop from None
+    from hub import protect
+    protect.leave_words_ticket(flag_id, value, scope, CALL.get("session_id"))
+
+
+def asked_in_words(flag_id, lowering):
+    """Whether the newest message the user typed in this chat asks for this change. An agent's call never counts."""
+    if CALL.get("agent_id"):
+        return False
+    from hub import said
+    return said.user_asked(CALL.get("transcript_path"), flag_id, lowering)
+
+
+def asked_to_uninstall():
+    """Whether the newest message the user typed in this chat asks to uninstall hub. An agent's call never counts."""
+    if CALL.get("agent_id"):
+        return False
+    from hub import said
+    return said.user_asked_to_uninstall(CALL.get("transcript_path"))
 
 
 def check_stopped(tree, node, value, scope, cwd):
@@ -563,9 +617,9 @@ def check_stopped(tree, node, value, scope, cwd):
         changes.check_change(tree, node, value, "model", scope, path, place, None,
                              lambda: changes.resolved_files(tree, place))
     except changes.ChangeError:
-        raise Stop("hubctl", node.id) from None
+        raise Stop("lowering", node.id) from None
     except Exception:  # a settings file hub can not read, so it can not tell what the change stops
-        raise Stop("hubctl", f"{node.id}, since hub could not read its settings") from None
+        raise Stop("lowering", f"{node.id}, since hub could not read its settings") from None
 
 
 def is_protected(node):
@@ -632,12 +686,16 @@ def check_files(words, command, cwd):
             if attached and names_hub(attached.group(1), cwd):
                 raise Stop("settings_files", "a redirect")
     index = program_index(words)
+    # An assignment before the program, such as PYTHONPATH=<hub's code>, points the program at hub's files.
+    if any(names_hub(word, cwd) for word in words[:len(words) if index is None else index]
+           if re.match(r"[A-Za-z_]\w*\+?=", plain(word))):
+        raise Stop("settings_files", "an assignment")
     if index is None:
         return
     program = base(words[index])
     operands = without_redirects(words[index + 1:])
     code = interpreter_code(words, command)
-    if code and (any(name in folded(code) for name in HUB_TEXTS)
+    if code and (HUB_TEXT.search(folded(code))
                  or any(is_hub_path(word, cwd, globs="/" in word) for word in code.split())):
         raise Stop("settings_files", "interpreter code")
     if program == "git":
@@ -671,8 +729,21 @@ def check_files(words, command, cwd):
         if any(names_hub(word, cwd) or holds_hub(word, cwd) for word in operands if not plain(word).startswith("-")):
             raise Stop("settings_files", program)
         return
+    if INTERPRETERS.fullmatch(program):
+        # The switch step writes hub's settings by design, and the lowering check judges what it changes.
+        script = next((spot for spot, word in enumerate(operands) if not plain(word).startswith("-")), None)
+        if script is not None and runs_the_step(operands[script], cwd):
+            operands = operands[:script] + operands[script + 1:]
     if any(names_hub(word, cwd) for word in operands):
         raise Stop("settings_files", program)
+
+
+def runs_the_step(word, cwd):
+    """Whether a word is the path of hub's own switch step, as the script an interpreter runs."""
+    text = expand(word)
+    if not text or "$" in text or any(char in text for char in "*?["):
+        return False
+    return os.path.realpath(os.path.join(cwd, text)) == os.path.realpath(files.STEP)
 
 
 # Walking a command line
@@ -688,7 +759,7 @@ def check_claude(words):
         if not (named or hidden(words[spot])) or plain(words[spot + 1]).casefold() not in ("plugin", "plugins"):
             continue
         if any(base(before) in gate().FEEDERS for before in words[:spot]):
-            raise Stop("hubctl", "xargs fills in the words of claude plugin")
+            raise Stop("lowering", "xargs fills in the words of claude plugin")
         rest = words[spot + 2:]
         positional = [(at, plain(word).casefold()) for at, word in enumerate(rest) if not plain(word).startswith("-")]
         if not positional:
@@ -696,7 +767,7 @@ def check_claude(words):
         verb_at, verb = positional[0]
         if verb == "marketplace":
             if len(positional) > 1 and positional[1][1] in PLUGIN_VERBS:
-                raise Stop("hubctl", "claude plugin marketplace remove")
+                raise Stop("lowering", "claude plugin marketplace remove")
             continue
         if verb not in PLUGIN_VERBS:
             continue
@@ -707,11 +778,11 @@ def check_claude(words):
             elif plain(word) in PLUGIN_VALUE_OPTIONS:
                 skip = True
             elif plain(word) in ("--all", "-a") or hidden(word):
-                raise Stop("hubctl", f"claude plugin {verb}")
+                raise Stop("lowering", f"claude plugin {verb}")
             elif not plain(word).startswith("-"):
                 targets.append(plain(word).casefold())
         if not targets or any(target == "hub" or target.startswith("hub@") for target in targets):
-            raise Stop("hubctl", f"claude plugin {verb}")
+            raise Stop("lowering", f"claude plugin {verb}")
 
 
 def tmux_typed(words):
@@ -820,7 +891,7 @@ def typed_lines(text):
         elif char in DROP_WORD:
             line = re.sub(r"\S*$", "", line.rstrip())
         elif ord(char) < 0x20:
-            raise Stop("hubctl", "keys that move the cursor, recall or complete a line")
+            raise Stop("lowering", "keys that move the cursor, recall or complete a line")
         else:
             line += char
     as_typed = re.split(r"[\r\n]", re.sub(f"[{DROP_CHAR}{DROP_LINE}{DROP_WORD}]", "", text))
@@ -840,8 +911,14 @@ def relayed_scripts(words):
     index = program_index(words)
     if index is None or base(words[index]) in NAMES_ONLY:
         return []
+    start = index + 1
+    if INTERPRETERS.fullmatch(base(words[index])):
+        # An interpreter that runs the switch step itself relays nothing: the step's own words are checked as such.
+        script = next((spot for spot in range(start, len(words)) if not plain(words[spot]).startswith("-")), None)
+        if script is not None and base(words[script]) in STEP_NAMES:
+            start = script + 1
     scripts, joined = [], False
-    for spot in range(index + 1, len(words)):
+    for spot in range(start, len(words)):
         text = plain(words[spot])
         named = RELAYED.search(text)
         if (named or hidden(words[spot])) and not joined:
@@ -855,7 +932,7 @@ def relayed_scripts(words):
 
 def runner_check(flags):
     """The check a refused runner counts under: hubctl when it runs, else settings_files."""
-    return "hubctl" if flags.runs(f"{PART}.hubctl") else "settings_files"
+    return "lowering" if flags.runs(f"{PART}.lowering") else "settings_files"
 
 
 def unreadable_runner(words, flags):
@@ -920,7 +997,7 @@ def git_scripts(before, words):
     while at < len(words) and plain(words[at]).startswith("-"):
         option = plain(words[at])
         if option.startswith("--config-env"):
-            raise Stop("hubctl", "git --config-env, which reads a value hub can not see")
+            raise Stop("lowering", "git --config-env, which reads a value hub can not see")
         if option == "-c" and at + 1 < len(words):
             pairs.append((plain(words[at + 1]).partition("=")[2], words[at + 1]))
         at += 2 if option in GIT_GLOBAL_VALUES else 1
@@ -1216,7 +1293,7 @@ def check_relayed_programs(command):
             if not re.match(r"[A-Za-z_]\w*\+?=", word) and word not in gate().KEYWORDS:
                 program_hidden = gate().UNREADABLE in word
         elif program_hidden and plain(word) in risky:
-            raise Stop("hubctl", "a variable names the program another program runs")
+            raise Stop("lowering", "a variable names the program another program runs")
 
 
 def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=False):
@@ -1227,7 +1304,7 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
     if segments is None:
         rough_check(line, flags)
         segments = []
-    hubctl_check = flags.runs(f"{PART}.hubctl")
+    hubctl_check = flags.runs(f"{PART}.lowering")
     reads_runners = hubctl_check or flags.runs(f"{PART}.settings_files")
     if hubctl_check and relayed:
         check_relayed_programs(command)
@@ -1243,14 +1320,14 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
                 check_hubctl(args, flags, cwd, relayed)
             check_claude(words)
             code = interpreter_code(words, command)
-            if code and HUBCTL_IN_CODE.search(plain(code)):
-                raise Stop("hubctl", "interpreter code")
+            if code and (HUBCTL_IN_CODE.search(plain(code)) or HUB_IMPORT.search(plain(code))):
+                raise Stop("lowering", "interpreter code")
             if code and base(words[index]) in TYPING_INTERPRETERS and code_types_a_door(plain(code)):
-                raise Stop("hubctl", "a /hub command typed into a prompt")
+                raise Stop("lowering", "a /hub command typed into a prompt")
             for text in typed_texts(tmux_words):
                 for typed in typed_lines(text):
                     if types_a_door(typed):
-                        raise Stop("hubctl", "a /hub command typed into a prompt")
+                        raise Stop("lowering", "a /hub command typed into a prompt")
                     if depth < MAX_DEPTH:
                         check_line(typed, cwd, flags, depth + 1, script=True, relayed=True)
         if flags.runs(f"{PART}.agent_marker"):
@@ -1270,7 +1347,7 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
     if depth < MAX_DEPTH and hubctl_check:
         for script_text in stdin_scripts(command, segments):
             if types_a_door(plain(script_text)):
-                raise Stop("hubctl", "a /hub command typed into a prompt")
+                raise Stop("lowering", "a /hub command typed into a prompt")
             check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
     if depth < MAX_DEPTH:
         for source in command.sources:
@@ -1279,11 +1356,11 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
 
 def rough_check(line, flags):
     """For a line the parser can not split: refuse when it names hubctl, a marker or a hub path."""
-    if flags.runs(f"{PART}.hubctl") and HUBCTL_IN_CODE.search(line):
-        raise Stop("hubctl", "a line hub can not read")
+    if flags.runs(f"{PART}.lowering") and (HUBCTL_IN_CODE.search(line) or HUB_IMPORT.search(line)):
+        raise Stop("lowering", "a line hub can not read")
     if flags.runs(f"{PART}.agent_marker") and MARKER_WORD.search(line):
         raise Stop("agent_marker", "a line hub can not read")
-    if flags.runs(f"{PART}.settings_files") and any(name in folded(line) for name in HUB_TEXTS):
+    if flags.runs(f"{PART}.settings_files") and HUB_TEXT.search(folded(line)):
         raise Stop("settings_files", "a line hub can not read")
 
 
@@ -1323,6 +1400,8 @@ def find(hook_input, flags):
     """The Stop for a tool call, or None when it may run."""
     tool_input = hook_input.get("tool_input") or {}
     cwd = hook_input.get("cwd") or os.getcwd()
+    CALL.clear()
+    CALL.update({key: hook_input.get(key) for key in ("transcript_path", "agent_id", "session_id")})
     try:
         if hook_input.get("tool_name") == "Bash":
             # the shell runs each line of the command on its own, as in a script

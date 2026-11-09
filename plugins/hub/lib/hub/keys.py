@@ -111,7 +111,7 @@ def note_unreadable(key, path):
 
 
 def unreadable_line(key, path):
-    return f"hub could not read {path}, so it left {key} as it is. Fix the file, then run hubctl apply."
+    return f"hub could not read {path}, so it left {key} as it is. Fix the file, then say \"apply hub's settings\"."
 
 
 def want(key, value, part, lines):
@@ -195,7 +195,7 @@ def pin_changed(lines):
         history.add(part, "user", stored["value"] if stored else "on", "off", "user", "apply",
                     f"{entry['key']} was set to {shown} by hand")
         lines.append(f"You set {entry['key']} to {shown}, so {part} is now off and your value stays. "
-                     f"Run hubctl on {part} to bring it back.")
+                     f"Say \"turn on {part}\" to bring it back.")
     settings.write(path, data)
     write_record(kept)
 

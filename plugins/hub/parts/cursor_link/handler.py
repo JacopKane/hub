@@ -5,11 +5,11 @@ from the Claude Code plugin's manifest, its skills and the tree:
 
     .cursor-plugin/plugin.json   the manifest, whose description says Cursor support is beta
     cursor/hooks.json            one entry for each event a part handles in Cursor
-    cursor/skills/hub/SKILL.md   the hubctl skill as /hub, since Cursor has no mod
+    cursor/skills/hub/SKILL.md   the switch skill as /hub, since Cursor has no mod
                                  to own that name
     cursor/skills/<name>/SKILL.md  each other skill under its own name
 
-Each command starts the Cursor adapter or hubctl under prefix. The repo ships the files
+Each command starts the Cursor adapter or hub's step under prefix. The repo ships the files
 with the prefix ./plugins/hub. Apply writes them into ~/.cursor/plugins/local/hub
 with the absolute path of the installed copy, because Cursor skips a linked
 plugin folder outside plugins/local.
@@ -31,8 +31,8 @@ STYLE_PART = "hub_style"
 HOOKS = "cursor/hooks.json"
 SKILLS = "cursor/skills/"
 CLAUDE_SKILLS = "skills"
-CURSOR_NAMES = {"hubctl": "hub"}  # Cursor has no mod to own /hub, so the hubctl skill takes it
-CLAUDE_HUBCTL = "python3 -I ${CLAUDE_PLUGIN_ROOT}/bin/hubctl"
+CURSOR_NAMES = {"switch": "hub"}  # Cursor has no mod to own /hub, so the switch skill takes the name
+CLAUDE_STEP = "python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py"
 CURSOR_SKILL_KEYS = ("name", "description", "disable-model-invocation")
 FAIL_CLOSED = {"preToolUse"}  # a crash in the adapter refuses the call
 CLAUDE_CODE_ONLY = ("types",)  # only Claude Code's mod reads it, and Cursor runs no mods
@@ -82,13 +82,13 @@ def plugin_files(plugin_root, prefix):
 
 
 def cursor_skill(plugin_root, prefix, name, cursor_name):
-    """A skill for Cursor, named cursor_name, with only the keys Cursor reads and hubctl under prefix."""
+    """A skill for Cursor, named cursor_name, with only the keys Cursor reads and hub's step under prefix."""
     with open(os.path.join(plugin_root, CLAUDE_SKILLS, name, "SKILL.md"), encoding="utf-8") as handle:
         lines, body = build.split(handle.read())
     head = [f"name: {cursor_name}" if line.partition(":")[0].strip() == "name" else line
             for line in build.keep_only(lines, CURSOR_SKILL_KEYS)]
-    hubctl = "python3 -I " + shlex.quote(posixpath.join(prefix, "bin", "hubctl"))
-    return build.join(head, body.replace(CLAUDE_HUBCTL, hubctl))
+    step = "python3 -I " + shlex.quote(posixpath.join(prefix, "lib", "hub_switch.py"))
+    return build.join(head, body.replace(CLAUDE_STEP, step))
 
 
 def handle(event, hook_input, flags, answer):

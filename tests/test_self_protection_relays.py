@@ -84,18 +84,18 @@ def test_hubctl_started_through_another_program_is_refused(home, command):
     with when(f"the model runs {command!r}"):
         result = home.hook("claude_code", "PreToolUse", command)
     with then("the hubctl check refuses it, and the settings did not change"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
         assert home.settings() == before
 
 
 @pytest.mark.parametrize("command, check", [
-    ("HUBCTL off public_text_gate", "hubctl"),
-    ("./HubCtl off public_text_gate", "hubctl"),
-    ("/usr/local/bin/HUBCTL off public_text_gate", "hubctl"),
-    ("Hubctl off --scope user public_text_gate", "hubctl"),
-    ("BASH -c 'HUBCTL off public_text_gate'", "hubctl"),
-    ("tmux new -d 'HubCtl off public_text_gate'", "hubctl"),
-    ("PYTHON3 -c 'import subprocess; subprocess.run([\"HUBCTL\", \"off\", \"public_text_gate\"])'", "hubctl"),
+    ("HUBCTL off public_text_gate", "lowering"),
+    ("./HubCtl off public_text_gate", "lowering"),
+    ("/usr/local/bin/HUBCTL off public_text_gate", "lowering"),
+    ("Hubctl off --scope user public_text_gate", "lowering"),
+    ("BASH -c 'HUBCTL off public_text_gate'", "lowering"),
+    ("tmux new -d 'HubCtl off public_text_gate'", "lowering"),
+    ("PYTHON3 -c 'import subprocess; subprocess.run([\"HUBCTL\", \"off\", \"public_text_gate\"])'", "lowering"),
     ("ENV -u AI_AGENT hubctl show", "agent_marker"),
 ], ids=["all capitals", "a relative path", "a full path", "a capital first letter", "inside a shell in capitals",
         "inside tmux", "interpreter code", "env in capitals"])
@@ -112,10 +112,10 @@ def test_a_command_name_in_other_letters_is_read_as_the_same_program(home, comma
 
 
 @pytest.mark.parametrize("command, check", [
-    ("true &!# don't\nhubctl off public_text_gate\n# it's", "hubctl"),
+    ("true &!# don't\nhubctl off public_text_gate\n# it's", "lowering"),
     ("true &!# don't\nenv -u AI_AGENT make test\n# it's", "agent_marker"),
     ("true &|# don't\necho x > ~/.config/hubctl/hub.json\n# it's", "settings_files"),
-    ("echo foo \\\n# don't\nhubctl off public_text_gate\n# it's", "hubctl"),
+    ("echo foo \\\n# don't\nhubctl off public_text_gate\n# it's", "lowering"),
 ], ids=["hubctl after &!", "the marker after &!", "a settings write after &|", "after a joined comment line"])
 def test_a_line_after_a_zsh_comment_is_still_checked(home, command, check):
     with given("hub is installed and the user raised the gate to block in their own terminal"):
@@ -136,7 +136,7 @@ def test_cursor_refuses_hubctl_in_tmux_too(home):
     with when("the model in Cursor starts hubctl in a tmux session"):
         result = home.hook("cursor", "PreToolUse", "tmux new -d 'hubctl off public_text_gate'")
     with then("the hubctl check refuses it"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
@@ -183,7 +183,7 @@ def test_disabling_or_uninstalling_the_hub_plugin_is_refused(home, tool, command
     with when(f"the model runs {command!r}"):
         result = home.hook(tool, "PreToolUse", command)
     with then("the hubctl check refuses it"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
@@ -241,7 +241,7 @@ def test_turning_a_part_off_that_stops_its_running_guard_needs_the_user(home, to
     with when("the model runs hubctl off tier_rule in a tool call"):
         result = home.hook(tool, "PreToolUse", "hubctl off tier_rule")
     with then("the hubctl check refuses it"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
     with and_("hubctl itself refuses it in a tool call, names the guard, and the guard still runs"):
         home.env = dict(home.env, **TOOL_CALL)
         done = home.hubctl("off", "tier_rule", check=False)
@@ -254,7 +254,7 @@ def test_turning_a_part_off_that_stops_its_running_guard_needs_the_user(home, to
         assert home.settings() == before
     with and_("the user's own terminal can not turn it off, even typing the part's id"):
         typed = home.hubctl_as_user("off", "tier_rule", typed="tier_rule", check=False)
-        assert typed.returncode != 0 and "/hub in Claude Code" in typed.stderr, typed.stderr
+        assert typed.returncode != 0 and "in their own words" in typed.stderr, typed.stderr
         assert home.settings() == before
     with and_("the user can turn it off with /hub in Claude Code"):
         home.hubctl_from_mod("off", "tier_rule")
@@ -287,7 +287,7 @@ def test_turning_a_part_off_that_stops_a_pinned_flag_needs_the_user(home):
     with when("the model turns the tier part off in a tool call"):
         result = home.hook("claude_code", "PreToolUse", "hubctl off tier_rule")
     with then("the hubctl check refuses it, because the pin would stop running"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
     with and_("hubctl itself refuses it in a tool call, names the pin, and the pin still runs"):
         before = home.settings()
         home.env = dict(home.env, **TOOL_CALL)

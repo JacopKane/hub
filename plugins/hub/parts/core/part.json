@@ -24,12 +24,6 @@
       "type": "list",
       "default": [],
       "does": "Files with one private word per line. A file missing on this machine is skipped."
-    },
-    {
-      "id": "terminal_link",
-      "kind": "behavior",
-      "default": "off",
-      "does": "Links ~/.local/bin/hubctl, so any terminal finds hubctl by name. Made by hubctl setup link-bin."
     }
   ]
 }

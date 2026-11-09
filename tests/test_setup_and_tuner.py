@@ -112,7 +112,7 @@ def test_first_run_on_a_work_laptop_with_cursor_scans_asks_at_most_three_questio
     and_("the summary says what is on and why, what works now, what starts next session and where the rest is")
     for part in STARTING_SET - {"core"}:
         assert part in summary, part
-    for heading in ("Works now", "Starts next session", "hubctl show"):
+    for heading in ("Works now", "Starts next session", "Ask for any change in plain words"):
         assert heading in summary, heading
     and_("the settings file exists with its version, so the next session does not run setup again")
     assert home.settings()["version"] == 1
@@ -392,7 +392,7 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
         cursor = context_of(session_start(home, "cursor"))
     with then("Claude Code shows one line with the undo, and Cursor's context starts with it"):
         line = claude.output["systemMessage"]
-        assert "public_text_gate.dashes" in line and f"hubctl undo {change['id']}" in line
+        assert "public_text_gate.dashes" in line and f'Say "undo {change["id"]}"' in line
         assert "\n" not in line
         assert cursor.startswith(line)
     with and_("Claude Code's start text holds no second copy of the line"):
@@ -431,14 +431,14 @@ def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_on
     with then("Claude Code shows no system message, and both start texts hold the line with its undo"):
         assert "systemMessage" not in claude.output
         for context in (context_of(claude), cursor):
-            assert "public_text_gate.dashes" in context and f"hubctl undo {change['id']}" in context
+            assert "public_text_gate.dashes" in context and f'Say "undo {change["id"]}"' in context
             assert "first reply" in context
     with when("one more session starts in each tool"):
         again = context_of(session_start(home, "claude_code"))
         cursor_again = context_of(session_start(home, "cursor"))
     with then("neither start text holds the line again"):
-        assert f"hubctl undo {change['id']}" not in again
-        assert f"hubctl undo {change['id']}" not in cursor_again
+        assert f'Say "undo {change["id"]}"' not in again
+        assert f'Say "undo {change["id"]}"' not in cursor_again
 
 
 def band_read(home):
@@ -480,7 +480,7 @@ def test_when_the_band_showed_the_tuners_change_the_next_start_text_does_not_rep
         on_day(home, 1, hour=11)
         claude = session_start(home, "claude_code")
     with then("the start text does not hold the line a second time"):
-        assert f"hubctl undo {change['id']}" not in context_of(claude)
+        assert f'Say "undo {change["id"]}"' not in context_of(claude)
         assert "systemMessage" not in claude.output
 
 
@@ -491,7 +491,7 @@ def test_when_the_start_text_told_the_tuners_change_the_band_does_not_show_it_ag
         on_day(home, 1, hour=11)
         context = context_of(session_start(home, "claude_code"))
     with then("the start text holds the line with its undo"):
-        assert f"hubctl undo {change['id']}" in context
+        assert f'Say "undo {change["id"]}"' in context
     with when("the mod then reads the screen for the band"):
         model = band_read(home)
     with then("the band does not show that line again"):
@@ -511,7 +511,7 @@ def test_a_screen_read_without_the_band_mark_hides_no_notice(home):
         on_day(home, 1, hour=11)
         context = context_of(session_start(home, "claude_code"))
     with then("the start text still holds the line"):
-        assert f"hubctl undo {change['id']}" in context
+        assert f'Say "undo {change["id"]}"' in context
 
 
 def agent_transcript(home, number, tools):
@@ -601,7 +601,7 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
         assert '{"pick"' in request["system"] and "one line with an undo" in request["system"]
         assert "- public_text_gate.dashes off: you went past it 9 times" in request["prompt"]
     with when("the model's answer goes to hubctl tuner decide on stdin"):
-        decided = home.run([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "tuner", "decide",
+        decided = home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "tuner", "decide",
                             "--answer", "-"], stdin='{"pick": ["public_text_gate.dashes"]}')
     with then("the dash check is off by the tuner, back at its shipped default, and nothing waits"):
         assert "public_text_gate.dashes" in decided.stdout
@@ -658,97 +658,10 @@ def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mo
         assert screen_tuner(home)["pending"] == 0
 
 
-# The terminal link
-
-def bin_folder(home):
-    return os.path.join(home.root, ".local", "bin")
-
-
-def test_the_terminal_gets_hubctl_through_one_link_that_follows_updates_and_goes_on_uninstall(home):
-    with given("a first run in a fresh HOME where ~/.local/bin is on PATH"):
-        home.env["PATH"] = bin_folder(home) + os.pathsep + home.env["PATH"]
-        home.install()
-        setup(home, "--answer", os.path.join(ANSWERS, "nothing.json"))
-        summary = setup(home, "--reply", "{}").stdout
-    with then("the summary offers the link, and there is none yet"):
-        assert "setup link-bin" in summary
-        assert not os.path.lexists(os.path.join(bin_folder(home), "hubctl"))
-    with when("the user takes the link offer"):
-        done = home.hubctl("setup", "link-bin")
-    with then("~/.local/bin/hubctl points at the installed plugin's bin/hubctl, and links.json holds it"):
-        link = os.path.join(bin_folder(home), "hubctl")
-        assert os.readlink(link) == os.path.join(home.plugin, "bin", "hubctl")
-        assert [entry["kind"] for entry in home.state_file("links.json")["links"] if entry["path"] == link] == ["bin"]
-        assert "PATH" not in done.stdout
-    and_("the terminal runs hubctl by its name")
-    assert json.loads(home.run(["hubctl", "show", "--json"]).stdout)["flags"]["tuner"]["runs"]
-    with when("a second plugin copy is installed and apply runs"):
-        second = os.path.join(home.root, "plugin-copy-2", "hub")
-        shutil.copytree(home.plugin, second)
-        home.plugin = second
-        home.hubctl("apply")
-    with then("the link points into the second copy"):
-        assert os.readlink(link) == os.path.join(second, "bin", "hubctl")
-    with when("hubctl uninstall runs"):
-        home.hubctl("uninstall")
-    with then("the link is gone"):
-        assert not os.path.lexists(link)
-
-
-def test_the_terminal_link_never_covers_the_users_own_hubctl_and_names_the_shell_file_for_path(home):
-    with given("a set-up machine whose ~/.local/bin holds the user's own hubctl and is not on PATH, in zsh"):
-        home.env["SHELL"] = "/bin/zsh"
-        home.install()
-        setup(home, "--answer", os.path.join(ANSWERS, "nothing.json"))
-        setup(home, "--reply", "{}")
-        os.makedirs(bin_folder(home))
-        own = os.path.join(bin_folder(home), "hubctl")
-        with open(own, "w") as handle:
-            handle.write("#!/bin/sh\necho mine\n")
-    with when("the user takes the link offer"):
-        done = home.hubctl("setup", "link-bin")
-    with then("the user's file stays as it is, and one line says so"):
-        assert not os.path.islink(own) and open(own).read() == "#!/bin/sh\necho mine\n"
-        assert f"hub left {own} as it is" in done.stdout
-    and_("one line names the shell file that puts ~/.local/bin on PATH")
-    assert "~/.zshrc" in done.stdout and "PATH" in done.stdout
-    with when("hubctl uninstall runs"):
-        home.hubctl("uninstall")
-    with then("the user's file is still there"):
-        assert open(own).read() == "#!/bin/sh\necho mine\n"
-
-
-def test_the_doctor_names_the_shell_file_while_the_link_folder_is_not_on_path_and_a_deleted_link_stays_gone(home):
-    with given("a set-up machine in bash whose ~/.local/bin is not on PATH, with hub's terminal link"):
-        home.env["SHELL"] = "/usr/local/bin/bash"
-        home.install()
-        setup(home, "--answer", os.path.join(ANSWERS, "nothing.json"))
-        setup(home, "--reply", "{}")
-        done = home.hubctl("setup", "link-bin")
-        link = os.path.join(bin_folder(home), "hubctl")
-    with then("setup and the doctor each name ~/.bashrc for PATH"):
-        assert "~/.bashrc" in done.stdout
-        found = json.loads(home.hubctl("doctor", "--json").stdout)["problems"]
-        assert [problem["kind"] for problem in found if "~/.bashrc" in problem["text"]] == ["bin_not_on_path"]
-    with when("~/.local/bin is on PATH"):
-        home.env["PATH"] = bin_folder(home) + os.pathsep + home.env["PATH"]
-    with then("the doctor says nothing about it"):
-        found = json.loads(home.hubctl("doctor", "--json").stdout)["problems"]
-        assert "bin_not_on_path" not in [problem["kind"] for problem in found]
-    with when("the user deletes the link and apply runs"):
-        os.unlink(link)
-        applied = home.hubctl("apply").stdout
-    with then("the link stays gone, and the terminal link is off, pinned by the user"):
-        assert not os.path.lexists(link)
-        assert "core.terminal_link" in applied
-        record = home.show("--all")["flags"]["core.terminal_link"]
-        assert not record["runs"] and record["by"] == "user"
-
-
 # The setup skill
 SETUP_SKILL = os.path.join(PLUGIN, "skills", "hub-setup", "SKILL.md")
 CURSOR_SETUP_SKILL = "cursor/skills/hub-setup/SKILL.md"
-SKILL_HUBCTL = "python3 -I ${CLAUDE_PLUGIN_ROOT}/bin/hubctl"
+SKILL_HUBCTL = "python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py"
 # Verbs the setup skill may run without a prompt. None of them switches a flag the user names.
 SETUP_VERBS = ("setup", "show --all", "profile")
 
@@ -791,7 +704,7 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
         work_laptop(home)
         home.install()
         use_cursor_beta_in_project(home)
-        hubctl = [sys.executable, "-I", os.path.join(home.plugin, "bin", "hubctl")]
+        hubctl = [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub_switch.py")]
     with then("the first-run start text sends both tools to the skill"):
         assert "hub-setup" in context_of(session_start(home, "claude_code"))
         assert "hub-setup" in context_of(session_start(home, "cursor"))
@@ -822,7 +735,7 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
     with then("Cursor gets hub-setup with only the keys it reads, and the copy's hubctl in every command"):
         assert cursor_head == {"name": "hub-setup", "description": head["description"]}
         assert "${CLAUDE_" not in cursor_body
-        assert skill_commands(cursor_body, "python3 -I '/opt/my tools/hub/bin/hubctl'") == commands
+        assert skill_commands(cursor_body, "python3 -I '/opt/my tools/hub/lib/hub_switch.py'") == commands
 
 
 def test_every_text_names_an_agent_by_the_name_in_its_agent_file():

@@ -1,4 +1,6 @@
 """away_guard: while the user is away, only urgent questions reach them."""
+import os
+
 from dialogs import answered, ask, prompt, question, set_clock, state_lines
 from steps import and_, given, then, when
 
@@ -39,7 +41,7 @@ def test_while_alex_is_away_only_urgent_questions_reach_him(home):
     with when("Alex types a prompt"):
         back = prompt(home, "I am at my desk again, show me the open questions.")
     with then("the chat is asked to judge from his words whether he is back"):
-        assert "hubctl away clear" in back.context and "1 urgent pass" in back.context
+        assert f"python3 -I {os.path.join(home.plugin, 'lib', 'hub_switch.py')} away clear" in back.context and "1 urgent pass" in back.context
     with and_("a dialog is still held until a chat clears the away state"):
         assert ask(home, [question()]).refused
 

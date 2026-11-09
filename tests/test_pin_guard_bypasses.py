@@ -81,9 +81,9 @@ def test_hubctl_with_the_tool_call_mark_taken_away_and_no_terminal_can_not_lower
         home.install()
     with when("hubctl runs with neither mark and no terminal, as env -u AI_AGENT gives a tool call"):
         done = home.hubctl("off", GATE, check=False)
-    with then("it is refused, points to /hub in Claude Code, and offers no terminal door"):
+    with then("it is refused, asks for the change in the user's words, and offers no terminal door"):
         assert done.returncode == 1
-        assert "/hub in Claude Code" in done.stderr and "own terminal" not in done.stderr, done.stderr
+        assert "in their own words" in done.stderr and "own terminal" not in done.stderr, done.stderr
     and_("the gate still runs")
     still_runs(home, GATE, "warn")
 
@@ -93,10 +93,10 @@ def test_the_user_lowers_a_gate_with_hub_in_claude_code_and_never_in_their_own_t
         home.install()
     with when("the user runs hubctl off for the gate in a terminal, typing something else or the flag's name"):
         tries = [home.hubctl_as_user("off", GATE, typed=text, check=False) for text in ("yes", GATE)]
-    with then("nothing changes, and each refusal names the gate and points to /hub in Claude Code"):
+    with then("nothing changes, and each refusal names the gate and asks for the change in the user's words"):
         for done in tries:
             assert done.returncode == 1
-            assert GATE in done.stderr and "/hub in Claude Code" in done.stderr, done.stderr
+            assert GATE in done.stderr and "in their own words" in done.stderr, done.stderr
         still_runs(home, GATE, "warn")
     with when("the user switches it off with /hub, so the mod sends hubctl a fresh ticket"):
         home.hubctl_from_mod("off", GATE)
@@ -174,7 +174,7 @@ def test_hubctl_with_no_door_can_not_lower_in_the_local_file_a_gate_that_setup_r
     with when("hubctl with neither mark and no terminal sets the gate to warn in this repo's local file"):
         done = home.hubctl("set", GATE, "warn", "--scope", "local", check=False)
     with then("it is refused, because the gate would run weaker in the repo, and it still blocks there"):
-        assert done.returncode == 1 and "/hub in Claude Code" in done.stderr, done.stderr
+        assert done.returncode == 1 and "in their own words" in done.stderr, done.stderr
         assert not os.path.exists(os.path.join(home.work, ".hub", "hub.local.json"))
         still_runs(home, GATE, "block")
 
@@ -187,7 +187,7 @@ def test_a_pin_in_one_scope_holds_against_a_tool_call_in_another(home):
         as_model(home)
         done = home.hubctl("on", "builder", "--scope", "local", check=False)
     with then("it is refused as the user's pin, and builder stays off in the repo"):
-        assert done.returncode == 1 and "only the user" in done.stderr.lower()
+        assert done.returncode == 1 and "only when the user asks for it in their own words" in done.stderr
         assert not flag(home, "builder")["runs"]
 
 
@@ -422,7 +422,7 @@ def test_a_pin_that_lands_while_the_model_writes_another_scope_still_holds(home)
 
         done = write_while_hubctl_waits_at_the_lock(home, ["off", "scout", "--scope", "local"], user_pins_scout)
     with then("the model's change is refused as the user's pin, and scout still runs in the repo"):
-        assert done.returncode == 1 and "only the user" in done.stderr.lower(), done.stderr
+        assert done.returncode == 1 and "only when the user asks for it in their own words" in done.stderr, done.stderr
         assert flag(home, "scout")["runs"]
 
 
@@ -436,7 +436,7 @@ def test_a_raise_that_lands_while_the_users_change_waits_asks_the_user_to_run_it
         done = write_while_hubctl_waits_at_the_lock(home, ["set", GATE, "warn"], setup_raises_the_gate,
                                                     from_the_mod=True)
     with then("nothing changes, the user is told to run it again, and the gate still blocks"):
-        assert done.returncode == 1 and "changed while hubctl ran" in done.stderr, done.stderr
+        assert done.returncode == 1 and "changed while hub ran" in done.stderr, done.stderr
         assert home.settings()["flags"][GATE] == {"value": "block", "by": "setup"}
         still_runs(home, GATE, "block")
     with when("the user runs it again with /hub"):
@@ -554,7 +554,7 @@ def test_the_mod_door_takes_only_the_tickets_exact_text(home):
                  for text in look_alike_tickets(ticket)]
     with then("each one changes nothing, writes no settings file, and leaves the real ticket unused"):
         for text, done in tries:
-            assert done.returncode == 1 and "/hub in Claude Code" in done.stderr, (text, done.stderr)
+            assert done.returncode == 1 and "in their own words" in done.stderr, (text, done.stderr)
         still_runs(home, GATE, "warn")
         assert user_file_text(home) is None
         assert os.path.exists(ticket_file)
@@ -625,4 +625,4 @@ def test_a_half_written_settings_file_is_refused_and_never_overwritten(home):
 
 
 def home_hubctl(home):
-    return [sys.executable, os.path.join(home.plugin, "bin", "hubctl")]
+    return [sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py")]

@@ -50,7 +50,7 @@ def board_json(home, *args):
 
 
 def hubctl_args(home, *args):
-    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "bin", "hubctl"), *args]
+    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"), *args]
 
 
 def files_under(folder):

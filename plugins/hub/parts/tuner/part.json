@@ -34,7 +34,7 @@
     {
       "id": "setup",
       "default": "on",
-      "does": "Runs on the first session start, and again with hubctl setup.",
+      "does": "Runs on the first session start, and again when you ask hub to run setup.",
       "children": [
         {
           "id": "scan",

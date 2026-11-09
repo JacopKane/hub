@@ -5,7 +5,6 @@
     ~/.claude/output-styles/hub-style.md  link to parts/<id>/style.md or its built copy
     ~/.cursor/plugins/local/hub/        hub's own folder, its hooks call this copy
     ~/.cursor/agents/hub-<id>.md        a copy with Cursor's model name
-    ~/.local/bin/hubctl                 link to bin/hubctl, while core.terminal_link runs
 
 Every entry goes into ~/.local/state/hubctl/links.json with the part, the
 kind and the type (link, file or folder). Hub changes or removes only an
@@ -16,11 +15,11 @@ When the user has an agent of the same plain name, such as builder.md, hub
 makes no link, says why in one line, and offers to switch. Cursor reads both
 ~/.cursor/agents and ~/.claude/agents, so a user's agent of the same name in
 either keeps hub from writing its Cursor copy. Every clash goes into
-clashes.json, and hubctl doctor names it. Taking the offer
+clashes.json, and hub's doctor names it. Taking the offer
 moves the user's file to ~/.local/state/hubctl/held/agents/, and undo moves
 it back. A hub link the user deleted turns its part off, pinned, as if the
-user had typed hubctl off. A deleted terminal link turns core.terminal_link
-off the same way.
+user had turned it off. An old terminal link from an earlier hub is removed
+with the rest of the record.
 
 hub saves the record before and after each step, so an apply that stops
 partway leaves a trace of what it was doing. Before it makes or changes an
@@ -46,7 +45,6 @@ AGENTS_FOLDER_MADE = "agents-folder-made.json"
 PREFIX = "hub-"
 PINNED_KINDS = ("agent", "skill", "style", "bin")
 STYLE_FILE = "hub-style.md"
-TERMINAL_LINK = "core.terminal_link"
 # The file each shell reads at start, by the name of $SHELL.
 SHELL_FILES = {"zsh": "~/.zshrc", "bash": "~/.bashrc", "fish": "~/.config/fish/config.fish"}
 
@@ -73,34 +71,6 @@ def skill_path(part_id):
 
 def style_path():
     return os.path.join(claude_dir(), "output-styles", STYLE_FILE)
-
-
-def bin_path():
-    return os.path.join(files.home(), ".local", "bin", "hubctl")
-
-
-def bin_on_path():
-    """Whether the folder of the terminal link is on this process's PATH."""
-    folder = os.path.realpath(os.path.dirname(bin_path()))
-    return any(os.path.realpath(os.path.expanduser(entry)) == folder
-               for entry in os.environ.get("PATH", "").split(os.pathsep) if entry)
-
-
-def path_hint():
-    """One line on putting ~/.local/bin on PATH, naming the shell file from $SHELL."""
-    shell = os.path.basename(os.environ.get("SHELL", ""))
-    where = SHELL_FILES.get(shell)
-    if shell == "fish":
-        how = "fish_add_path ~/.local/bin"
-    else:
-        how = 'export PATH="$HOME/.local/bin:$PATH"'
-    place = f"to {where}" if where else "to your shell's start file"
-    return (f"~/.local/bin is not on your PATH, so a terminal can not find hubctl by name yet. "
-            f"Add {how} {place}, then open a new terminal.")
-
-
-def has_bin_link():
-    return any(entry["kind"] == "bin" and is_own(entry) for entry in read_record())
 
 
 def built_path(kind, part_id):
@@ -291,7 +261,7 @@ def pin_deleted(lines):
         history.add(entry["part"], "user", stored["value"] if stored else "on", "off", "user", "apply",
                     f"{entry['path']} was deleted")
         lines.append(f"{entry['path']} was deleted, so {entry['part']} is now off. "
-                     f"Run hubctl on {entry['part']} to bring it back.")
+                     f"Say \"turn on {entry['part']}\" to bring it back.")
     settings.write(path, data)
     write_record(kept)
 
@@ -358,7 +328,7 @@ def wanted(tree, resolved, lines):
                     offers.append({"part": part.id, "path": clashes[part.id], "link": link})
                     found.append({"part": part.id, "tool": "claude_code", "path": clashes[part.id], "skipped": link})
                     lines.append(f"hub did not make {link}, because your agent {clashes[part.id]} has the "
-                                 f"name {part.id} too. Run hubctl offers to switch.")
+                                 f"name {part.id} too. Say \"show hub's offers\" to switch.")
                 else:
                     built, changed = build.build(text, part, claude, shipped)
                     entries.append(copy_entry("agent", part, link, shipped, built, changed))
@@ -393,9 +363,6 @@ def wanted(tree, resolved, lines):
             shipped = os.path.join(folder, "style.md")
             built, changed = build.build(files.read_text(shipped) or "", part, claude, shipped)
             entries.append(copy_entry("style", part, style_path(), shipped, built, changed))
-    if claude.get(TERMINAL_LINK, {}).get("runs"):
-        entries.append({"path": bin_path(), "part": TERMINAL_LINK, "kind": "bin", "type": "link",
-                        "target": os.path.join(files.PLUGIN_ROOT, "bin", "hubctl")})
     if cursor.get("cursor_link.plugin", {}).get("runs"):
         rendered = load_cursor_handler().plugin_files(files.PLUGIN_ROOT, files.PLUGIN_ROOT)
         entries.append({"path": os.path.join(cursor_dir(), "plugins", "local", "hub"), "part": "cursor_link",
@@ -578,14 +545,14 @@ def held_path(source):
     return path
 
 
-def take(part_id, door="hubctl"):
+def take(part_id, door="step"):
     """Move the user's agent of the same name to the held folder, so hub's link can be made."""
     offer = next((offer for offer in offers() if offer["part"] == part_id), None)
     if offer is None:
-        raise LinkError(f"there is no offer for {part_id}. Run hubctl offers to list them.")
+        raise LinkError(f"there is no offer for {part_id}. Say \"show hub's offers\" to list them.")
     source = offer["path"]
     if not os.path.lexists(source):
-        raise LinkError(f"{source} is gone, so there is nothing to hold. Run hubctl apply.")
+        raise LinkError(f"{source} is gone, so there is nothing to hold. Say \"apply hub's settings\".")
     target = held_path(source)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     shutil.move(source, target)

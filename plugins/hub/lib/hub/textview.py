@@ -1,4 +1,4 @@
-"""The screen model as text, for hubctl show, the /hub mod command and the /hub skill.
+"""The screen model as text, for the switch skill's show and the /hub mod command.
 
 Text has no buttons. Under each strip line, the next line names the commands
 its buttons run.
@@ -29,8 +29,24 @@ def value_text(value):
     return str(value)
 
 
+UNDO_LINE = 'Say "undo that" to take it back.'
+# What the user says for a button, by its verb. Each takes the button's words after the verb.
+PHRASES = {"on": "turn on {words}", "off": "turn off {words}", "set": "set {words}", "pin": "keep {words} as it is",
+           "no": "no to {words}", "take": "use hub's {words}", "apply": "apply hub's settings",
+           "update": "update hub", "offers": "show hub's offers", "show": "show hub's parts",
+           "doctor": "check hub's setup"}
+
+
 def command(button):
-    return "hubctl " + " ".join(button["args"])
+    """The plain words the user says for a button, such as say "turn on researcher"."""
+    verb, *rest = button["args"]
+    if verb == "undo":
+        phrase = f"undo {' '.join(rest)}" if rest else "undo that"
+    else:
+        phrase = PHRASES.get(verb, "hub {words}").format(words=" ".join(rest) if verb in PHRASES else
+                                                              " ".join(button["args"]))
+    return f'say "{phrase.strip()}"'
+
 
 
 def header_line(header):
@@ -79,6 +95,6 @@ def render(model):
     lines.append("")
     if model["hidden"] and not model["everything"]:
         count = "1 flag is" if model["hidden"] == 1 else f"{model['hidden']} flags are"
-        lines.append(f"{count} hidden here. hubctl show --all lists them with the reason.")
-    lines.append("Change a flag with hubctl on, off, set or pin. hubctl undo takes back the last change.")
+        lines.append(f"{count} hidden here. Ask to show every flag to list them with the reason.")
+    lines.append('Ask for a change in plain words, such as "turn off scout". Say "undo that" to take back the last change.')
     return "\n".join(lines) + "\n"

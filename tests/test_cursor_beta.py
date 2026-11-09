@@ -189,7 +189,8 @@ def test_turning_cursor_link_on_notes_the_beta_and_writes_cursor_files_and_off_r
         done = home.hubctl("on", "cursor_link")
     with then("hubctl prints the one-line note first, then the row"):
         lines = done.stdout.splitlines()
-        assert lines[0] == BETA_NOTE and len(lines) == 2 and lines[1].strip().startswith("cursor_link ")
+        assert lines[0] == BETA_NOTE and len(lines) == 3 and lines[1].strip().startswith("cursor_link ")
+        assert lines[2] == 'Say "undo that" to take it back.'
     with and_("the Cursor plugin, the agent copies and the Cursor slots are written and recorded"):
         assert os.path.isdir(cursor_folder(home))
         assert os.path.isfile(cursor_agent(home, "builder")) and os.path.isfile(cursor_agent(home, "scout"))
@@ -202,7 +203,8 @@ def test_turning_cursor_link_on_notes_the_beta_and_writes_cursor_files_and_off_r
         off = home.hubctl("off", "cursor_link")
     with then("there is no note, only the row, and every Cursor file, slot and link is gone"):
         lines = off.stdout.splitlines()
-        assert len(lines) == 1 and lines[0].strip().startswith("cursor_link ") and BETA_NOTE not in off.stdout
+        assert len(lines) == 2 and lines[0].strip().startswith("cursor_link ") and BETA_NOTE not in off.stdout
+        assert lines[1] == 'Say "undo that" to take it back.'
         nothing_for_cursor(home)
     with when("the user turns it on again with --json"):
         again = json.loads(home.hubctl("on", "cursor_link", "--json").stdout)

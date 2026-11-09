@@ -11,8 +11,8 @@ case "$home_folder/" in
   *) echo "scaffold.sh changes hub's settings in HOME, so it runs only with HOME in a temp folder" >&2; exit 1 ;;
 esac
 here="$(cd "$(dirname "$0")" && pwd)"
-python3 "$here/../../plugins/hub/bin/hubctl" on tier_rule
-python3 "$here/../../plugins/hub/bin/hubctl" apply
+python3 "$here/../../plugins/hub/lib/hub_switch.py" on tier_rule
+python3 "$here/../../plugins/hub/lib/hub_switch.py" apply
 mkdir -p logs/old logs/archive/2024
 for name in logs/a.log logs/b.log logs/old/c.log logs/old/d.log logs/archive/e.log logs/archive/2024/f.log logs/archive/2024/g.log; do
   echo "line" > "$name"

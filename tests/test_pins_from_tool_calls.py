@@ -27,10 +27,10 @@ def test_a_pinned_flag_does_not_change_from_a_command_the_model_runs(home, calle
     with when("the model runs hubctl on for it inside a tool call"):
         as_caller(home, caller)
         done = home.hubctl("on", "public_text_gate.dashes", check=False)
-    with then("hubctl refuses and says only the user changes it, with /hub in Claude Code"):
+    with then("hubctl refuses and says it changes only when the user asks in their own words"):
         assert done.returncode == 1
-        assert "only the user" in done.stderr.lower()
-        assert "/hub in Claude Code" in done.stderr and "terminal" not in done.stderr
+        assert "only when the user asks for it in their own words" in done.stderr
+        assert "terminal" not in done.stderr
     and_("the settings file is unchanged")
     assert home.settings() == before
     with when("the model tries set, undo and pin"):

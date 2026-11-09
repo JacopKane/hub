@@ -645,7 +645,7 @@ def test_the_doctor_names_the_flush_job_its_last_run_and_the_terminal(home):
         lines = doctor_lines(home)
     with then("the doctor warns and names the fix"):
         [job] = [line for line in lines if f"job {JOB}" in line]
-        assert job.startswith("warning: ") and "file of this job is missing" in job and "hubctl apply" in job
+        assert job.startswith("warning: ") and "file of this job is missing" in job and "apply hub's settings" in job
     with when("the user runs hubctl apply"):
         home.hubctl("apply")
     with then("the job file is back and the warning is gone"):
@@ -660,7 +660,7 @@ def test_the_doctor_names_the_flush_job_its_last_run_and_the_terminal(home):
             json.dump(state, handle)
     with then("the doctor warns that it is not loaded and names the fix"):
         [job] = [line for line in doctor_lines(home) if f"job {JOB}" in line]
-        assert job.startswith("warning: ") and "not loaded" in job and "hubctl apply" in job
+        assert job.startswith("warning: ") and "not loaded" in job and "apply hub's settings" in job
 
 
 def test_the_doctor_says_nothing_about_jobs_or_the_terminal_while_no_chat_part_runs(home):

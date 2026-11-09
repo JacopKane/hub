@@ -1,8 +1,8 @@
-"""The away state that away_guard reads, and the `hubctl away` command.
+"""The away state that away_guard reads, and the step's `away` verb.
 
-    hubctl away set "<reason>" [--hours N]   the user left; it ends after N hours, 12 by default
-    hubctl away clear                        the user is back
-    hubctl away status
+    away set "<reason>" [--hours N]   the user left; it ends after N hours, 12 by default
+    away clear                        the user is back
+    away status
 
 The user is away while a set away state lasts, during the quiet hours until
 they type, or after idle_minutes with no typed prompt and no dialog answer.
@@ -32,7 +32,7 @@ DEFAULT_HOURS = 12
 IDLE_MINUTES = 60
 URGENT = re.compile(r"^urgent:\s*(\S.*)", re.S)
 WINDOW = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
-USAGE = 'usage: hubctl away set "<reason>" [--hours N] | hubctl away clear | hubctl away status'
+USAGE = 'usage: away set "<reason>" [--hours N] | away clear | away status'
 
 
 class Options:

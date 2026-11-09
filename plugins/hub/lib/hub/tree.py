@@ -259,7 +259,7 @@ def _check_commands(node, problems, where, part_dir):
         return
     for name, spec in commands.items():
         if name in CORE_VERBS:
-            problems.append(f"{where}: {node.id}: the command {name!r} is a core hubctl verb, so a part can not "
+            problems.append(f"{where}: {node.id}: the command {name!r} is a core verb of hub's step, so a part can not "
                             "take that name")
         elif not name.replace("_", "a").replace("-", "a").isalnum() or name != name.lower():
             problems.append(f"{where}: {node.id}: the command {name!r} must be lowercase words")

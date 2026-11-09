@@ -1,4 +1,4 @@
-"""hubctl, the terminal door. bin/hubctl only starts this.
+"""hub's internal step, which the switch skill and the mod run. lib/hub_switch.py only starts this.
 
     hubctl show [--all] [--tool claude_code|cursor]     the screen as text, or the old table with --json
     hubctl screen --json [--all] [--tool ...] [--band]  the screen model every door draws
@@ -6,7 +6,7 @@
     hubctl undo [id]           hubctl no <part>
     hubctl apply               hubctl doctor [--json]             hubctl update
     hubctl offers              hubctl take <part>                 hubctl uninstall
-    hubctl setup --answer FILE | --reply JSON          hubctl setup link-bin
+    hubctl setup --answer FILE | --reply JSON
     hubctl profile [scan | set <path> <value>]
     hubctl tuner decide --answer FILE|-                 hubctl tuner ask
     hubctl tuner give-back --since TIME
@@ -25,7 +25,9 @@ import subprocess
 import sys
 
 from . import apply, build, changes, doctor, files, links, resolve, screen, settings, slots, textview, tree as tree_module
-from . import profile, setup, tuner, uninstall
+from . import profile, protect, setup, tuner, uninstall
+
+UNINSTALL_ASK = 'Only the user can uninstall hub, by asking in their own words, such as "uninstall hub". Ask the user.'
 
 
 def add_scope(command):
@@ -52,7 +54,7 @@ def part_commands():
 
 
 def parser(extra):
-    top = argparse.ArgumentParser(prog="hubctl", description="Switch hub's parts on and off.")
+    top = argparse.ArgumentParser(prog="hub", description="Switch hub's parts on and off.")
     commands = top.add_subparsers(dest="command", required=True, metavar="command")
     add_view(commands.add_parser("show", help="the screen as text: changes, parts and their flags"))
     command = commands.add_parser("screen", help="the screen model as JSON, for the band and the pane")
@@ -89,9 +91,7 @@ def parser(extra):
     command = commands.add_parser("take", help="hold your agent of the same name and use hub's")
     command.add_argument("part")
     commands.add_parser("uninstall", help="remove hub's links, copies and state, and keep your files")
-    command = commands.add_parser("setup", help="turn the setup agent's answer into questions and apply the "
-                                  "replies, or link hubctl into ~/.local/bin (link-bin)")
-    command.add_argument("step", nargs="?", choices=["link-bin"])
+    command = commands.add_parser("setup", help="turn the setup agent's answer into questions and apply the replies")
     step = command.add_mutually_exclusive_group()
     step.add_argument("--answer", metavar="FILE", help="the setup agent's JSON answer")
     step.add_argument("--reply", metavar="JSON", help='the answers, such as {"use": "work"}')
@@ -145,13 +145,14 @@ def changed(args, line, notes, flag_id):
     else:
         print_lines(notes)
         print(textview.row_line(dict(row, depth=0, name=row["id"])))
+        print(textview.UNDO_LINE)
 
 
 def run_part_command(part, spec, words):
     flags = resolve.current(os.getcwd())["tools"]["claude_code"]["flags"]
     if not flags[part.id]["runs"]:
-        raise changes.ChangeError(f"{part.id} is off, so its command does not run. Switch it on with "
-                                  f"hubctl on {part.id}.")
+        raise changes.ChangeError(f"{part.id} is off, so its command does not run. Switch it on by saying "
+                                  f"\"turn on {part.id}\".")
     script = os.path.join(files.PARTS_DIR, part.id, spec["script"])
     program = [sys.executable, "-I", script] if script.endswith(".py") else [script]
     return subprocess.run([*program, *words]).returncode
@@ -194,7 +195,7 @@ def profile_command(words):
         print(f"{words[1]} is {json.dumps(new, ensure_ascii=False)} now, and was {json.dumps(old, ensure_ascii=False)}. "
               "It is pinned, so a scan and the tuner leave it.")
     else:
-        raise profile.ProfileError("use hubctl profile, hubctl profile scan, or hubctl profile set <path> <value>")
+        raise profile.ProfileError("use profile, profile scan, or profile set <path> <value>")
     return 0
 
 
@@ -246,7 +247,7 @@ def main(argv=None):
             if args.json:
                 print_json({"declined": offer})
             else:
-                print(f"You said no to {args.part}. It stays off, and hubctl undo brings the offer back.")
+                print(f"You said no to {args.part}. It stays off. {textview.UNDO_LINE}")
         elif args.command == "undo":
             line = changes.undo(line_id=args.id)
             if args.json:
@@ -275,7 +276,7 @@ def main(argv=None):
             try:
                 doctor.note_command(json.loads(sys.stdin.read()), os.getcwd())
             except (AttributeError, ValueError) as error:
-                print(f"hubctl: {error}", file=sys.stderr)
+                print(f"hub: {error}", file=sys.stderr)
                 return 1
         elif args.command == "offers":
             resolve.current(os.getcwd())
@@ -284,22 +285,21 @@ def main(argv=None):
                 print("no offers")
             for offer in found:
                 print(f"{offer['part']}: your agent {offer['path']} has the same name, so hub made no "
-                      f"{offer['link']}. Run hubctl take {offer['part']} to hold your file and use hub's. "
-                      f"hubctl undo moves it back.")
+                      f"{offer['link']}. Say \"use hub's {offer['part']}\" to hold your file and use hub's. "
+                      f"Say \"undo that\" to move it back.")
         elif args.command == "take":
             notes = []
             line = changes.take_offer(args.part, notes=notes)
             print(f"moved {line['source']} to {line['held']}")
             print_lines(notes)
         elif args.command == "uninstall":
+            if files.in_tool_call() and not protect.take_uninstall_ticket():
+                raise changes.ChangeError(UNINSTALL_ASK)
             print_lines(uninstall.run())
         elif args.command == "setup":
-            if [bool(args.step), bool(args.answer), args.reply is not None].count(True) != 1:
-                raise setup.SetupError("use hubctl setup --answer FILE, hubctl setup --reply JSON, "
-                                       "or hubctl setup link-bin")
-            if args.step:
-                print_lines(setup.link_bin(os.getcwd()))
-            elif args.answer:
+            if [bool(args.answer), args.reply is not None].count(True) != 1:
+                raise setup.SetupError("use setup --answer FILE or setup --reply JSON")
+            if args.answer:
                 print_json(setup.take_answer(args.answer, os.getcwd()))
             else:
                 print_lines(setup.take_reply(args.reply, os.getcwd()))
@@ -309,12 +309,12 @@ def main(argv=None):
             print_json(tuner.ask(os.getcwd()))
         elif args.command == "tuner" and args.step == "give-back":
             if not args.since:
-                raise changes.ChangeError("hubctl tuner give-back needs --since, the time of the list the mod tried")
+                raise changes.ChangeError("tuner give-back needs --since, the time of the list the mod tried")
             print("the next chat gets the tuner's list" if tuner.give_back(args.since)
                   else "nothing to give back, because no list or a newer list waits")
         elif args.command == "tuner":
             if not args.answer:
-                raise changes.ChangeError("hubctl tuner decide needs --answer FILE, or --answer - to read stdin")
+                raise changes.ChangeError("tuner decide needs --answer FILE, or --answer - to read stdin")
             print_lines([tuner.notice_text(line) for line in tuner.decide(read_answer(args.answer), os.getcwd())]
                         or ["the tuner changed nothing"])
         else:
@@ -326,6 +326,6 @@ def main(argv=None):
         return 1
     except (changes.ChangeError, settings.SettingsError, links.LinkError, build.BuildError,
             uninstall.Uninstalled, setup.SetupError, profile.ProfileError) as error:
-        print(f"hubctl: {error}", file=sys.stderr)
+        print(f"hub: {error}", file=sys.stderr)
         return 1
     return 0

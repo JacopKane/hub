@@ -28,7 +28,7 @@ def chats(home):
 
 
 def hubctl_args(home, *args):
-    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "bin", "hubctl"), *args]
+    return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"), *args]
 
 
 def in_chat(home, chat, *args):
@@ -84,9 +84,9 @@ def test_a_chats_tasks_come_from_the_ledger_and_land_in_the_right_columns(home, 
         home.hubctl("off", "chat_board.tasks")
         process = home.hubctl("board", "task", "add", "x", "--session", "00000000-0000-4000-8000-0000000000a2",
                               check=False)
-    with then("nothing is written, and the chat is told the user can turn it on with /hub"):
+    with then("nothing is written, and the chat is told the user can turn it on in words"):
         assert process.returncode != 0
-        assert "/hub on chat_board.tasks" in process.stderr and "hubctl" not in process.stderr
+        assert 'turn on chat_board.tasks' in process.stderr and "hubctl" not in process.stderr
         assert "x" not in home.hubctl("board", "show", "WEB").stdout.split()
 
 

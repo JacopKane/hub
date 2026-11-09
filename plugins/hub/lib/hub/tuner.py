@@ -268,13 +268,13 @@ def offer(part_id, reason):
         offers["offers"].append(made)
         files.write_json(path, offers)
     queue_notice({"offer": part_id, "text": f"hub's tuner offers {part_id}, because {reason}. "
-                                            f"hubctl on {part_id} turns it on."})
+                                            f"Say \"turn on {part_id}\" to turn it on."})
     return made
 
 
 def notice_text(line):
     return (f"hub's tuner turned {line['flag']} {line['new']}, because {line['reason']}. "
-            f"hubctl undo {line['id']} takes it back.")
+            f"Say \"undo {line['id']}\" to take it back.")
 
 
 def add_notice(line):

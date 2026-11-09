@@ -45,9 +45,9 @@ def test_the_search_goes_to_scout_eval_is_laid_out_the_way_the_eval_runner_reads
         script = re.search(r"scaffold_script: (\S+)", case).group(1)
         path = os.path.join(EVAL, script)
         assert subprocess.run(["bash", "-n", path]).returncode == 0
-        assert "hubctl" in read(script) and "apply" in read(script)
+        assert "hub_switch.py" in read(script) and "apply" in read(script)
     with then("the scaffold turns the tier rule on, because a new user has it off"):
-        assert "hubctl\" on tier_rule" in read(script)
+        assert 'hub_switch.py" on tier_rule' in read(script)
     with then("every grader has a known type, and one checks that scout was started"):
         graders = sorted(os.listdir(os.path.join(EVAL, "graders")))
         types = {name: frontmatter(read("graders", name)) for name in graders}
@@ -86,7 +86,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         assert set(settings) <= PROMPT_KEYS
         assert settings["plugins"] == '["no-mods/hub"]'
         assert "Skill" in settings["allowed_tools"] and "Bash" in settings["allowed_tools"]
-        assert prompt.split("---\n", 2)[2].strip() == f"/hubctl off {DASHES}"
+        assert prompt.split("---\n", 2)[2].strip() == "turn off the em dash check"
         assert 'schema_version: "1.1"' in case and "name: hub_skill_without_mods" in case
         assert "evals/*/no-mods/" in read_case("..", "..", ".gitignore").splitlines()
     with when("make-copy.sh copies the plugin into a copy of the eval folder"):
@@ -95,7 +95,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         subprocess.run(["bash", str(folder / "make-copy.sh"), os.path.join(REPO, "plugins", "hub")], check=True)
         copy = folder / "no-mods" / "hub"
     with then("the copy has no mod folder, and its hooks file and manifest no longer name the mod"):
-        assert (copy / "skills" / "hubctl" / "SKILL.md").is_file()
+        assert (copy / "skills" / "switch" / "SKILL.md").is_file()
         assert not (copy / "mod").exists()
         assert "modules" not in json.loads((copy / "hooks" / "hooks.json").read_text())
         assert "types" not in json.loads((copy / ".claude-plugin" / "plugin.json").read_text())
@@ -106,7 +106,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         environment = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(tmp_path), "TERM": "dumb"}
         script = re.search(r"scaffold_script: (\S+)", case).group(1)
         subprocess.run(["bash", str(folder / script)], cwd=workspace, env=environment, check=True)
-        done = subprocess.run(["python3", "-I", str(copy / "bin" / "hubctl"), "off", DASHES], cwd=workspace,
+        done = subprocess.run(["python3", "-I", str(copy / "lib" / "hub_switch.py"), "off", DASHES], cwd=workspace,
                               env=environment, capture_output=True, text=True, check=True)
     with then("every grader has a known type, and the file and reply graders match what hubctl did"):
         graders = {name[:-3]: frontmatter(read_case("graders", name))
@@ -117,8 +117,8 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         assert grader_regex(flag).search((workspace / path).read_text())
         assert graders["reply_holds_the_row"]["target"] == "last_message"
         assert grader_regex(graders["reply_holds_the_row"]).search(done.stdout)
-        assert graders["hubctl_ran"]["tool"] == "Bash" and "hubctl" in graders["hubctl_ran"]["input_match"]
-        skill_text = read_case("..", "..", "plugins", "hub", "skills", "hubctl", "SKILL.md")
+        assert graders["step_ran"]["tool"] == "Bash" and "hub_switch" in graders["step_ran"]["input_match"]
+        skill_text = read_case("..", "..", "plugins", "hub", "skills", "switch", "SKILL.md")
         assert graders["skill_loaded"]["target"] == "trace"
         assert grader_regex(graders["skill_loaded"]).search(skill_text)
     with then("no file uses the em dash"):
@@ -215,7 +215,7 @@ def test_the_first_run_questions_eval_lets_the_setup_agent_ask_in_one_short_dial
         assert subprocess.run(["bash", "-n", script]).returncode == 0
         with open(script) as handle:
             text = handle.read()
-        assert "hubctl" in text and "apply" in text and "temporary folder" in text
+        assert "hub_switch.py" in text and "apply" in text and "temporary folder" in text
     with then("every grader has a known type, and the agent, the answer and the single dialog are checked"):
         names = sorted(os.listdir(os.path.join(FIRST_RUN, "graders")))
         graders = {}

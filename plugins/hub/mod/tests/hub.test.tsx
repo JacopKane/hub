@@ -83,13 +83,13 @@ function hubctlArgs(calls: string[][]) {
   return calls.map(call => call.slice(3).join(' '))
 }
 
-test('the band starts hubctl from the plugin folder', async ($, on) => {
+test("the band starts hub's step from the plugin folder", async ($, on) => {
   const calls = await start($, on, () => json(DAY9))
 
   expect(calls).toHaveLength(1)
   expect(calls[0][0]).toBe('python3')
   expect(calls[0][1]).toBe('-I')
-  expect(calls[0][2].endsWith('/bin/hubctl')).toBe(true)
+  expect(calls[0][2].endsWith('/lib/hub_switch.py')).toBe(true)
   expect(calls[0].slice(3)).toEqual(['screen', '--json', '--band'])
 })
 
@@ -194,11 +194,11 @@ test('with status_band off the band leaves the line to the engine', async ($, on
   await ui.unmount()
 })
 
-test('when hubctl fails the band says so in one line', async ($, on) => {
-  await start($, on, () => ({ exitCode: 1, stdout: '', stderr: 'hubctl: no flag named "x"\nmore\n' }))
+test('when the step fails the band says so in one line', async ($, on) => {
+  await start($, on, () => ({ exitCode: 1, stdout: '', stderr: 'hub: no flag named "x"\nmore\n' }))
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await ui.find({ type: 'Text', text: /✗/ }))?.text).toBe('✗ hubctl did not answer: hubctl: no flag named "x"')
+  expect((await ui.find({ type: 'Text', text: /✗/ }))?.text).toBe('✗ hub did not answer: hub: no flag named "x"')
   await ui.unmount()
 })
 
@@ -447,79 +447,6 @@ test('a change the user sends through the Remote Control bridge goes through', a
 
   expect(result.text).toBe(ROW.trimEnd())
   expect(hubctlArgs(calls)).toContain('off public_text_gate.dashes')
-})
-
-// The hubctl skill's command, as Claude Code 2.1.319 names it whether the user types /hubctl or
-// /hub:hubctl. The skill's frontmatter lets its Bash call to hubctl run without a question.
-const SKILL = 'hub:hubctl'
-
-// Stands for Claude Code expanding the skill's text for the model, and counts how often it did.
-function skillRuns(on: On) {
-  const ran: string[] = []
-  on('command.run', (_, e) => {
-    ran.push(`${e.command} ${e.args}`)
-    return { text: 'the skill ran' }
-  })
-  return ran
-}
-
-for (const origin of NOT_TYPED) {
-  const from = origin.kind === 'plugin' ? `plugin other${origin.asUser ? ' as the user' : ''}` : origin.kind
-  test(`a /hubctl change from ${from} is refused before the skill runs, while show answers without it`, async ($, on) => {
-    const ran = skillRuns(on)
-    const calls = await start($, on, args => (args[0] === 'show' ? ok(SHOWN) : json(DAY9)))
-
-    for (const args of ['off public_text_gate.dashes', 'undo d9dash000001', 'set status_band.first_digit 4', 'relay']) {
-      const result = await $.command.run({ command: SKILL, args, origin })
-      expect(result.text).toBe(
-        `Nothing changed. Only the user can change a switch, by typing /hubctl at the prompt. This request came from ${from}.`,
-      )
-    }
-    expect(hubctlArgs(calls)).toEqual(['screen --json --band'])
-
-    expect((await $.command.run({ command: SKILL, args: '', origin })).text).toBe(SHOWN.trimEnd())
-    expect(hubctlArgs(calls)).toEqual(['screen --json --band', 'show'])
-    expect(ran).toEqual([])
-  })
-}
-
-test('a /hubctl the user types or sends through the bridge runs the skill as written', async ($, on) => {
-  const ran = skillRuns(on)
-  const calls = await start($, on, () => json(DAY9))
-
-  expect((await $.command.run({ command: SKILL, args: 'off public_text_gate.dashes', origin: TYPED })).text).toBe(
-    'the skill ran',
-  )
-  expect((await $.command.run({ command: SKILL, args: 'on researcher', origin: { kind: 'bridge' } })).text).toBe(
-    'the skill ran',
-  )
-  expect(ran).toEqual([`${SKILL} off public_text_gate.dashes`, `${SKILL} on researcher`])
-  expect(hubctlArgs(calls)).toEqual(['screen --json --band'])
-})
-
-test('a /hubctl read from a peer that hubctl can not answer says so and does not fall back to the skill', async ($, on) => {
-  const ran = skillRuns(on)
-  const clock = mock.clock(on, { now: DAY9_NOW })
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('process.run', (_, e) => (e.argv[3] === 'show' ? { deny: 'python3 is missing' } : { value: json(DAY9) }))
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  await clock.settle()
-
-  const result = await $.command.run({ command: SKILL, args: 'show', origin: { kind: 'peer' } })
-
-  expect(result.text).toBe('hubctl did not run: hub: $.process.run: python3 is missing')
-  expect(ran).toEqual([])
-})
-
-test("a peer's /hubctl that is not hub's skill, such as the user's own, runs untouched", async ($, on) => {
-  const ran = skillRuns(on)
-  await start($, on, () => json(DAY9))
-
-  const result = await $.command.run({ command: 'hubctl', args: 'off something', origin: { kind: 'peer' } })
-
-  expect(result.text).toBe('the skill ran')
-  expect(ran).toEqual(['hubctl off something'])
 })
 
 const TURN = { answer: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as const

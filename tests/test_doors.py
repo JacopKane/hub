@@ -103,7 +103,7 @@ def test_hubctl_show_and_the_screen_model_print_the_same_tree_and_strip_on_day_9
         assert "4 of 5 dash warnings" in dash["reason"]
         offer = strip_line(model, "offer:researcher")
         assert buttons(offer) == {"Turn on": ["on", "researcher"], "No": ["no", "researcher"]}
-        assert f"hubctl undo {DASH_LINE}" in shown and "hubctl no researcher" in shown
+        assert f'say "undo {DASH_LINE}"' in shown and 'say "no to researcher"' in shown
     with and_("the text has no buttons, and the dash row shows who set it"):
         assert "[" not in shown.replace("[undo]", "")
         assert DASHES in shown and "tuner" in shown
@@ -213,7 +213,7 @@ def test_an_older_line_keeps_its_undo_only_while_its_flag_holds_the_value_it_set
         home.hubctl("on", DASHES)
     with then("the older dash line stays in the strip without its undo, in the model and the text"):
         assert strip_line(screen(home), DASH_LINE)["buttons"] == []
-        assert f"hubctl undo {DASH_LINE}" not in home.hubctl("show").stdout
+        assert f'say "undo {DASH_LINE}"' not in home.hubctl("show").stdout
     with when("the user still runs hubctl undo with the older line's id"):
         refused = home.hubctl("undo", DASH_LINE, check=False)
     with then("hubctl refuses, says the flag changed since, and keeps the newer value"):
@@ -335,7 +335,7 @@ def test_a_part_command_named_in_part_json_runs_through_hubctl(home):
         home.hubctl("off", "hello")
         stopped = home.hubctl("hello", check=False)
     with then("hubctl says how to switch it on"):
-        assert stopped.returncode == 1 and "hubctl on hello" in stopped.stderr
+        assert stopped.returncode == 1 and 'turn on hello' in stopped.stderr
     with when("a part names a command that is a core verb"):
         home.edit_manifest("hello", lambda data: data["commands"].update(
             {"undo": {"script": "hello.py", "does": "Clashes."}}))
@@ -364,9 +364,9 @@ def test_the_doctor_names_broken_links_the_cost_an_untested_version_and_disable_
         for problem in problems:
             assert "\n" not in problem["text"] and problem["text"] in text
         assert "2.1.319" in text and link in text
-    with and_("the text says hooks, slots and the band are quiet, while links, hubctl and the web page still work"):
+    with and_("the text says hooks, slots and the band are quiet, while links, the switch skill and the web page still work"):
         line = [problem["text"] for problem in problems if problem["kind"] == "hooks_disabled"][0]
-        for word in ("hooks", "slots", "band", "links", "hubctl", "web page"):
+        for word in ("hooks", "slots", "band", "links", "switch skill", "web page"):
             assert word in line
     with and_("the doctor names what runs and the start text cost"):
         assert report["runs"] and "scout" in report["runs"]
@@ -389,7 +389,7 @@ def test_an_update_lists_new_behaviors_with_an_undo_and_new_parts_as_offers(home
     with and_("hubctl show prints one update line with the new behavior and its undo"):
         shown = home.hubctl("show").stdout
         assert shown.count("public_text_gate.shouting") >= 1
-        assert "hubctl off public_text_gate.shouting" in shown
+        assert 'say "turn off public_text_gate.shouting"' in shown
     with and_("the strip lists the new part as an offer"):
         model = screen(home)
         update = strip_line(model, "update:public_text_gate.shouting")
@@ -416,7 +416,7 @@ def test_the_core_verbs_and_the_part_commands_are_listed_in_help(home):
 
 
 def mod_command(home, record):
-    return home.run([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "mod-command", "--json"],
+    return home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "mod-command", "--json"],
                     stdin=json.dumps(record))
 
 
@@ -455,7 +455,7 @@ def test_mod_command_refuses_input_that_is_not_its_record(home):
     with given("hub is installed"):
         home.install()
     with when("mod-command gets text that is not the record"):
-        bad = home.run([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "mod-command", "--json"],
+        bad = home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "mod-command", "--json"],
                        stdin="[1, 2]", check=False)
     with then("it exits 1, says what it takes, and writes nothing"):
         assert bad.returncode == 1 and "used" in bad.stderr
@@ -472,13 +472,13 @@ def test_the_shipped_tested_versions_file_lists_the_recorded_claude_version():
     assert recorded in tested["claude_code"]
 
 
-# The /hub skill. In Claude Code /hub is the mod's command, and a skill named hub would
-# block it (slice 0 fact 14), so the plugin's skill is hubctl there. Cursor runs no mods,
+# The switch skill. In Claude Code /hub is the mod's command, and a skill named hub would
+# block it (slice 0 fact 14), so the plugin's skill is switch there. Cursor runs no mods,
 # so cursor_link gives Cursor the same skill under the name hub.
 
-CLAUDE_SKILL = os.path.join(PLUGIN, "skills", "hubctl", "SKILL.md")
+CLAUDE_SKILL = os.path.join(PLUGIN, "skills", "switch", "SKILL.md")
 CURSOR_SKILL = "cursor/skills/hub/SKILL.md"
-COMMAND = re.compile(r"^python3 -I (\S+/bin/hubctl) <words>$", re.MULTILINE)
+COMMAND = re.compile(r"^python3 -I (\S+/lib/hub_switch\.py) <words>$", re.MULTILINE)
 
 
 def skill_parts(text):
@@ -500,11 +500,11 @@ def cursor_link_handler():
 def run_skill_command(home, text, words):
     """Run the one command a skill's text names, with the user's words, as the model would."""
     found = COMMAND.findall(text)
-    assert len(found) == 1, f"the skill names one hubctl command, found {found}"
+    assert len(found) == 1, f"the skill names one command for hub's step, found {found}"
     return home.run(["python3", "-I", found[0], *words])
 
 
-def test_the_hub_skill_is_hubctl_in_claude_code_and_hub_in_cursor():
+def test_the_hub_skill_is_switch_in_claude_code_and_hub_in_cursor():
     with given("the plugin's skills folder"):
         names = sorted(os.listdir(os.path.join(PLUGIN, "skills")))
     with then("no skill there is named hub, so the mod's /hub can register"):
@@ -512,12 +512,12 @@ def test_the_hub_skill_is_hubctl_in_claude_code_and_hub_in_cursor():
         for name in names:
             with open(os.path.join(PLUGIN, "skills", name, "SKILL.md")) as handle:
                 assert skill_parts(handle.read())[0]["name"] == name != "hub"
-    with and_("the hubctl skill runs only when typed, and may run its one command without a prompt"):
+    with and_("Claude may load the switch skill from plain words, and run its one command without a prompt"):
         with open(CLAUDE_SKILL) as handle:
             head, body = skill_parts(handle.read())
-        assert head["disable-model-invocation"] == "true"
-        assert COMMAND.findall(body) == ["${CLAUDE_PLUGIN_ROOT}/bin/hubctl"]
-        assert head["allowed-tools"] == "Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/bin/hubctl *)"
+        assert "disable-model-invocation" not in head
+        assert COMMAND.findall(body) == ["${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py"]
+        assert head["allowed-tools"] == "Bash(python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py *)"
     with when("cursor_link renders the Cursor plugin for a copy in a folder with a space"):
         rendered = cursor_link_handler().plugin_files(PLUGIN, "/opt/my tools/hub")
         manifest = json.loads(rendered[".cursor-plugin/plugin.json"])
@@ -526,25 +526,11 @@ def test_the_hub_skill_is_hubctl_in_claude_code_and_hub_in_cursor():
         assert manifest["skills"] == "./cursor/skills/"
         assert cursor_head["name"] == "hub"
         assert cursor_head["description"] == head["description"]
-        assert cursor_head["disable-model-invocation"] == "true"
-    with and_("without Claude Code's keys, and with the copy's hubctl in place of the plugin root"):
-        assert set(cursor_head) == {"name", "description", "disable-model-invocation"}
+    with and_("without Claude Code's keys, and with the copy's step in place of the plugin root"):
+        assert set(cursor_head) == {"name", "description"}
         assert "${CLAUDE_" not in cursor_body
-        assert cursor_body == body.replace("python3 -I ${CLAUDE_PLUGIN_ROOT}/bin/hubctl",
-                                           "python3 -I '/opt/my tools/hub/bin/hubctl'")
-
-
-def test_the_mod_guards_the_hubctl_skill_under_the_name_claude_code_runs_it_by():
-    with given("the plugin's name and the hubctl skill's name"):
-        with open(os.path.join(PLUGIN, ".claude-plugin", "plugin.json")) as handle:
-            plugin_name = json.load(handle)["name"]
-        with open(CLAUDE_SKILL) as handle:
-            skill_name = skill_parts(handle.read())[0]["name"]
-        with open(os.path.join(PLUGIN, "mod", "register.tsx")) as handle:
-            module = handle.read()
-    with then("the mod's skill guard names <plugin>:<skill>, as Claude Code 2.1.319 runs /hubctl"):
-        assert f"const SKILL = '{plugin_name}:{skill_name}'" in module
-        assert "on('command.run', { command: SKILL }, guard)" in module
+        assert cursor_body == body.replace("python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py",
+                                           "python3 -I '/opt/my tools/hub/lib/hub_switch.py'")
 
 
 def test_the_command_each_hub_skill_names_changes_a_flag_and_prints_the_row(home):
@@ -559,12 +545,12 @@ def test_the_command_each_hub_skill_names_changes_a_flag_and_prints_the_row(home
             cursor_text = handle.read()
     with when('Claude Code runs its skill\'s command with the words "off public_text_gate.dashes"'):
         done = run_skill_command(home, claude_text, ["off", DASHES])
-    with then("hub.json holds the change, and hubctl printed the changed row"):
+    with then("hub.json holds the change, and hub's step printed the changed row"):
         assert home.settings()["flags"][DASHES] == {"by": "user", "value": "off"}
         assert DASHES in done.stdout and "off" in done.stdout.split(DASHES, 1)[1]
     with when('Cursor runs its copy\'s command with the words "on public_text_gate.dashes"'):
         done = run_skill_command(home, cursor_text, ["on", DASHES])
-    with then("the same hub.json changes back, because both skills start the installed hubctl"):
+    with then("the same hub.json changes back, because both skills start the installed step"):
         assert home.settings()["flags"][DASHES]["value"] == "on"
         assert DASHES in done.stdout
     with and_("apply put no skill named hub in ~/.claude/skills"):

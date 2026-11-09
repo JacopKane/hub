@@ -52,7 +52,7 @@ from .adapters import jobs, terminal
 TESTED = os.path.join(files.PLUGIN_ROOT, "tested-versions.json")
 COMMAND_RECORD = "mod-command.json"
 WANTED_COMMAND = "hub"
-QUIET = ("Claude Code runs no hooks, so hub's hooks, start text slots and band stay quiet, but links, hubctl "
+QUIET = ("Claude Code runs no hooks, so hub's hooks, start text slots and band stay quiet, but links, the switch skill "
          "and the web page still work.")
 
 
@@ -176,13 +176,11 @@ def problems(cwd=None):
         path = entry["path"]
         if os.path.islink(path) and not os.path.exists(path):
             found.append({"kind": "broken_link", "text": f"the hub link {path} points to {os.readlink(path)}, "
-                          "which is gone. Run hubctl apply to make it again."})
+                          "which is gone. Say \"apply hub's settings\" to make it again."})
     for program in ("git", "python3", "claude"):
         if shutil.which(program) is None:
             found.append({"kind": "missing_program", "text": f"{program} is not on PATH, so the parts that need it "
-                          f"do not run. Install {program}, then run hubctl apply."})
-    if links.has_bin_link() and not links.bin_on_path():
-        found.append({"kind": "bin_not_on_path", "text": links.path_hint()})
+                          f"do not run. Install {program}, then say \"apply hub's settings\"."})
     clash = command_clash()
     if clash:
         found.append({"kind": "command_clash", "text": clash_text(clash)})
@@ -191,7 +189,7 @@ def problems(cwd=None):
     if version and version not in tested.get("claude_code", []):
         listed = ", ".join(tested.get("claude_code", [])) or "none"
         found.append({"kind": "untested_version", "text": f"hub is tested with Claude Code {listed}, not with "
-                      f"{version}. Most parts still work. Run hubctl update to get a newer hub."})
+                      f"{version}. Most parts still work. Say \"update hub\" to get a newer hub."})
     for path in settings_files(cwd):
         try:
             with open(path, encoding="utf-8") as handle:
@@ -287,11 +285,11 @@ def job_lines(cwd=None):
         state = jobs.status(name, record)
         where = f"job {name} ({record[name].get('part', '?')})"
         if not state["files_present"]:
-            found.append(("warning", f"{where}: a file of this job is missing. Run hubctl apply to write it again."))
+            found.append(("warning", f"{where}: a file of this job is missing. Say \"apply hub's settings\" to write it again."))
         elif state["backend"] == "none":
             found.append(("note", f"{where} does not run: {state['detail']}."))
         elif not state["loaded"]:
-            found.append(("warning", f"{where} is not loaded ({state['detail']}). Run hubctl apply to load it."))
+            found.append(("warning", f"{where} is not loaded ({state['detail']}). Say \"apply hub's settings\" to load it."))
         else:
             last = jobs.last_run(name, record)
             found.append(("note", f"{where} is loaded ({state['detail']})" + (f", {last}." if last else ".")))

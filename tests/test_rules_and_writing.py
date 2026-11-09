@@ -192,7 +192,7 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
     with then("hub_style is off by user, one line says so, and outputStyle keeps the user's pick"):
         assert home.settings()["flags"]["hub_style"] == {"by": "user", "value": "off"}
         lines = [line for line in result.stdout.splitlines() if "hub_style" in line]
-        assert len(lines) == 1 and "Explanatory" in lines[0] and "hubctl on hub_style" in lines[0]
+        assert len(lines) == 1 and "Explanatory" in lines[0] and 'Say "turn on hub_style"' in lines[0]
         assert json.loads(read(claude_settings(home)))["outputStyle"] == "Explanatory"
         assert not os.path.lexists(style_link(home))
     with when("the user turns hub_style on again"):

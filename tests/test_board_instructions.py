@@ -45,8 +45,12 @@ def start_text(home):
                      if os.path.exists(os.path.join(folder, f"{number}.md")))
 
 
+def step_words(home):
+    return "python3 -I " + os.path.join(home.plugin, "lib", "hub_switch.py")
+
+
 def keep_text(home):
-    return read(part_file(home, "chat_board", "text", "keep_task_line.md")).strip()
+    return read(part_file(home, "chat_board", "text", "keep_task_line.md")).strip().replace("{{step}}", step_words(home))
 
 
 def skill_text(home):
@@ -78,12 +82,12 @@ def test_each_chat_is_told_to_keep_its_task_line_only_while_the_board_runs(home)
         text = keep_text(home)
     with then("the start text has no task line instruction"):
         assert text not in start_text(home)
-        assert "hubctl board task" not in start_text(home)
+        assert "board task now" not in start_text(home)
     with when("the user turns chat_board on"):
         home.hubctl("on", "chat_board")
-    with then("the start text holds the instruction once, and it names hubctl board task"):
+    with then("the start text holds the instruction once, and it names the board task commands"):
         assert start_text(home).count(text) == 1
-        assert "hubctl board task now" in text and "hubctl board task done" in text
+        assert "board task now" in text and "board task done" in text
         assert DASH not in text
     with when(f"the user turns off {KEEP}"):
         home.hubctl("off", KEEP)
@@ -98,15 +102,15 @@ def test_every_command_the_task_line_instruction_names_works_in_a_chat(home, cha
         home.hubctl("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         web = chats.start("WEB", title="WEB", live=True, commands=True)
-        commands = re.findall(r"`(hubctl board task [^`]+)`", keep_text(home))
+        commands = re.findall(r"`python3 -I \S+ (board task [^`]+)`", keep_text(home))
     with when("WEB runs each command in the instruction, with a made-up task in place of the placeholder"):
         results = []
         for command in commands:
             words = shlex.split(command.replace("<task>", "write the README"))
-            results.append(web.run(["env", f"HUB_NOW={T}", "python3", os.path.join(home.plugin, "bin", "hubctl"),
-                                    *words[1:]]))
+            results.append(web.run(["env", f"HUB_NOW={T}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"),
+                                    *words]))
     with then("the instruction names now, add and done, and each command ends well"):
-        assert {shlex.split(command)[3] for command in commands} >= {"now", "add", "done"}
+        assert {shlex.split(command)[2] for command in commands} >= {"now", "add", "done"}
         assert all(code == 0 for code, _out, _err in results), results
     with and_("WEB's ledger ends with the task done"):
         tasks = json.loads(home.hubctl("board", "--json").stdout)["cards"][0]["tasks"]
@@ -119,9 +123,10 @@ def test_the_coordinator_reads_the_board_only_while_the_board_runs(home):
         home.hubctl("on", "coordinator")
         shipped = read(part_file(home, "coordinator", "skill", "SKILL.md"))
         wanted = section(shipped, READ_BOARD)
-    with then("the shipped skill has a read_board section that runs hubctl board --json"):
-        assert "hubctl board --json" in wanted
+    with then("the shipped skill has a read_board section that runs the step's board --json"):
+        assert "{{step}} board --json" in wanted
         assert DASH not in wanted
+        wanted = wanted.replace("{{step}}", step_words(home))
     with and_("the coordinator's skill text leaves the read_board section out and keeps the others"):
         copy = skill_text(home)
         assert wanted not in copy

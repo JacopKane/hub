@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from conftest import REPO, load_fixture
+from conftest import CONFIG_NAME, REPO, load_fixture
 from steps import and_, given, then, when
 
 PART = "self_protection"
@@ -24,7 +24,7 @@ def refused_by(result, check):
 
 def asks_the_user(result):
     text = result.reason.lower()
-    return "user" in text and "terminal" not in text and "/hub in claude code" in text
+    return "user" in text and "terminal" not in text and "in their own words" in text
 
 
 def file_call(home, tool_name, tool_input):
@@ -56,7 +56,7 @@ def test_a_tool_call_that_runs_hubctl_to_lower_a_protection_is_refused(home, too
     with when(f"the model runs {command!r} in a tool call"):
         result = home.hook(tool, "PreToolUse", command)
     with then("the call is refused by the hubctl check and asks the model to ask the user"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
         assert asks_the_user(result), result.reason
     with and_("the settings did not change"):
         assert home.settings() == before
@@ -84,7 +84,7 @@ def test_a_pinned_flag_can_not_be_changed_from_a_tool_call_even_in_another_scope
     with when("the model turns it off in the local scope from a tool call"):
         result = home.hook(tool, "PreToolUse", "hubctl off public_text_gate.dashes --scope local")
     with then("the call is refused, because a pin is the user's"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
@@ -101,7 +101,7 @@ def test_hubctl_inside_a_wrapper_or_a_substitution_is_refused_too(home, tool, co
     with when(f"the model hides the call as {command!r}"):
         result = home.hook(tool, "PreToolUse", command)
     with then("the call is refused"):
-        assert refused_by(result, "hubctl"), result.reason
+        assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
@@ -164,7 +164,7 @@ def test_reading_the_agent_marker_still_runs(home, tool):
     "cp /tmp/forged.json $HOME/.config/hubctl/hub.json",
     "mv /tmp/forged.json ${XDG_CONFIG_HOME}/hubctl/hub.json",
     "rm -rf ~/.local/state/hubctl",
-    "cd ~/.config/hubctl && echo '{}' >hub.json",
+    f"cd ~/.config/{CONFIG_NAME} && echo '{{}}' >hub.json",
     "python3 -c \"open('/x/.config/hubctl/hub.json', 'w').write('{}')\"",
     "perl -pi -e 's/block/off/' .hub/hub.json",
     "echo '{}' > .hub/hub.local.json",
@@ -228,7 +228,7 @@ def test_self_protection_answers_before_the_public_text_gate(home):
         result = home.hook("claude_code", "PreToolUse",
                            "git commit -q --allow-empty -m 'see /home/sam/plan.md' && hubctl uninstall")
     with then("the refusal is self_protection's, not the gate's"):
-        assert refused_by(result, "hubctl") and result.findings == [], result.reason
+        assert refused_by(result, "lowering") and result.findings == [], result.reason
 
 
 def test_the_user_can_turn_one_check_off_with_hub_in_claude_code(home):
@@ -236,16 +236,16 @@ def test_the_user_can_turn_one_check_off_with_hub_in_claude_code(home):
         home.install()
     with when("the user tries to turn the settings files check off in their own terminal, typing its id"):
         typed = home.hubctl_as_user("off", f"{PART}.settings_files", check=False)
-    with then("it is refused and points to /hub in Claude Code, and a write of hub.json is still refused"):
-        assert typed.returncode != 0 and "/hub in Claude Code" in typed.stderr, typed.stderr
+    with then("it is refused and says only the user can ask in their own words, and a write of hub.json is still refused"):
+        assert typed.returncode != 0 and "in their own words" in typed.stderr, typed.stderr
         assert refused_by(home.hook("claude_code", "PreToolUse", "echo '{}' > ~/.config/hubctl/hub.json"),
                           "settings_files")
-    with when("the user turns it off with /hub in Claude Code, and the model writes hub.json"):
+    with when("the user turns it off through the mod, and the model writes hub.json"):
         home.hubctl_from_mod("off", f"{PART}.settings_files")
         result = home.hook("claude_code", "PreToolUse", "echo '{}' > ~/.config/hubctl/hub.json")
     with then("that call runs, and the other checks still refuse"):
         assert result.ran, result.reason
-        assert refused_by(home.hook("claude_code", "PreToolUse", "hubctl uninstall"), "hubctl")
+        assert refused_by(home.hook("claude_code", "PreToolUse", "hubctl uninstall"), "lowering")
 
 
 def test_a_broken_hub_still_refuses_a_call_that_touches_hub(home, tool):
@@ -269,7 +269,7 @@ def test_signals_count_each_refusal(home):
         home.hook("claude_code", "PreToolUse", "hubctl uninstall")
     with then("one blocked signal is logged for the hubctl check"):
         found = [(line["flag"], line["signal"]) for line in home.signals() if line["flag"].startswith(PART)]
-        assert found == [(f"{PART}.hubctl", "blocked")], json.dumps(home.signals())
+        assert found == [(f"{PART}.lowering", "blocked")], json.dumps(home.signals())
 
 
 def test_the_security_doc_states_what_the_local_checks_can_not_do():

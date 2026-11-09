@@ -1,9 +1,8 @@
-"""hubctl setup: turn the setup agent's answer into a dialog, then apply the user's replies.
+"""hub setup: turn the setup agent's answer into a dialog, then apply the user's replies.
 
-    hubctl setup --answer FILE    checks the agent's JSON answer, keeps it, prints the questions
-    hubctl setup --reply JSON     {question id: option label}, with the ids --answer printed. Skip or a
+    setup --answer FILE    checks the agent's JSON answer, keeps it, prints the questions
+    setup --reply JSON     {question id: option label}, with the ids --answer printed. Skip or a
                                   left-out id changes nothing, and an id setup did not ask is refused
-    hubctl setup link-bin         links ~/.local/bin/hubctl to this copy's bin/hubctl
 
 The answer is {profile: {this_machine}, questions: [{id, text, options:
 [{label, does, flags?, machine?}]}], instructions_off: [ids], offers: [ids]}.
@@ -23,7 +22,7 @@ import json
 import os
 import secrets
 
-from . import apply, changes, files, links, profile, protect, resolve, scan, screen, settings, tree as tree_module
+from . import apply, changes, files, profile, protect, resolve, scan, screen, settings, tree as tree_module
 
 PENDING = os.path.join("setup", "pending.json")
 SKIP = {"label": "Skip", "does": "Changes nothing."}
@@ -31,7 +30,7 @@ SKIP = {"label": "Skip", "does": "Changes nothing."}
 MACHINE_ANSWERS = {"use": {"work", "home", "both"}}
 MAX_TEXT = 300
 UNKNOWN_IDS = ("Nothing changed, because setup did not ask {unknown}. Use the question ids that "
-               "hubctl setup --answer printed: {asked}.")
+               "setup --answer printed: {asked}.")
 
 
 class SetupError(ValueError):
@@ -157,7 +156,7 @@ def take_reply(raw, cwd):
         raise SetupError("the reply must be one JSON object of question ids and option labels")
     pending = files.read_json(files.state_path(PENDING))
     if pending is None:
-        raise SetupError("there is no setup answer yet. Run hubctl setup --answer <file> first.")
+        raise SetupError("there is no setup answer yet. Run setup --answer <file> first.")
     asked = [question["id"] for question in pending["questions"]]
     unknown = sorted(reply_id for reply_id in replies if reply_id not in asked)
     if unknown:
@@ -219,38 +218,10 @@ def summary(cwd, changed):
         lines += ["", heading + ":"] + [f"- {row['id']}: {row['does']}" for row in group]
     if changed:
         lines += ["", "Setup changed:"] + [f"- {line['flag']} is {json.dumps(line['new'])} now, because "
-                                           f"{line['reason']}. hubctl undo {line['id']} takes it back."
+                                           f"{line['reason']}. Say \"undo {line['id']}\" to take it back."
                                            for line in changed]
     offered = [entry for entry in model["strip"] if entry["kind"] == "offer"]
     if offered:
         lines += ["", "Offered. These stay off until you say yes:"] + [f"- {entry['text']}" for entry in offered]
-    if not links.has_bin_link():
-        lines += ["", f"To run hubctl by name in any terminal, run {link_bin_command()} once. "
-                  f"It links {links.bin_path()} to this copy of hub."]
-    lines += ["", "See the rest with hubctl show."]
-    return lines
-
-
-def link_bin_command():
-    return f"{os.path.join(files.PLUGIN_ROOT, 'bin', 'hubctl')} setup link-bin"
-
-
-def link_bin(cwd):
-    """Switch the terminal link on and apply. Returns the lines to print.
-
-    The user's own call pins it. Inside a tool call it is set by setup, so a
-    value the user typed stays.
-    """
-    by = "setup" if files.in_tool_call() else "user"
-    notes = []
-    line = changes.set_flag(links.TERMINAL_LINK, "on", by=by, door="setup", cwd=cwd, notes=notes,
-                            reason="you asked for the terminal link")
-    if line is None and by == "setup":
-        return [f"You switched {links.TERMINAL_LINK} off yourself, so only you can switch it back on. "
-                f"Run hubctl on {links.TERMINAL_LINK} in your own terminal."]
-    lines = list(notes)
-    if links.has_bin_link():
-        lines.append(f"{links.bin_path()} now runs this copy of hub and moves with each update.")
-    if not links.bin_on_path():
-        lines.append(links.path_hint())
+    lines += ["", "Ask for any change in plain words, such as \"turn off scout\"."]
     return lines

@@ -1,6 +1,6 @@
 ---
 type: regex
 target: trace
-pattern: 'exactly as it printed it'
+pattern: 'Reply with the line hub printed'
 arm: with-only
 ---

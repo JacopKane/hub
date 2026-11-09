@@ -1,13 +1,13 @@
-"""hubctl relay: the prompts that wait in other chats, for the coordinator's mod only.
+"""relay: the prompts that wait in other chats, for the coordinator's mod only.
 
 The verbs are internal. The mod calls them, and the user sees what waits in
 the /hub pane and the band, never in a terminal command.
 
-    hubctl relay next --session S --json [--skip ID ...]
-                                           what the coordinator's mod shows next
-    hubctl relay pick <id> <label> --session S
-                                           the button the user picked
-    hubctl relay again --session S         show the prompts put off with Later again
+    relay next --session S --json [--skip ID ...]
+                                    what the coordinator's mod shows next
+    relay pick <id> <label> --session S
+                                    the button the user picked
+    relay again --session S         show the prompts put off with Later again
 
 next answers {"hub": false} to every chat except the live coordinator that
 holds the relay's lock (relay/owner.json), which it takes when the chat that
@@ -156,7 +156,7 @@ def again(args, flag_values):
 
 
 def parser():
-    top = argparse.ArgumentParser(prog="hubctl relay", description=__doc__.split("\n\n")[0])
+    top = argparse.ArgumentParser(prog="relay", description=__doc__.split("\n\n")[0])
     verbs = top.add_subparsers(dest="verb", required=True)
     shown = verbs.add_parser("next", help="what the coordinator's mod shows next")
     shown.add_argument("--session", required=True)
@@ -173,7 +173,7 @@ def parser():
 
 def main(argv):
     if files.in_tool_call():
-        return refuse("hubctl relay does not run inside a tool call. Only the coordinator's mod runs it.")
+        return refuse("relay does not run inside a tool call. Only the coordinator's mod runs it.")
     args = parser().parse_args(argv)
     flag_values = flags()
     if args.verb == "next":

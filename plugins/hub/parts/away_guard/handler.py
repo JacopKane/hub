@@ -29,7 +29,7 @@ HOLD = (
 )
 BACK = (
     "The user has been away since {since}, {reason}. If their words show they are back at work (a task, not "
-    "a note sent on the way), run hubctl away clear. Then ask the held questions in one dialog and name the "
+    "a note sent on the way), run " + files.step_command() + " away clear. Then ask the held questions in one dialog and name the "
     "{count} made while they were away. If not, keep holding them."
 )
 
@@ -57,14 +57,14 @@ def held_text(away, state, options):
     if state["kind"] == "idle":
         now = (f"The user has been silent since {since}, with no prompt or answer for over "
                f"{options.idle_minutes:g} minutes.")
-        end = "It stays held until the user's words show they are back and a chat runs hubctl away clear."
+        end = f"It stays held until the user's words show they are back and a chat runs {files.step_command()} away clear."
     elif state["kind"] == "quiet":
         now = f"The user is {state['reason']}, which count as away."
         end = (f"The quiet hours end at {away.show(state['until'], options)}. A prompt the user types before "
                "then opens dialogs again.")
     else:
         now = f"The user has been away since {since}, {state['reason']}."
-        end = "Only when the user's words show they are back, run hubctl away clear."
+        end = f"Only when the user's words show they are back, run {files.step_command()} away clear."
     return HOLD.format(state=now, end=end)
 
 

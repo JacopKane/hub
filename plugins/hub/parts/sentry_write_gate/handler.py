@@ -90,8 +90,8 @@ def doctor(flags):
     problem = pattern_problem(flags.value(f"{PART}.server_pattern") or "")
     if problem:
         lines.append(("warning", f"server_pattern can not be used, because {problem}. Until it is fixed, every MCP "
-                                 f"server with {SERVER_WORD} in its name is gated. Fix it with "
-                                 f"hubctl set {PART}.server_pattern <pattern>."))
+                                 f"server with {SERVER_WORD} in its name is gated. Fix it by saying "
+                                 f"\"set {PART}.server_pattern to <pattern>\"."))
     found = load_list()
     if found is None:
         lines.append(("warning", "read_tools.json is missing or broken, so every Sentry call asks first. "
