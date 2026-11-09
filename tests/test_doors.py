@@ -228,18 +228,18 @@ def test_an_older_line_keeps_its_undo_only_while_its_flag_holds_the_value_it_set
 
 
 def test_an_undo_of_a_project_value_checks_the_project_file_not_the_user_file(home):
-    with given("the day 9 fixture, dashes off in this repo's project file, and later on in the user file"):
+    with given("the day 9 fixture, dashes on in this repo's project file, and later off in the user file"):
         day9(home)
-        home.hubctl("off", DASHES, "--project")
+        home.hubctl("on", DASHES, "--project")
         project_line = screen(home)["strip"][0]
-        home.hubctl("on", DASHES)
-    with then("the project line keeps its undo, since the project file still holds off"):
+        home.hubctl("off", DASHES)
+    with then("the project line keeps its undo, since the project file still holds on"):
         assert buttons(strip_line(screen(home), project_line["id"])) == {"Undo": ["undo", project_line["id"]]}
     with when("the user undoes the project line"):
         home.hubctl("undo", project_line["id"])
     with then("the project file holds the old value again, pinned"):
         with open(os.path.join(home.work, ".hub", "hub.json")) as handle:
-            assert json.load(handle)["flags"][DASHES] == {"by": "user", "value": "on"}
+            assert json.load(handle)["flags"][DASHES] == {"by": "user", "value": "off"}
 
 
 def test_the_band_reads_its_flags_and_each_line_mark_from_the_screen_model(home):

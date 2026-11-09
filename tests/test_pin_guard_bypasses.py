@@ -200,17 +200,17 @@ def test_a_change_from_a_tool_call_is_set_by_the_model_and_is_never_a_pin(home):
         answer = write_answer(home, {"profile": {"this_machine": "laptop"}, "questions": [
             {"id": "gate_mode", "text": "How strict should the gate be?",
              "options": [{"label": "Block", "does": "Stops the call.", "flags": {GATE: "block"}}]}]})
-    with when("the model sets the gate to warn, its default, and switches builder off"):
+    with when("the model sets the gate to warn, its default, and switches scout off"):
         as_model(home)
         home.hubctl("set", GATE, "warn")
-        home.hubctl("off", "builder")
-    with then("the gate's value is not kept, and builder's entry is by the model"):
+        home.hubctl("off", "scout")
+    with then("the gate's value is not kept, and scout's entry is by the model"):
         flags = home.settings()["flags"]
         assert GATE not in flags
-        assert flags["builder"] == {"value": "off", "by": "model"}
+        assert flags["scout"] == {"value": "off", "by": "model"}
         assert home.history()[-1]["by"] == "model"
     and_("a --by option is no longer taken")
-    assert home.hubctl("set", "builder", "on", "--by", "user", check=False).returncode == 2
+    assert home.hubctl("set", "scout", "on", "--by", "user", check=False).returncode == 2
     with when("the user then picks Block in setup"):
         dialog = json.loads(home.hubctl("setup", "--answer", answer).stdout)
         home.hubctl("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Block"}))
@@ -296,10 +296,12 @@ def test_the_tuner_can_not_lower_a_gate_from_a_forged_list(home):
 
 
 def test_forged_signals_never_make_a_protected_flag_a_tuner_candidate(home):
-    with given("setup switched the tier guard on, which is no pin, and the signal log says the user went past "
-               "secrets, the gate, the tier guard and the dash check many times"):
+    with given("setup switched the tier rule, its guard and the dash check on, which is no pin, and the signal log says "
+               "the user went past secrets, the gate, the tier guard and the dash check many times"):
         home.install()
+        home.set_by("setup", "tier_rule", "on")
         home.set_by("setup", "tier_rule.guard", "on")
+        home.set_by("setup", DASHES, "on")
         home.env["HUB_TEST_NOW"] = "2026-11-01T10:00:00Z"
         os.makedirs(home.state, exist_ok=True)
         with open(os.path.join(home.state, "signals.jsonl"), "a") as handle:
@@ -409,19 +411,19 @@ def test_a_raise_that_lands_while_the_model_sets_the_gate_to_its_default_still_h
 
 
 def test_a_pin_that_lands_while_the_model_writes_another_scope_still_holds(home):
-    with given("hub is installed, and builder runs"):
+    with given("hub is installed, and scout runs"):
         home.install()
-        assert flag(home, "builder")["runs"]
-    with when("the model switches builder off in this repo's local file, and the user pins it on before the write"):
+        assert flag(home, "scout")["runs"]
+    with when("the model switches scout off in this repo's local file, and the user pins it on before the write"):
         as_model(home)
 
-        def user_pins_builder(data):
-            data.setdefault("flags", {})["builder"] = {"value": "on", "by": "user"}
+        def user_pins_scout(data):
+            data.setdefault("flags", {})["scout"] = {"value": "on", "by": "user"}
 
-        done = write_while_hubctl_waits_at_the_lock(home, ["off", "builder", "--scope", "local"], user_pins_builder)
-    with then("the model's change is refused as the user's pin, and builder still runs in the repo"):
+        done = write_while_hubctl_waits_at_the_lock(home, ["off", "scout", "--scope", "local"], user_pins_scout)
+    with then("the model's change is refused as the user's pin, and scout still runs in the repo"):
         assert done.returncode == 1 and "only the user" in done.stderr.lower(), done.stderr
-        assert flag(home, "builder")["runs"]
+        assert flag(home, "scout")["runs"]
 
 
 def test_a_raise_that_lands_while_the_users_change_waits_asks_the_user_to_run_it_again(home):

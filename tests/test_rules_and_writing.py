@@ -120,6 +120,7 @@ def test_turning_off_one_rule_removes_only_that_sentence_and_the_slots_keep_whol
         use_cursor_beta(home)
         home.install()
         home.hubctl("on", "working_rules")
+        home.hubctl("on", "tier_rule")
         home.hubctl("on", "hub_style")
         rules = rule_texts(home)
         assert len(rules) >= 20 and len({flag.split(".")[1] for flag, _ in rules}) == 7

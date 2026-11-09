@@ -122,7 +122,8 @@ def use_cursor_beta(home):
 # scenarios
 
 def test_turning_off_one_tier_rule_sentence_removes_only_that_sentence_from_the_start_text(home):
-    with given("hub is installed with scout, builder and the tier rule on"):
+    with given("hub is installed with scout, and the user turned builder and the tier rule on"):
+        home.switch_on("builder", "tier_rule")
         home.install()
         sentences = tier_texts(home)
         before, _ = session_start(home)
@@ -157,7 +158,8 @@ def test_turning_off_one_tier_rule_sentence_removes_only_that_sentence_from_the_
 
 
 def test_tier_rows_follow_the_agents_that_run(home):
-    with given("scout and builder are on"):
+    with given("scout runs, and the user turned builder and the tier rule on"):
+        home.switch_on("builder", "tier_rule")
         home.install()
         text, _ = session_start(home)
     with then("the table has the mechanical and judgement rows only"):
@@ -179,7 +181,8 @@ def test_tier_rows_follow_the_agents_that_run(home):
 
 
 def test_a_changed_agent_gets_a_built_copy_and_a_new_link_the_folder_watch_sees(home):
-    with given("~/.claude/agents/hub-builder.md links to the shipped file"):
+    with given("~/.claude/agents/hub-builder.md links to the shipped file, since the user turned builder on"):
+        home.switch_on("builder")
         home.install()
         link = agent_link(home, "builder")
         shipped = os.path.join(home.plugin, "parts", "builder", "agent.md")
@@ -217,7 +220,8 @@ def test_apply_never_replaces_a_file_that_is_not_its_own_link(home):
         os.makedirs(os.path.dirname(path))
         with open(path, "w") as handle:
             handle.write("---\nname: my-scout\ndescription: mine\n---\n\nMy own notes.\n")
-    with when("apply runs"):
+    with when("the user turns builder on and apply runs"):
+        home.switch_on("builder")
         home.install()
         result = home.hubctl("apply")
     with then("the file is unchanged, one line names it, and the record has no entry for it"):
@@ -242,9 +246,10 @@ def replace_with_own_link(home, path, name):
 def test_a_users_own_link_or_file_at_a_recorded_path_is_never_replaced_or_deleted(home):
     cursor_folder = os.path.join(home.root, ".cursor", "plugins", "local", "hub")
     notes = os.path.join(cursor_folder, "my-notes.md")
-    with given("hub is installed with Cursor, so the record holds its links and its Cursor folder"):
+    with given("hub is installed with Cursor and builder on, so the record holds its links and its Cursor folder"):
         os.makedirs(home.config)
         use_cursor_beta(home)
+        home.switch_on("builder")
         home.install()
         recorded = {entry["path"] for entry in home.state_file("links.json")["links"]}
         assert {agent_link(home, "builder"), agent_link(home, "scout"), cursor_folder} <= recorded
@@ -277,7 +282,8 @@ def test_a_users_agent_of_the_same_name_holds_the_hub_link_with_an_offer_to_swit
         os.makedirs(os.path.dirname(mine))
         with open(mine, "w") as handle:
             handle.write("---\nname: builder\ndescription: My builder\n---\n\nMine.\n")
-    with when("apply runs"):
+    with when("the user turns hub's builder on and apply runs"):
+        home.switch_on("builder")
         home.install()
         result = home.hubctl("apply")
     with then("no hub-builder link is made, one line says why, and the offer is listed"):
@@ -352,9 +358,10 @@ def test_text_that_needs_more_than_eight_slots_makes_the_doctor_warn(home):
 
 
 def test_cursor_gets_the_same_parts_with_mapped_models(home):
-    with given("a profile that lists Cursor, with the Cursor beta on"):
+    with given("a profile that lists Cursor, with the Cursor beta, builder and the tier rule on"):
         os.makedirs(home.config)
         use_cursor_beta(home)
+        home.switch_on("builder", "tier_rule")
     with when("apply runs"):
         home.install()
     with then("~/.cursor/plugins/local/hub is hub's own folder that calls the installed copy"):
@@ -430,7 +437,8 @@ def test_the_cursor_manifest_leaves_out_what_only_claude_codes_mod_reads():
 
 def test_after_an_update_every_link_points_at_the_new_copy(home):
     second = os.path.join(home.root, "plugin-copy-2", "hub")
-    with given("links and built copies made from a first plugin copy"):
+    with given("links and built copies made from a first plugin copy, with builder on"):
+        home.switch_on("builder")
         home.install()
         home.hubctl("off", "builder.instructions.test_first")
         assert os.readlink(agent_link(home, "scout")).startswith(home.plugin + os.sep)
@@ -542,7 +550,8 @@ def test_cursors_single_start_text_stays_under_the_limit(home):
 
 
 def test_show_counts_the_listing_and_the_start_text(home):
-    with given("hub is installed"):
+    with given("hub is installed, and the user turned builder and the tier rule on"):
+        home.switch_on("builder", "tier_rule")
         home.install()
     with when("the user runs hubctl show --json"):
         cost = home.show()["cost"]
@@ -656,6 +665,8 @@ def test_a_users_agent_of_the_same_name_keeps_hub_from_writing_its_cursor_copy(h
                 handle.write(text)
         os.makedirs(home.config)
         use_cursor_beta(home)
+    with and_("the user turned hub's builder on"):
+        home.switch_on("builder")
     with when("apply runs"):
         home.install()
         result = home.hubctl("apply")

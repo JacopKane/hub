@@ -17,8 +17,8 @@ NEW_AGENTS = {
     "researcher": ("sonnet", "medium", "Edit, Write, NotebookEdit, Agent"),
     "worker": ("sonnet", "medium", None),
     "reviewer": ("opus", "high", "Edit, Write, NotebookEdit, Agent"),
-    "planner": ("opus", "max", "Agent"),
-    "critic": ("opus", "xhigh", "Edit, Write, NotebookEdit, Agent"),
+    "planner": ("opus", "high", "Agent"),
+    "critic": ("opus", "high", "Edit, Write, NotebookEdit, Agent"),
 }
 GENERIC = ["no_public_steps", "report_short", "no_agents"]
 SECTIONS = {
@@ -51,7 +51,9 @@ def section_lines(path):
 
 
 def test_the_new_agents_ship_off_and_each_one_switched_on_adds_its_row(home):
-    with given("hub is installed with its defaults"):
+    with given("hub is installed with its defaults, and the user turned builder and the tier rule on, which a new "
+               "user has off"):
+        home.switch_on("builder", "tier_rule")
         home.install()
         text, _ = session_start(home)
     with then("only scout and builder run, so the table has the mechanical and judgement rows"):
@@ -81,8 +83,8 @@ def test_the_new_agents_ship_off_and_each_one_switched_on_adds_its_row(home):
     with then("every tier has its row, in order, with each agent's model and effort"):
         assert tiers(text) == ["Mechanical", "Standard", "Judgement", "Planning", "Critical"]
         assert "| builder, reviewer | opus | high |" in rows(text)["Judgement"]
-        assert "| planner | opus | max |" in rows(text)["Planning"]
-        assert "| critic | opus | xhigh |" in rows(text)["Critical"]
+        assert "| planner | opus | high |" in rows(text)["Planning"]
+        assert "| critic | opus | high |" in rows(text)["Critical"]
     with when("the user switches builder off and worker off"):
         home.hubctl("off", "builder")
         home.hubctl("off", "worker")
@@ -133,9 +135,11 @@ def test_the_new_agent_texts_stay_generic():
 
 
 def test_cursor_gets_a_copy_of_each_new_agent_that_runs(home):
-    with given("a profile that lists Cursor, with the Cursor beta on, and reviewer switched on"):
+    with given("a profile that lists Cursor, with the Cursor beta, builder and the tier rule on, and reviewer "
+               "switched on"):
         os.makedirs(home.config)
         use_cursor_beta(home)
+        home.switch_on("builder", "tier_rule")
         home.install()
         home.hubctl("on", "reviewer")
     with then("~/.cursor/agents/hub-reviewer.md names the mapped model and effort"):
@@ -191,7 +195,8 @@ def write_agent(folder, file_name, name):
 
 
 def test_the_tier_guard_only_counts_untiered_calls_until_it_is_switched_on_then_refuses_them(home):
-    with given("hub is installed with the guard off, as it ships"):
+    with given("the user turned builder and the tier rule on, and hub is installed with the guard off, as it ships"):
+        home.switch_on("builder", "tier_rule")
         home.install()
         assert not home.show()["flags"]["tier_rule.guard"]["runs"]
     with when("the main chat starts a general-purpose agent with no model"):
@@ -247,9 +252,10 @@ def test_the_tier_guard_only_counts_untiered_calls_until_it_is_switched_on_then_
 
 
 def test_cursor_never_gets_the_tier_guard(home):
-    with given("a profile that lists Cursor, with the Cursor beta on, and the guard switched on"):
+    with given("a profile that lists Cursor, with the Cursor beta and the tier rule on, and the guard switched on"):
         os.makedirs(home.config)
         use_cursor_beta(home)
+        home.switch_on("tier_rule")
         home.install()
         home.hubctl("on", "tier_rule.guard")
     with then("Cursor's hooks watch only the shell and file tools, never Task, and the guard does not run there"):
@@ -673,7 +679,8 @@ def reason(part, flag_id):
 
 
 def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_and_why(home):
-    with given("hub is installed without Cursor"):
+    with given("hub is installed without Cursor, and the user turned the tier rule and its guard on"):
+        home.switch_on("tier_rule")
         home.install()
         home.hubctl("on", "tier_rule.guard")
     with then("the doctor has no Cursor section"):

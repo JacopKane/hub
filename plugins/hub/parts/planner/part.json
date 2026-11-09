@@ -33,7 +33,7 @@
         "xhigh",
         "max"
       ],
-      "default": "max",
+      "default": "high",
       "does": "How hard planner thinks before it answers."
     },
     {

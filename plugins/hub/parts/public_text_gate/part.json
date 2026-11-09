@@ -53,7 +53,7 @@
     },
     {
       "id": "dashes",
-      "default": "on",
+      "default": "off",
       "privacy": "none",
       "signals": ["warned", "went_ahead", "blocked"],
       "does": "Stops an em dash. In warn mode it stops a text only once.",

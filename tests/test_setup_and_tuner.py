@@ -17,7 +17,9 @@ from conftest import FIXTURES, PLUGIN, load_fixture
 from steps import and_, given, then, when
 
 ANSWERS = os.path.join(FIXTURES, "agent_answers")
-STARTING_SET = {"core", "tuner", "tier_rule", "scout", "builder", "public_text_gate", "self_protection", "status_band"}
+STARTING_SET = {"core", "tuner", "scout", "public_text_gate", "self_protection", "status_band"}
+# Parts a new user turns on by hand. Setup never turns them on.
+OPT_IN = {"builder", "tier_rule"}
 
 
 def work_laptop(home):
@@ -117,6 +119,46 @@ def test_first_run_on_a_work_laptop_with_cursor_scans_asks_at_most_three_questio
     assert "hub setup" not in context_of(session_start(home, "claude_code"))
 
 
+def builder_link(home):
+    return os.path.join(home.root, ".claude", "agents", "hub-builder.md")
+
+
+def tier_sentence(home):
+    with open(os.path.join(home.plugin, "parts", "tier_rule", "text", "delegate_when.md")) as handle:
+        return handle.read().strip()
+
+
+def test_a_new_user_has_builder_and_the_tier_rule_off_until_they_turn_them_on(home):
+    with given("a new user on a work laptop who skips every setup question"):
+        work_laptop(home)
+        home.install()
+        session_start(home, "claude_code")
+        dialog = json.loads(setup(home, "--answer", os.path.join(ANSWERS, "work_laptop.json")).stdout)
+        summary = setup(home, "--reply", replies(dialog, {"gate_mode": "Skip", "use": "Skip"})).stdout
+    with then("builder and the tier rule are off by default, and the summary does not list them"):
+        flags = home.show("--all")["flags"]
+        for part in OPT_IN:
+            assert not flags[part]["runs"] and flags[part]["by"] == "default", (part, flags[part])
+            assert f"- {part}:" not in summary, part
+    and_("there is no builder agent file, and the start text has no tier table and no tier rule sentence")
+    assert not os.path.lexists(builder_link(home))
+    start_text = home.show()["start_text"]
+    assert "| Judgement |" not in start_text and "| Mechanical |" not in start_text
+    assert tier_sentence(home) not in start_text
+    with when("the user turns builder and the tier rule on"):
+        home.hubctl("on", "builder")
+        home.hubctl("on", "tier_rule")
+    with then("both run, set by the user, and builder's agent file links to the shipped one"):
+        flags = home.show("--all")["flags"]
+        for part in OPT_IN:
+            assert flags[part]["runs"] and flags[part]["by"] == "user", (part, flags[part])
+        assert os.readlink(builder_link(home)) == os.path.join(home.plugin, "parts", "builder", "agent.md")
+    and_("the start text now holds the tier table with builder's row and the tier rule sentences")
+    start_text = home.show()["start_text"]
+    assert "| builder | opus | high |" in start_text and "| scout | haiku |" in start_text
+    assert tier_sentence(home) in start_text
+
+
 def test_a_skipped_question_changes_nothing(home):
     with given("the same first run"):
         work_laptop(home)
@@ -133,10 +175,11 @@ def test_a_skipped_question_changes_nothing(home):
 
 
 def test_compare_rules_turns_off_a_hub_instruction_the_user_already_has(home):
-    with given("the user's CLAUDE.md holds a rule that hub also ships"):
+    with given("the user turned the tier rule on, and their CLAUDE.md holds a rule of it that hub also ships"):
         os.makedirs(os.path.join(home.root, ".claude"))
         with open(os.path.join(home.root, ".claude", "CLAUDE.md"), "w") as handle:
             handle.write("Check a cheaper agent's claims before you build on them.\n")
+        home.switch_on("tier_rule")
         home.install()
     with when("the recorded setup answer names that instruction and an id hub does not have"):
         setup(home, "--answer", os.path.join(ANSWERS, "compare_rules.json"))
@@ -198,6 +241,11 @@ def set_up(home):
     setup(home, "--reply", "{}")
 
 
+def dash_check_on_by_setup(home):
+    """The dash check, off for a new user, turned on by setup. That is no pin, so the tuner may offer it."""
+    home.set_by("setup", "public_text_gate.dashes", "on")
+
+
 def use_cursor_beta_in_project(home):
     """The Cursor beta, off by default, turned on in the project file, so this machine's first run is not over."""
     home.hubctl("on", "cursor_link", "--project")
@@ -223,9 +271,11 @@ def decide(home, answer):
 
 def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo_and_never_touches_a_pinned_flag(home):
     messages = [f"Fix the parser {DASH} step {number}" for number in range(10)]
-    with given("a set-up machine on a fixed clock, with private_paths pinned on by the user"):
+    with given("a set-up machine on a fixed clock, where setup turned the dash check on, which is no pin, and the "
+               "user pinned private_paths on"):
         on_day(home, 1)
         set_up(home)
+        dash_check_on_by_setup(home)
         home.hubctl("pin", "public_text_gate.private_paths")
     with when("over nine days ten commit messages with a dash are warned, and nine are sent again unchanged"):
         for number, message in enumerate(messages):
@@ -247,15 +297,18 @@ def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo
                                   "reason": "you went past it 9 times"}]
         assert "tuner decide" in context and "public_text_gate.dashes" in context
         assert "private_paths" not in context
-    with when("the recorded model answer picks the candidate, the pinned flag and builder"):
+    with when("the recorded model answer picks the candidate, the pinned flag and scout"):
         decide(home, "tuner_picks_more.json")
-    with then("only the dash check is off, by the tuner, and the reason is in the history"):
+    with then("only the dash check is off, by the tuner, back at its shipped default, and the reason is in the "
+               "history"):
         flags = home.settings()["flags"]
-        assert flags["public_text_gate.dashes"] == {"value": "off", "by": "tuner"}
+        assert "public_text_gate.dashes" not in flags
+        assert not home.show("--all")["flags"]["public_text_gate.dashes"]["runs"]
         assert flags["public_text_gate.private_paths"] == {"value": "on", "by": "user"}
-        assert "builder" not in flags and home.show()["flags"]["builder"]["runs"]
+        assert "scout" not in flags and home.show()["flags"]["scout"]["runs"]
         line = [line for line in home.history() if line.get("by") == "tuner"]
         assert len(line) == 1 and line[0]["reason"] == "you went past it 9 times"
+        assert (line[0]["flag"], line[0]["old"], line[0]["new"]) == ("public_text_gate.dashes", "on", "off")
     and_("the band holds one line for it, with the reason and an undo")
     strip = json.loads(home.hubctl("screen", "--json").stdout)["strip"]
     tuned = [entry for entry in strip if entry["id"] == line[0]["id"]]
@@ -274,9 +327,10 @@ def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo
 
 
 def test_the_tuner_runs_at_most_once_a_day_and_only_with_new_signals(home):
-    with given("a set-up machine on a fixed clock, with signals that pick the dash check"):
+    with given("a set-up machine on a fixed clock, where setup turned the dash check on, with signals that pick it"):
         on_day(home, 1, hour=9)
         set_up(home)
+        dash_check_on_by_setup(home)
         seed_signals(home, "public_text_gate.dashes")
     with when("two sessions start on one day, with a new signal between them"):
         first = context_of(session_start(home, "claude_code"))
@@ -320,10 +374,11 @@ def test_the_tuner_never_picks_a_flag_a_project_file_sets(home):
 
 
 def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line(home):
-    with given("a tuner change on a machine where the status band is off, and the user turned on the Cursor beta "
-               "and its chat line"):
+    with given("a tuner change to the dash check, which setup turned on, on a machine where the status band is "
+               "off, and the user turned on the Cursor beta and its chat line"):
         on_day(home, 1)
         set_up(home)
+        dash_check_on_by_setup(home)
         home.hubctl("off", "status_band")
         home.hubctl("on", "cursor_link")
         home.hubctl("on", "cursor_link.tuner_chat_line")
@@ -356,9 +411,11 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
 
 
 def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_once(home):
-    with given("a tuner change on a machine where the status band is on, and the Cursor beta is on"):
+    with given("a tuner change to the dash check, which setup turned on, on a machine where the status band is on, "
+               "and the Cursor beta is on"):
         on_day(home, 1)
         set_up(home)
+        dash_check_on_by_setup(home)
         home.hubctl("on", "cursor_link")
     with and_("Cursor's chat line is off, since it is in beta and off by default"):
         chat_line = home.show("--all", "--tool", "cursor")["flags"]["cursor_link.tuner_chat_line"]
@@ -402,9 +459,10 @@ def band_line(model):
 
 
 def tuner_change(home):
-    """A set-up machine on day 1 with one tuner change waiting. Returns its history line."""
+    """A set-up machine on day 1 where the tuner turned off the dash check setup turned on. Returns the history line."""
     on_day(home, 1)
     set_up(home)
+    dash_check_on_by_setup(home)
     seed_signals(home, "public_text_gate.dashes")
     session_start(home, "claude_code")
     decide(home, "tuner_picks_more.json")
@@ -480,8 +538,9 @@ def offers(home):
 
 
 def test_four_builder_runs_with_no_edits_offer_researcher_and_never_switch_it_on(home):
-    with given("a set-up machine where researcher is off"):
+    with given("a set-up machine where the user turned builder on and researcher is off"):
         on_day(home, 1)
+        home.switch_on("builder")
         set_up(home)
         assert not home.show()["flags"]["researcher"]["runs"]
     with when("three builder runs make no edit, one makes an edit, and a scout run makes none"):
@@ -521,9 +580,11 @@ def screen_tuner(home):
 
 
 def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stays_clean(home):
-    with given("a set-up machine on a fixed clock where the mod asked the tuner once, with nothing waiting"):
+    with given("a set-up machine on a fixed clock where setup turned the dash check on and the mod asked the tuner "
+               "once, with nothing waiting"):
         on_day(home, 1)
         set_up(home)
+        dash_check_on_by_setup(home)
         assert tuner_ask(home)["candidates"] == []
         seed_signals(home, "public_text_gate.dashes")
     with when("the next day's first session starts"):
@@ -542,9 +603,12 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
     with when("the model's answer goes to hubctl tuner decide on stdin"):
         decided = home.run([sys.executable, os.path.join(home.plugin, "bin", "hubctl"), "tuner", "decide",
                             "--answer", "-"], stdin='{"pick": ["public_text_gate.dashes"]}')
-    with then("the dash check is off by the tuner, and nothing waits"):
+    with then("the dash check is off by the tuner, back at its shipped default, and nothing waits"):
         assert "public_text_gate.dashes" in decided.stdout
-        assert home.settings()["flags"]["public_text_gate.dashes"] == {"value": "off", "by": "tuner"}
+        assert "public_text_gate.dashes" not in home.settings()["flags"]
+        assert not home.show("--all")["flags"]["public_text_gate.dashes"]["runs"]
+        last = home.history()[-1]
+        assert (last["flag"], last["by"], last["old"], last["new"]) == ("public_text_gate.dashes", "tuner", "on", "off")
         assert screen_tuner(home)["pending"] == 0
     with when("the mod has not asked for two weeks, and new signals come"):
         on_day(home, 17)
@@ -565,9 +629,11 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
 
 
 def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mod_does_not_ask_again(home):
-    with given("a set-up machine where the mod asked lately, and one candidate waits for it"):
+    with given("a set-up machine where setup turned the dash check on, the mod asked lately, and one candidate "
+               "waits for it"):
         on_day(home, 1)
         set_up(home)
+        dash_check_on_by_setup(home)
         tuner_ask(home)
         seed_signals(home, "public_text_gate.dashes")
         on_day(home, 2)

@@ -5,12 +5,16 @@ walking up its own parent processes to the chat's process. The ledger holds
 queued, working and done tasks. Chats are real stand-in processes that run
 the commands as their own children, and the clock is HUB_NOW.
 """
+import importlib.util
 import json
 import os
+import socket
+import sys
 
 import pytest
 
 from chats import Chats
+from conftest import PLUGIN
 from steps import and_, given, then, when
 
 T = 1_800_000_000
@@ -84,3 +88,42 @@ def test_a_chats_tasks_come_from_the_ledger_and_land_in_the_right_columns(home, 
         assert process.returncode != 0
         assert "/hub on chat_board.tasks" in process.stderr and "hubctl" not in process.stderr
         assert "x" not in home.hubctl("board", "show", "WEB").stdout.split()
+
+
+def chat_board_handler():
+    """The chat_board hook's own module, run in this process so a test can set the machine's name."""
+    sys.path.insert(0, os.path.join(PLUGIN, "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "chat_board_handler", os.path.join(PLUGIN, "parts", "chat_board", "handler.py"))
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+    return handler
+
+
+def test_a_machine_with_a_name_longer_than_the_name_column_still_shows_its_own_tasks(home, monkeypatch):
+    # GitHub's macOS runners have names this long. A DNS label holds at most 63 characters.
+    long_name = "runner-" + "a" * 56
+    session = "00000000-0000-4000-8000-0000000000a1"
+    with given(f"a machine named {long_name}.local, longer than the 40-cell name column, and chat_board on"):
+        home.install()
+        home.hubctl("on", "chat_board")
+        for name, value in home.env.items():
+            monkeypatch.setenv(name, value)
+        monkeypatch.setenv("HUB_NOW", str(T))
+        monkeypatch.setattr(socket, "gethostname", lambda: long_name + ".local")
+        handler = chat_board_handler()
+        board = handler.board
+        board.keep_listing([])
+    with when("the chat_board hook marks WEB busy on this machine, and WEB's ledger holds the working task fix"):
+        handler.set_state({"session_id": session, "session_title": "WEB", "cwd": home.work}, "busy")
+        board.write_ledger(session, [{"text": "fix", "state": "working", "time": T}])
+        data = board.load(at=T, notice=False)
+    with then("the board counts WEB as a chat of this machine and shows its task"):
+        card = next(card for card in data["cards"] if card["session"] == session)
+        assert card["machine"] == data["machine"]
+        assert [task["text"] for task in card["tasks"]] == ["fix"]
+    with and_("hubctl board prints WEB's task row, not the note for chats on another machine"):
+        lines = board.render(data).splitlines()
+        title = next(index for index, line in enumerate(lines) if line.startswith("● WEB"))
+        assert " · " not in lines[title]
+        assert lines[title + 2].strip() == "● fix"

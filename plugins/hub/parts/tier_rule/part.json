@@ -3,7 +3,7 @@
   "id": "tier_rule",
   "family": "tiers",
   "kind": "rule",
-  "default": "on",
+  "default": "off",
   "runs_in": ["claude_code", "cursor"],
   "handlers": {"PreToolUse": {"tools": ["Agent"], "runs_in": ["claude_code"]}},
   "does": "Start text that tells the main chat which agent tier fits a job.",

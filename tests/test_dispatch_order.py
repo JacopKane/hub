@@ -68,8 +68,9 @@ def test_a_part_that_rewrites_a_call_after_the_gate_can_not_slip_text_past_it(ho
 def test_warnings_that_arrive_at_the_same_time_are_all_remembered(home):
     count = 16
     session = "session-parallel"
-    with given("hub is installed with the gate at warn"):
+    with given("hub is installed with the gate at warn and the em dash check on"):
         home.install()
+        home.hubctl("on", "public_text_gate.dashes")
     with when(f"{count} commits, each with its own dash text, reach the gate at the same moment in one session"):
         processes = []
         for number in range(count):
@@ -390,13 +391,13 @@ def tool_marker(home, tool):
 
 
 def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_part_names(home):
-    with given("hub is installed as it ships, where tier_rule names Agent, the gate names Bash, and "
-               "self_protection names Bash, Delete, Edit and Write"):
+    with given("hub is installed as it ships, where the gate names Bash, self_protection names Bash, Delete, "
+               "Edit and Write, and tier_rule, which names Agent, is off"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 1)
-    with then("apply marks those five tools, and no other"):
-        assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == ["Agent", "Bash", "Delete", "Edit", "Write"]
-        assert tool_marker(home, "Agent") == ["tier_rule"]
+    with then("apply marks those four tools, and no other"):
+        assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == ["Bash", "Delete", "Edit", "Write"]
+        assert tool_marker(home, "Agent") is None
         assert [tool_marker(home, tool) for tool in ("Delete", "Edit", "Write")] == [["self_protection"]] * 3
     with when("the main chat reads, greps, globs, edits a notebook, asks and sends seven times through the group"):
         calls = [("Read", None), ("Grep", {"pattern": "x"}), ("Glob", {"pattern": "*"}), ("NotebookEdit", None),
@@ -412,7 +413,13 @@ def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_
         assert group.python_starts() == 2
     with when("the main chat starts an agent"):
         named_call(group, "Agent", {"description": "Read the docs", "prompt": "Read them", "subagent_type": "worker"})
-    with then("the group starts the dispatcher for tier_rule"):
+    with then("Python does not start, because no running part names Agent"):
+        assert group.python_starts() == 2
+    with when("the user switches tier_rule on, which names Agent, and the main chat starts an agent"):
+        home.hubctl("on", "tier_rule")
+        named_call(group, "Agent", {"description": "Read the docs", "prompt": "Read them", "subagent_type": "worker"})
+    with then("apply marks Agent for tier_rule, and the group starts the dispatcher for it"):
+        assert tool_marker(home, "Agent") == ["tier_rule"]
         assert group.python_starts() == 3
 
     with when("the user switches the coordinator on, which names Read, and a large Write comes"):

@@ -232,8 +232,9 @@ def test_a_write_into_hubs_own_plugin_files_is_refused_and_a_read_runs(home):
 
 
 def test_turning_a_part_off_that_stops_its_running_guard_needs_the_user(home, tool):
-    with given("hub is installed and the user turned the tier guard on"):
+    with given("hub is installed, setup turned the tier rule on, which is no pin, and the user turned the tier guard on"):
         home.install()
+        home.set_by("setup", "tier_rule", "on")
         home.hubctl("on", "tier_rule.guard")
         assert flag(home, "tier_rule.guard")["runs"]
         before = home.settings()
@@ -261,8 +262,11 @@ def test_turning_a_part_off_that_stops_its_running_guard_needs_the_user(home, to
 
 
 def test_turning_a_part_off_whose_guard_is_off_still_runs_from_a_tool_call(home):
-    with given("hub is installed with the tier guard off, as it ships"):
+    with given("hub is installed with the tier guard off, as it ships, and setup turned the tier rule on, which is "
+               "no pin"):
         home.install()
+        home.set_by("setup", "tier_rule", "on")
+        assert flag(home, "tier_rule")["runs"]
         assert not flag(home, "tier_rule.guard")["runs"]
     with when("the model runs hubctl off tier_rule in a tool call"):
         result = home.hook("claude_code", "PreToolUse", "hubctl off tier_rule")
@@ -275,8 +279,10 @@ def test_turning_a_part_off_whose_guard_is_off_still_runs_from_a_tool_call(home)
 
 
 def test_turning_a_part_off_that_stops_a_pinned_flag_needs_the_user(home):
-    with given("the user pinned an instruction of the tier part from their terminal"):
+    with given("setup turned the tier part on, which is no pin, and the user pinned an instruction of it from "
+               "their terminal"):
         home.install()
+        home.set_by("setup", "tier_rule", "on")
         home.hubctl("pin", "tier_rule.check_claims")
     with when("the model turns the tier part off in a tool call"):
         result = home.hook("claude_code", "PreToolUse", "hubctl off tier_rule")

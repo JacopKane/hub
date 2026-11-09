@@ -2,7 +2,7 @@
 name: critic
 description: Read-only agent for reviews where a miss is expensive, such as security, data loss, a review that decides a merge, or a job a cheaper agent already got wrong. It reports findings and changes nothing.
 model: opus
-effort: xhigh
+effort: high
 disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
 

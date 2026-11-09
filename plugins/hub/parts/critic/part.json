@@ -33,7 +33,7 @@
         "xhigh",
         "max"
       ],
-      "default": "xhigh",
+      "default": "high",
       "does": "How hard critic thinks before it answers."
     },
     {

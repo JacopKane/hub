@@ -46,6 +46,8 @@ def test_the_search_goes_to_scout_eval_is_laid_out_the_way_the_eval_runner_reads
         path = os.path.join(EVAL, script)
         assert subprocess.run(["bash", "-n", path]).returncode == 0
         assert "hubctl" in read(script) and "apply" in read(script)
+    with then("the scaffold turns the tier rule on, because a new user has it off"):
+        assert "hubctl\" on tier_rule" in read(script)
     with then("every grader has a known type, and one checks that scout was started"):
         graders = sorted(os.listdir(os.path.join(EVAL, "graders")))
         types = {name: frontmatter(read("graders", name)) for name in graders}

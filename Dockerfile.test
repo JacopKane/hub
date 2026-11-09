@@ -1,5 +1,5 @@
 # The Linux test image. Run from the repo root:
-#   docker build -f Dockerfile.test -t hub-test .
+#   docker build --build-arg TESTER_UID="$(id -u)" -f Dockerfile.test -t hub-test .
 #   docker run --rm -v "$PWD:/src" -w /src hub-test python3 -m pytest -q
 FROM python:3.13-slim
 
@@ -9,7 +9,9 @@ RUN apt-get update \
 RUN pip install --no-cache-dir pytest==9.2.0
 
 # A normal user, so the tests never run as root and write nothing root-owned into the mounted repo.
-RUN useradd --create-home --uid 1000 tester
+# It gets your user id, so it can write into the repo on a Linux host. Docker Desktop does not need that.
+ARG TESTER_UID=1000
+RUN useradd --create-home --uid "$TESTER_UID" tester
 USER tester
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTEST_ADDOPTS="-p no:cacheprovider"

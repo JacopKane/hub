@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Build the test image
-        run: docker build -f Dockerfile.test -t hub-test .
+        run: docker build --build-arg TESTER_UID="$(id -u)" -f Dockerfile.test -t hub-test .
       - name: Run the scenarios
         run: docker run --rm -v "$PWD:/src" -w /src hub-test python3 -m pytest -q
       - name: Run the shape scan

@@ -2,7 +2,7 @@
 name: planner
 description: Agent for plans, task splits per pull request, specs and design choices that code will follow. It writes only the plan file its brief names, never code.
 model: opus
-effort: max
+effort: high
 disallowedTools: Agent
 ---
 

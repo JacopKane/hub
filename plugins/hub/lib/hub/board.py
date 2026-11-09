@@ -66,7 +66,8 @@ def now():
 
 
 def machine():
-    return socket.gethostname().split(".")[0] or "this machine"
+    """This machine's name, cut like every name read back from a card, so the two still match when it is long."""
+    return clean(socket.gethostname().split(".")[0], cell_limit=NAME_CELLS) or "this machine"
 
 
 # text from chats, hook input and the listing is data: one plain line, cut when it is too long

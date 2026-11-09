@@ -27,8 +27,10 @@ def gate_text(home, name):
 
 
 def test_privacy_findings_refuse_every_time_in_warn_and_block_and_only_off_lets_them_through(home, tool):
-    with given("hub is installed with a private word and a machine in the profile, and the gate at warn"):
+    with given("hub is installed with a private word and a machine in the profile, the em dash check on, "
+               "and the gate at warn"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
         home.hubctl("set", "core.private_words", "Quillbrook")
         home.write_json(os.path.join(home.config, "profile.json"), {
             "version": 1, "machines": {"desktop": {"host": "sams-tower", "use": "home"}}})
@@ -98,8 +100,9 @@ def test_the_gate_reads_the_text_a_command_publishes_and_not_the_paths_it_names(
 
 
 def test_chat_session_links_and_escaped_dashes_are_caught(home, tool):
-    with given("hub is installed with the gate at warn"):
+    with given("hub is installed with the gate at warn and the em dash check on"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
     with when("a commit carries a chat session link, or a session trailer alone"):
         link = commit("Fix it\n\nSee https://claude.ai/code/session_01AbCdEf")
         trailer = commit("Fix it\n\nClaude-Session: 01AbCdEf")

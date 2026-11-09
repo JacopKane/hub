@@ -29,7 +29,14 @@ def test_a_user_turns_off_one_check_of_the_gate_and_only_that_check_stops(home, 
     message = f"Add notes {DASH} see /home/sam/notes.md"
     with given("hub is installed in a fresh HOME, with the gate at its default, warn"):
         home.install()
-    with when("Claude sends git commit with an em dash and a home path in the message"):
+    with when("Claude sends git commit with only an em dash in the message"):
+        dash_by_default = home.hook(tool, "PreToolUse", commit(f"Add notes {DASH} see the notes"))
+    with then("it runs, because the em dash check is off until the user turns it on"):
+        assert dash_by_default.ran and dash_by_default.output == {}
+        assert home.show()["flags"][f"{GATE}.dashes"]["value"] == "off"
+    with when("the user runs hubctl on public_text_gate.dashes"):
+        home.hubctl("on", f"{GATE}.dashes")
+    with and_("Claude sends git commit with an em dash and a home path in the message"):
         first = home.hook(tool, "PreToolUse", commit(message))
     with then("the gate refuses it, naming both findings, with the hint"):
         assert first.refused
@@ -64,7 +71,7 @@ def test_a_user_turns_off_one_check_of_the_gate_and_only_that_check_stops(home, 
     with then("the dash check runs again, pinned on"):
         assert fourth.refused and fourth.findings == ["dashes"]
         assert home.settings()["flags"][f"{GATE}.dashes"] == {"by": "user", "value": "on"}
-        assert [line["door"] for line in home.history()] == ["hubctl", "hubctl"]
+        assert [line["door"] for line in home.history()] == ["hubctl", "hubctl", "hubctl"]
 
 
 def test_a_parts_mode_caps_its_children_and_turning_it_off_keeps_their_values(home, tool):
@@ -121,12 +128,12 @@ def test_a_value_equal_to_the_default_is_dropped_unless_pinned(home, tool):
         home.hubctl("set", GATE, "warn")
     with then("the user's entry stays, pinned"):
         assert home.settings()["flags"] == {GATE: {"by": "user", "value": "warn"}}
-    with when("an update moves the gate's default to block and the dash check's default to off"):
+    with when("an update moves the gate's default to block and the dash check's default to on"):
         home.edit_manifest(GATE, lambda data: data.update(default="block"))
-        home.edit_manifest(GATE, lambda data: next(c for c in data["children"] if c["id"] == "dashes").update(default="off"))
+        home.edit_manifest(GATE, lambda data: next(c for c in data["children"] if c["id"] == "dashes").update(default="on"))
     with then("the gate stays at warn, the unpinned dash check follows its new default, and a path is refused every time"):
         assert home.show()["flags"][GATE]["value"] == "warn"
-        assert home.hook(tool, "PreToolUse", commit(f"Only {DASH} here")).ran
+        assert home.hook(tool, "PreToolUse", commit(f"Only {DASH} here")).refused
         paths = [home.hook(tool, "PreToolUse", commit("See /home/sam/a.md")) for _ in range(2)]
         assert [result.refused for result in paths] == [True, True]
 
@@ -208,8 +215,9 @@ def test_a_missing_word_file_is_skipped_and_one_that_is_there_feeds_the_gate(hom
 
 
 def test_cursors_shell_call_gets_the_same_refusal_in_cursors_own_keys(home):
-    with given("the recorded Cursor input for a shell call that commits with a dash"):
+    with given("the recorded Cursor input for a shell call that commits with a dash, and the em dash check on"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
         data = load_fixture("cursor", "preToolUse.Shell.json")
         data.update(cwd=home.work, workspace_roots=[home.work])
         data["tool_input"] = {"command": commit(f"Ship {DASH} now"), "working_directory": home.work}
@@ -358,8 +366,10 @@ def test_a_manifest_that_names_an_unknown_id_or_holds_code_fails_the_check(home)
 
 
 def test_a_push_is_checked_through_the_commits_it_sends(home, tool):
-    with given("a repo with a local bare remote and a new commit whose message has a dash"):
+    with given("a repo with a local bare remote and a new commit whose message has a dash, "
+               "and the em dash check on"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
         bare = os.path.join(home.root, "remote.git")
         home.git("init", "-q", "--bare", bare)
         home.git("remote", "add", "origin", bare)
@@ -377,8 +387,9 @@ def test_a_push_is_checked_through_the_commits_it_sends(home, tool):
 
 
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
-    with given("hub is installed and a PR body file holds a dash"):
+    with given("hub is installed with the em dash check on, and a PR body file holds a dash"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
         with open(os.path.join(home.work, "body.md"), "w") as handle:
             handle.write(f"Adds the thing {DASH} finally\n")
     with when("Claude creates a PR from that file, comments on an issue and posts a review comment"):
@@ -397,8 +408,9 @@ def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
 
 
 def test_a_second_run_of_the_same_tool_call_returns_the_first_answer(home, tool):
-    with given("hub is installed"):
+    with given("hub is installed with the em dash check on"):
         home.install()
+        home.hubctl("on", f"{GATE}.dashes")
         data = home.hook_input(tool, "PreToolUse", commit(f"Twice {DASH} sent"))
     with when("the same tool call reaches the dispatcher twice, as when two plugin copies load"):
         first = home.send(tool, "PreToolUse", data)

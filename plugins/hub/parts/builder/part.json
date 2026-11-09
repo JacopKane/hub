@@ -3,7 +3,7 @@
   "id": "builder",
   "family": "tiers",
   "kind": "agent",
-  "default": "on",
+  "default": "off",
   "runs_in": ["claude_code", "cursor"],
   "does": "An agent for work that needs judgement, such as building, debugging, review and text people read.",
   "children": [

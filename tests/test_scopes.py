@@ -16,9 +16,11 @@ GATE = "public_text_gate"
 
 def test_a_cloned_repos_settings_can_raise_privacy_but_never_lower_it(home, tool):
     project_file = os.path.join(home.work, ".hub", "hub.json")
-    with given("the user has a private word, and a cloned repo commits a file that turns the gate down"):
+    with given("the user has a private word and the em dash check on, and a cloned repo commits a file that turns "
+               "the gate down"):
         home.install()
         home.hubctl("set", "core.private_words", "Quillbrook")
+        home.hubctl("on", f"{GATE}.dashes")
         home.write_json(project_file, {"version": 1, "private_words": ["Marrowind"], "flags": {
             GATE: {"by": "user", "value": "off"},
             "core": {"by": "user", "value": "off"},
@@ -54,29 +56,30 @@ def test_project_scope_needs_a_git_repo_and_undo_goes_back_to_the_repo_it_change
     outside = os.path.join(home.root, "loose-folder")
     inside = os.path.join(home.work, "docs", "drafts")
     project_file = os.path.join(home.work, ".hub", "hub.json")
-    with given("hub is installed, with a folder that is not in a git repo and a subfolder deep in the demo repo"):
+    with given("hub is installed with the em dash check off, as it ships, with a folder that is not in a git repo "
+               "and a subfolder deep in the demo repo"):
         home.install()
         os.makedirs(outside)
         os.makedirs(inside)
     with when("the user sets a project value in the folder outside any repo"):
-        refused = home.hubctl("off", f"{GATE}.dashes", "--scope", "project", cwd=outside, check=False)
+        refused = home.hubctl("on", f"{GATE}.dashes", "--scope", "project", cwd=outside, check=False)
     with then("hubctl refuses, says it needs a git repo, and makes no .hub folder there"):
         assert refused.returncode == 1 and "git repo" in refused.stderr
         assert not os.path.exists(os.path.join(outside, ".hub"))
     with when("the user sets the same value from the subfolder of the demo repo"):
-        home.hubctl("off", f"{GATE}.dashes", "--scope", "project", cwd=inside)
+        home.hubctl("on", f"{GATE}.dashes", "--scope", "project", cwd=inside)
     with then("the file lands at the repo's top, and the history line records that repo"):
         assert not os.path.exists(os.path.join(inside, ".hub"))
         with open(project_file) as handle:
-            assert json.load(handle)["flags"] == {f"{GATE}.dashes": {"by": "user", "value": "off"}}
+            assert json.load(handle)["flags"] == {f"{GATE}.dashes": {"by": "user", "value": "on"}}
         assert home.history()[-1]["repo"] == home.work
-    with and_("a dash goes through in the subfolder, because the repo's file applies there"):
-        assert home.hook(tool, "PreToolUse", commit(f"Tidy {DASH} done"), cwd=inside).ran
+    with and_("a dash is stopped in the subfolder, because the repo's file applies there"):
+        assert home.hook(tool, "PreToolUse", commit(f"Tidy {DASH} done"), cwd=inside).refused
     with when("the user runs hubctl undo from the folder outside any repo"):
         home.hubctl("undo", cwd=outside)
     with then("undo restores the value in the repo it changed, and still makes nothing in the current folder"):
         with open(project_file) as handle:
-            assert json.load(handle)["flags"] == {f"{GATE}.dashes": {"by": "user", "value": "on"}}
+            assert json.load(handle)["flags"] == {f"{GATE}.dashes": {"by": "user", "value": "off"}}
         assert not os.path.exists(os.path.join(outside, ".hub"))
         assert home.history()[-1]["repo"] == home.work
 

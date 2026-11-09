@@ -48,7 +48,7 @@ def nothing_for_cursor(home):
 
 
 def install_with_cursor_in_profile(home):
-    os.makedirs(home.config)
+    os.makedirs(home.config, exist_ok=True)
     write_profile(home, {"tools": {"cursor": True}})
     home.install()
 
@@ -180,7 +180,9 @@ def test_every_door_shows_the_beta_group_with_its_label(home):
 
 
 def test_turning_cursor_link_on_notes_the_beta_and_writes_cursor_files_and_off_removes_them(home):
-    with given("hub is installed with Cursor in the profile, so nothing is written for Cursor"):
+    with given("the user turned builder and the tier rule on, and hub is installed with Cursor in the profile, so "
+               "nothing is written for Cursor"):
+        home.switch_on("builder", "tier_rule")
         install_with_cursor_in_profile(home)
         nothing_for_cursor(home)
     with when("the user types /hub on cursor_link, which runs hubctl on cursor_link"):

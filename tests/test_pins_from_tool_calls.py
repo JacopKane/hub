@@ -45,12 +45,12 @@ def test_a_pinned_flag_does_not_change_from_a_command_the_model_runs(home, calle
 def test_a_flag_nobody_pinned_still_changes_from_a_tool_call_so_the_cursor_skill_works(home):
     with given("hub is installed and public_text_gate.dashes holds its default"):
         home.install()
-    with when("the model runs hubctl off for it inside a tool call"):
+    with when("the model runs hubctl on for it inside a tool call"):
         as_caller(home, TOOL_CALL)
-        done = home.hubctl("off", "public_text_gate.dashes", check=False)
+        done = home.hubctl("on", "public_text_gate.dashes", check=False)
     with then("the change lands"):
         assert done.returncode == 0, done.stderr
-        assert home.settings()["flags"]["public_text_gate.dashes"]["value"] == "off"
+        assert home.settings()["flags"]["public_text_gate.dashes"]["value"] == "on"
 
 
 def test_a_hook_process_is_not_a_tool_call(home):

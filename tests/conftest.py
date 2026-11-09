@@ -356,6 +356,17 @@ class Home:
         with open(path, "w") as handle:
             json.dump(data, handle, indent=2)
 
+    def switch_on(self, *flag_ids):
+        """Turn flags on in the user's settings file, as the user does by hand. Runs no apply.
+
+        Before install it gives a user who already turned these parts on, such as builder and
+        tier_rule, which a new user has off.
+        """
+        data = self.settings() if os.path.exists(self.user_file) else {"version": 1, "flags": {}}
+        for flag_id in flag_ids:
+            data.setdefault("flags", {})[flag_id] = {"by": "user", "value": "on"}
+        self.write_json(self.user_file, data)
+
     def edit_manifest(self, part, change):
         path = os.path.join(self.plugin, "parts", part, "part.json")
         with open(path) as handle:

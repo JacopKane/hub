@@ -21,8 +21,10 @@ def install_with_a_blocked_cursor_folder(home):
     with open(blocker, "w") as handle:
         handle.write(USER_TEXT)
     os.makedirs(home.config)
-    # The tuner is the first agent part in tree order. With it off, builder is the first link apply makes.
-    home.write_json(home.user_file, {"version": 1, "flags": {"tuner": {"value": "off", "by": "user"}}})
+    # The tuner is the first agent part in tree order. With it off and builder on, which a new user has off,
+    # builder is the first link apply makes.
+    home.write_json(home.user_file, {"version": 1, "flags": {"tuner": {"value": "off", "by": "user"},
+                                                            "builder": {"value": "on", "by": "user"}}})
     use_cursor_beta(home)
     shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
     return home.hubctl("apply", check=False)

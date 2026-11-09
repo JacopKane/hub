@@ -77,8 +77,9 @@ def test_a_tool_call_can_not_claim_to_be_the_user(home, tool):
 
 
 def test_a_pinned_flag_can_not_be_changed_from_a_tool_call_even_in_another_scope(home, tool):
-    with given("the user pinned public_text_gate.dashes on from their own terminal"):
+    with given("the user turned public_text_gate.dashes on and pinned it from their own terminal"):
         home.install()
+        home.hubctl("on", "public_text_gate.dashes")
         home.hubctl("pin", "public_text_gate.dashes")
     with when("the model turns it off in the local scope from a tool call"):
         result = home.hook(tool, "PreToolUse", "hubctl off public_text_gate.dashes --scope local")
