@@ -1,0 +1,11 @@
+{
+  "name": "hub",
+  "owner": {"name": "JacopKane"},
+  "plugins": [
+    {
+      "name": "hub",
+      "source": "./plugins/hub",
+      "description": "One settings file for the parts of your Claude Code and Cursor setup, each with its own switch. Cursor support is in beta and untested."
+    }
+  ]
+}

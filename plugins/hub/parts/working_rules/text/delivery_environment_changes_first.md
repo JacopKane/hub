@@ -1,0 +1,1 @@
+- When a change adds, renames or removes an environment key, a secret or a flag default, say so at the top of your status, with the key names and which environments need a value.

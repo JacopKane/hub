@@ -1,0 +1,1 @@
+This message has not arrived. It went to an offline row named {name}, not to a chat on this machine, so it arrives only if that row's machine reconnects, and never if that chat has ended. If you meant a chat on this machine, send it again when that chat is running.

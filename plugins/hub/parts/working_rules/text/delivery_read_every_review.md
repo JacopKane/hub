@@ -1,0 +1,1 @@
+- Read every comment and review on the PR, resolved and outdated threads too, before and after each round of work.

@@ -1,0 +1,1 @@
+- Reading, searching and read-only commands are fine. Edits, commits, pushes, comments, messages and ticket changes need a request for that exact thing.

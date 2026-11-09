@@ -1,0 +1,1 @@
+This brief does not name the chat's live notes. Add them, for example: "Live notes: {path}. Read it first, and read it again before each browser run, each file or doc write and each public step, and before you report. When you learn something other agents need, add it there and send it to the running agents (ListAgents, SendMessage) and to the main chat."

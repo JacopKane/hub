@@ -1,0 +1,76 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "context_budget",
+  "family": "tiers",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": []}},
+  "reason_not_in": {"cursor": "hub reads the context size from Claude Code's transcript files, and Cursor does not write them."},
+  "does": "Tells a chat or an agent when its context gets big, because every step reads all of it again. It never stops a call.",
+  "children": [
+    {
+      "id": "agent_tokens",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["reminded"],
+      "cost": "per use",
+      "does": "Asks an agent to hand back at the next safe point when its context passes a set size, and again after each gap.",
+      "children": [
+        {"id": "at", "kind": "option", "type": "number", "default": 130000,
+         "does": "The context size, in tokens, of an agent's first reminder."},
+        {"id": "every", "kind": "option", "type": "number", "default": 50000,
+         "does": "How many more tokens until the agent's next reminder."}
+      ]
+    },
+    {
+      "id": "main_tokens",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["reminded"],
+      "cost": "per use",
+      "does": "Asks the main chat to give bigger reading to agents when its context passes a set size, and again after each gap.",
+      "children": [
+        {"id": "at", "kind": "option", "type": "number", "default": 120000,
+         "does": "The context size, in tokens, of the main chat's first reminder."},
+        {"id": "every", "kind": "option", "type": "number", "default": 100000,
+         "does": "How many more tokens until the main chat's next reminder."}
+      ]
+    },
+    {
+      "id": "steps",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["reminded"],
+      "cost": "per use",
+      "does": "Asks an agent to hand back after many steps, even when its context is still small.",
+      "children": [
+        {"id": "at", "kind": "option", "type": "number", "default": 150,
+         "does": "The step count of an agent's first step reminder."},
+        {"id": "every", "kind": "option", "type": "number", "default": 50,
+         "does": "How many more steps until the next step reminder."}
+      ]
+    },
+    {
+      "id": "brief_point",
+      "kind": "behavior",
+      "default": "on",
+      "does": "Lets an agent's brief move its first reminder with a line such as \"Hand-back point: 180k\".",
+      "children": [
+        {"id": "max", "kind": "option", "type": "number", "default": 200000,
+         "does": "The highest point a brief may set, in tokens."}
+      ]
+    },
+    {
+      "id": "compaction_note",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["noted"],
+      "cost": "per use",
+      "does": "After an agent's context is compacted, tells it where its full transcript is, so it can find what the summary left out."
+    },
+    {"id": "skip_models", "kind": "option", "type": "list", "default": [],
+     "does": "Agents whose model name starts with one of these, such as claude-opus, get no hand-back reminder. They still get the compaction note."}
+  ]
+}

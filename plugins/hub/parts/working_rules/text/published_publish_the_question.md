@@ -1,0 +1,1 @@
+- When a decision could still change, publish the question, not today's leaning.

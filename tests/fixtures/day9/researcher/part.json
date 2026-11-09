@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "researcher",
+  "family": "tiers",
+  "kind": "extra",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "A reading agent for docs and pages, which reports what it read."
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "status_band",
+  "family": "screens",
+  "kind": "mod",
+  "default": "on",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no mods, so it has no band. hubctl and the /hub skill show the same state."},
+  "does": "A line above the prompt with hub's state, the tuner's last change and open offers.",
+  "children": [
+    {"id": "state", "default": "on", "does": "Shows the parts that run and the start text they cost."},
+    {
+      "id": "notices",
+      "default": "on",
+      "does": "Shows the newest changes, each with Undo.",
+      "children": [
+        {"id": "keep_hours", "kind": "option", "type": "number", "default": 24,
+         "does": "How many hours a line stays, unless you act on it first."}
+      ]
+    },
+    {"id": "offers", "default": "on", "does": "Shows an offer with Turn on and No."},
+    {"id": "setup_ready", "default": "on", "does": "Says hub setup is ready, before the first run."},
+    {"id": "chats", "default": "on", "needs": ["chat_board"],
+     "does": "Shows your other chats with their state, and the question of a chat that needs you."},
+    {"id": "problems", "default": "on", "does": "Shows ✗ and the number of failed checks from the last hubctl doctor."},
+    {"id": "first_digit", "kind": "option", "type": "number", "default": 1, "range": [1, 7],
+     "does": "The first of the band's three digit keys. Move it when another mod takes 1, 2 or 3."}
+  ]
+}

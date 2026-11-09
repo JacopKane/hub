@@ -1,0 +1,21 @@
+{
+  "docs_based": "Built from Cursor's docs, not captured from the app.",
+  "_source": "Cursor docs, hooks reference: common input and postToolUse with the Read tool. The file_path key is a guess. Replace with a live capture.",
+  "conversation_id": "00000000-0000-4000-8000-000000000013",
+  "generation_id": "00000000-0000-4000-8000-000000000014",
+  "model": "default",
+  "hook_event_name": "postToolUse",
+  "cursor_version": "3.0.0",
+  "workspace_roots": [
+    "/home/sam/work/demo"
+  ],
+  "user_email": null,
+  "transcript_path": null,
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/home/sam/work/demo/tests/test_app.py"
+  },
+  "tool_output": "def test_app():\n    assert True\n",
+  "tool_use_id": "call_000000000000000000000005",
+  "cwd": "/home/sam/work/demo"
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "worker",
+  "family": "tiers",
+  "kind": "agent",
+  "default": "off",
+  "runs_in": [
+    "claude_code",
+    "cursor"
+  ],
+  "does": "An agent that carries out an exact plan, such as running tests, edits a plan spells out and rebases without conflicts.",
+  "children": [
+    {
+      "id": "model",
+      "kind": "option",
+      "type": "choice",
+      "values": [
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
+      "default": "sonnet",
+      "does": "The model worker runs on. Cursor gets the mapped name."
+    },
+    {
+      "id": "effort",
+      "kind": "option",
+      "type": "choice",
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "medium",
+      "does": "How hard worker thinks before it answers."
+    },
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of worker's instructions.",
+      "children": [
+        {
+          "id": "follow_plan",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Follows the plan step by step, and settles only the mechanics."
+        },
+        {
+          "id": "stop_when_plan_fails",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Stops and reports when the plan does not fit what it finds."
+        },
+        {
+          "id": "read_back",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Reads back every change right after it makes it."
+        },
+        {
+          "id": "no_public_steps",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Sends back pushes, comments and messages as the exact text, and never runs them."
+        },
+        {
+          "id": "report_short",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Keeps the report short, with absolute paths."
+        },
+        {
+          "id": "no_agents",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Starts no other agents, and names the ones it would need."
+        }
+      ]
+    }
+  ]
+}

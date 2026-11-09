@@ -1,0 +1,198 @@
+{
+  "description": "Each event a part handles gets one dispatcher entry. PreToolUse has three groups, and each tool call reaches the dispatcher once. Bash has its own group. The other tools a part names share the second. Every other tool except Monitor goes to the third. The first two start Python only when a part that names the tool may run, and the third only when a part that handles every tool may run. The dispatcher picks the parts that run. PostToolUse has two groups in the same way: one for the tools a part names, and one for every other tool except Monitor, which starts Python only when a part that handles every tool may run. UserPromptSubmit, Stop and SubagentStop each have one group, which starts Python only when one of its parts may run. All these groups share the shell check in lib/hub/pre_check.sh. At SessionStart the eight slot hooks print the start text, one slot each. SessionEnd, Notification, PermissionRequest and PermissionDenied start the dispatcher for the chat parts. The module draws the band and answers /hub where mods run.",
+  "modules": [
+    "../mod/register.tsx"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PreToolUse",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|AskUserQuestion|Delete|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PreToolUse",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^(?!(?:Bash|Monitor|Agent|AskUserQuestion|Delete|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write)$)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PreToolUse",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion|Edit|ListAgents|Read|SendMessage|Skill|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PostToolUse",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "^(?!(?:Monitor|AskUserQuestion|Edit|ListAgents|Read|SendMessage|Skill|Write)$)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PostToolUse every",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/dispatch.py\" SessionStart",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 1",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 2",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 3",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 4",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 5",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 6",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 7",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/slot_hook.py\" 8",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" UserPromptSubmit",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" Stop",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" SubagentStop",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/dispatch.py\" SessionEnd",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/dispatch.py\" Notification",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/dispatch.py\" PermissionRequest",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/lib/hub/dispatch.py\" PermissionDenied",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

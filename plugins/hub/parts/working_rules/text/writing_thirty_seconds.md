@@ -1,0 +1,1 @@
+- Keep text people read short enough to read in about 30 seconds.

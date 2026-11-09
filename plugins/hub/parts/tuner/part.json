@@ -1,0 +1,217 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "tuner",
+  "family": "setup",
+  "kind": "agent",
+  "default": "on",
+  "runs_in": [
+    "claude_code",
+    "cursor"
+  ],
+  "cost": "listing",
+  "does": "Sets hub up on the first run. After that it keeps the set small, turning off what you go past and offering what you need.",
+  "handlers": {
+    "SessionStart": {
+      "tools": []
+    },
+    "SubagentStop": {
+      "tools": []
+    }
+  },
+  "children": [
+    {
+      "id": "model",
+      "kind": "option",
+      "type": "choice",
+      "values": [
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
+      "default": "haiku",
+      "does": "The model the setup agent runs on."
+    },
+    {
+      "id": "setup",
+      "default": "on",
+      "does": "Runs on the first session start, and again with hubctl setup.",
+      "children": [
+        {
+          "id": "scan",
+          "default": "on",
+          "does": "Reads your tools, sign-in, terminal, repos, MCP servers and your own rules, with no model."
+        },
+        {
+          "id": "questions",
+          "kind": "option",
+          "type": "number",
+          "default": 3,
+          "range": [
+            0,
+            3
+          ],
+          "does": "The most questions setup may ask."
+        },
+        {
+          "id": "compare_rules",
+          "default": "on",
+          "does": "Turns off a hub instruction your own rules already hold."
+        },
+        {
+          "id": "instructions",
+          "kind": "group",
+          "does": "The sections of the setup agent's instructions.",
+          "children": [
+            {
+              "id": "ask_only_unknowns",
+              "kind": "instruction",
+              "default": "on",
+              "cost": "per use",
+              "does": "Asks only what the scan can not tell."
+            },
+            {
+              "id": "one_dialog",
+              "kind": "instruction",
+              "default": "on",
+              "cost": "per use",
+              "does": "Puts every question in one dialog, each one skippable."
+            },
+            {
+              "id": "summary_shape",
+              "kind": "instruction",
+              "default": "on",
+              "cost": "per use",
+              "does": "Ends with what is on and why, what works now and what starts next session."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tune",
+      "default": "on",
+      "does": "Changes flags from your signals, at most once a day.",
+      "children": [
+        {
+          "id": "turn_off",
+          "default": "on",
+          "does": "May turn a part, behavior or instruction off."
+        },
+        {
+          "id": "soften_gates",
+          "default": "on",
+          "does": "May offer to move a gate from block to warn. It never moves it."
+        },
+        {
+          "id": "offers",
+          "default": "on",
+          "does": "May offer a part. It never turns one on."
+        },
+        {
+          "id": "profile_facts",
+          "default": "on",
+          "does": "May add a fact to the profile."
+        },
+        {
+          "id": "every_hours",
+          "kind": "option",
+          "type": "number",
+          "default": 24,
+          "range": [
+            6,
+            168
+          ],
+          "does": "The fewest hours between two tuning runs."
+        },
+        {
+          "id": "unused_days",
+          "kind": "option",
+          "type": "number",
+          "default": 30,
+          "does": "The days a skill or agent may go unused before the tuner offers to turn it off."
+        },
+        {
+          "id": "model",
+          "kind": "option",
+          "type": "choice",
+          "values": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
+          "default": "haiku",
+          "does": "The model that decides which candidate changes to make."
+        },
+        {
+          "id": "side_call",
+          "default": "on",
+          "runs_in": [
+            "claude_code"
+          ],
+          "does": "Makes the model call in the mod, beside the chat, so the chat's context stays clean."
+        },
+        {
+          "id": "instructions",
+          "kind": "group",
+          "does": "What the tuner's model is told.",
+          "children": [
+            {
+              "id": "one_line",
+              "kind": "instruction",
+              "default": "on",
+              "cost": "per use",
+              "does": "Each change is one line with an undo."
+            },
+            {
+              "id": "why",
+              "kind": "instruction",
+              "default": "on",
+              "cost": "per use",
+              "does": "The line names the signal, such as \"you went past it 9 times\"."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "signals",
+      "default": "on",
+      "does": "Keeps a local log of flag ids, counts and times, with no chat text.",
+      "children": [
+        {
+          "id": "keep_days",
+          "kind": "option",
+          "type": "number",
+          "default": 90,
+          "does": "The days a signal stays in the log."
+        }
+      ]
+    },
+    {
+      "id": "notices",
+      "kind": "group",
+      "does": "Where the tuner's one line shows.",
+      "children": [
+        {
+          "id": "band",
+          "default": "on",
+          "runs_in": [
+            "claude_code"
+          ],
+          "needs": [
+            "status_band.notices"
+          ],
+          "does": "On the status band, with Undo."
+        },
+        {
+          "id": "system_message",
+          "default": "on",
+          "runs_in": [
+            "claude_code"
+          ],
+          "does": "As a line at the session start, when the band does not run."
+        }
+      ]
+    }
+  ]
+}

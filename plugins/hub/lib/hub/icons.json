@@ -1,0 +1,110 @@
+{
+  "_about": "hub's one table of glyphs. Python and the mod read it, and nothing else in hub writes a glyph.",
+  "icons": [
+    {
+      "id": "needs_you",
+      "glyph": "!",
+      "meaning": "A chat waits for the user's answer or yes, or a task waits on the user.",
+      "plain": "needs you",
+      "label": "needs you"
+    },
+    {
+      "id": "busy",
+      "glyph": "●",
+      "meaning": "Work goes on now, in a chat or on a task.",
+      "plain": "busy",
+      "label": "busy"
+    },
+    {
+      "id": "waiting",
+      "glyph": "○",
+      "meaning": "Nothing runs now, as in an idle chat or a queued task.",
+      "plain": "idle",
+      "label": "idle"
+    },
+    {
+      "id": "offline",
+      "glyph": "◌",
+      "meaning": "The chat can not be reached.",
+      "plain": "offline",
+      "label": "offline"
+    },
+    {
+      "id": "done",
+      "glyph": "✓",
+      "meaning": "A finished task, or a check that passed.",
+      "plain": "done",
+      "label": "done"
+    },
+    {
+      "id": "failed",
+      "glyph": "✗",
+      "meaning": "A check, or hub itself, needs a fix.",
+      "plain": "failed",
+      "label": "failed"
+    },
+    {
+      "id": "unread",
+      "glyph": "✉",
+      "meaning": "Unread notes from the user's other machines.",
+      "plain": "unread",
+      "label": "unread notes"
+    },
+    {
+      "id": "time",
+      "glyph": "◷",
+      "meaning": "Time since, in front of every time.",
+      "plain": "for",
+      "label": "time"
+    },
+    {
+      "id": "on",
+      "glyph": "+",
+      "meaning": "An offer to turn a part on, or a change that turned one on.",
+      "plain": "on",
+      "label": "on"
+    },
+    {
+      "id": "off",
+      "glyph": "-",
+      "meaning": "A change that turned something off.",
+      "plain": "off",
+      "label": "off"
+    },
+    {
+      "id": "changed",
+      "glyph": "~",
+      "meaning": "A value moved.",
+      "plain": "changed",
+      "label": "changed"
+    },
+    {
+      "id": "next_session",
+      "glyph": "↻",
+      "meaning": "Takes effect at the next session.",
+      "plain": "next session",
+      "label": "next session"
+    },
+    {
+      "id": "claude_code_only",
+      "glyph": "CC",
+      "meaning": "Runs only in Claude Code.",
+      "plain": "Claude Code only",
+      "label": "Claude Code only"
+    },
+    {
+      "id": "folded",
+      "glyph": "▸",
+      "meaning": "The row hides its children.",
+      "plain": ">",
+      "label": "closed"
+    },
+    {
+      "id": "open",
+      "glyph": "▾",
+      "meaning": "The row shows its children.",
+      "plain": "v",
+      "label": "open"
+    }
+  ]
+}

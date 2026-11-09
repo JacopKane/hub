@@ -1,0 +1,1 @@
+- Use the tool's question dialog when it has one, so the user can answer with a click.

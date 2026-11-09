@@ -1,0 +1,1 @@
+- When you are unsure whether you were asked to act, assume you were not, and ask in one line.

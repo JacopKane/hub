@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "handback_cap",
+  "family": "tiers",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": ["SubagentHandback"]}},
+  "reason_not_in": {"cursor": "Cursor has no hand-back tool for a hook to check."},
+  "does": "Keeps an agent's hand-back report under a word cap, so the main chat reads less.",
+  "children": [
+    {"id": "words", "kind": "option", "type": "number", "default": 200,
+     "does": "The most words a hand-back may have."},
+    {
+      "id": "refuse_over",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["refused", "over_cap"],
+      "cost": "per use",
+      "does": "Sends a hand-back over the cap back to the agent to shorten. Off, it only warns.",
+      "children": [
+        {"id": "margin", "kind": "option", "type": "number", "default": 10,
+         "does": "How far over the cap, in percent, a hand-back may go without a warning."},
+        {"id": "tries", "kind": "option", "type": "number", "default": 2,
+         "does": "How many times one agent's hand-back is sent back before it goes through with a warning."}
+      ]
+    }
+  ]
+}

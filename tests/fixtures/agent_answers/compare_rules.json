@@ -1,0 +1,6 @@
+{
+  "profile": {"this_machine": "laptop"},
+  "questions": [],
+  "instructions_off": ["tier_rule.check_claims", "nope.instruction"],
+  "offers": []
+}

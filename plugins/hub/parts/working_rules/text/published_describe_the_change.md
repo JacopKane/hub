@@ -1,0 +1,1 @@
+- Describe what changed, why it matters, how to check it and what is open. Leave out how it came about, the order of pushes and anything about your tools.

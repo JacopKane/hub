@@ -1,0 +1,78 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "public_text_gate",
+  "family": "gates",
+  "kind": "hook",
+  "type": "mode",
+  "values": ["off", "warn", "block"],
+  "default": "warn",
+  "privacy": "guard",
+  "runs_in": ["claude_code", "cursor"],
+  "relevant_if": "repos_with_remote != 0",
+  "handlers": {"PreToolUse": {"tools": ["Bash"]}},
+  "does": "Checks text before it goes public in commits, pushes, tags, PRs, issues, reviews, releases, gists, discussions and other GitHub writes.",
+  "children": [
+    {
+      "id": "targets",
+      "kind": "group",
+      "does": "The public steps the gate checks.",
+      "children": [
+        {"id": "commit", "default": "on", "does": "Checks commit messages."},
+        {"id": "push", "default": "on", "does": "Checks the commits a push sends, read with git log -p."},
+        {"id": "pr", "default": "on", "does": "Checks PR titles, bodies and comments."},
+        {"id": "issue", "default": "on", "does": "Checks issues and issue comments."},
+        {"id": "review_comment", "default": "on", "does": "Checks review comments."},
+        {"id": "release", "default": "on", "does": "Checks release titles, notes, asset labels and text assets."},
+        {"id": "gist", "default": "on", "does": "Checks gist files and descriptions."},
+        {"id": "tag", "default": "on", "does": "Checks the messages of annotated tags."},
+        {"id": "discussion", "default": "on", "does": "Checks discussion posts and comments."},
+        {"id": "commit_comment", "default": "on", "does": "Checks comments on commits."},
+        {"id": "contents", "default": "on", "does": "Checks files written through the GitHub contents API."},
+        {"id": "api", "default": "on", "does": "Checks repo and label descriptions, and the fields of any other gh api write."}
+      ]
+    },
+    {"id": "private_paths", "default": "on", "signals": ["blocked"],
+     "does": "Stops a path into a home or temp folder."},
+    {"id": "secrets", "default": "on", "signals": ["blocked"],
+     "does": "Stops keys, tokens and chat session links, found by their shape."},
+    {"id": "private_words", "default": "on", "signals": ["blocked"],
+     "needs_any": ["core.private_words", "core.private_words_files"],
+     "does": "Stops a word from the private words list."},
+    {"id": "machine_names", "default": "on", "signals": ["blocked"],
+     "relevant_if": "profile.machines",
+     "does": "Stops the host names of the machines in the profile."},
+    {
+      "id": "unreadable",
+      "default": "on",
+      "signals": ["blocked"],
+      "does": "Stops a public command whose text hub can not read, such as a variable, a pipe or a missing file.",
+      "children": [
+        {"id": "hint", "kind": "instruction", "default": "on", "text": "text/unreadable_hint.md",
+         "cost": "per use", "does": "Tells Claude to put the text in a file and pass the file."}
+      ]
+    },
+    {
+      "id": "dashes",
+      "default": "on",
+      "privacy": "none",
+      "signals": ["warned", "went_ahead", "blocked"],
+      "does": "Stops an em dash. In warn mode it stops a text only once.",
+      "children": [
+        {"id": "hint", "kind": "instruction", "default": "on", "text": "text/hint.md",
+         "cost": "per use", "does": "Tells Claude how to rewrite a sentence without the dash."}
+      ]
+    },
+    {"id": "public_repos_only", "kind": "option", "default": "off", "privacy": "loosens",
+     "does": "Checks only repos the profile marks public."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "privacy": "none",
+      "does": "Text the gate adds to its answer.",
+      "children": [
+        {"id": "after_warning", "kind": "instruction", "default": "on", "text": "text/after_warning.md",
+         "cost": "per use", "does": "Tells Claude to fix the text and send the command again."}
+      ]
+    }
+  ]
+}

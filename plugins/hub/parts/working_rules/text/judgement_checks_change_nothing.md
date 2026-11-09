@@ -1,0 +1,1 @@
+- A check changes nothing. Never put a call that changes state into a diagnostic command.

@@ -1,0 +1,12 @@
+{
+  "_source": "Built from Claude Code's hooks docs (SubagentStop common input) and slice 0, which saw agent_id, agent_type and agent_transcript_path in SubagentStop on 2.1.319. Not captured.",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000001.jsonl",
+  "agent_transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000001/subagents/agent-a0000000000000002.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "permission_mode": "default",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_id": "a0000000000000002",
+  "agent_type": "builder"
+}

@@ -1,0 +1,1 @@
+- Do not mention or address a named person in published text unless the user asks for it.

@@ -1,0 +1,1 @@
+From hub-restart, not typed by the user: this chat was restarted at {time}{note}. Your screen from before the stop is saved in {screen}. Read that file and your notes, start again any waiter or watcher you had, then carry on with your open steps.

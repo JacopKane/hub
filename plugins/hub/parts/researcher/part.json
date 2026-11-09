@@ -1,0 +1,96 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "researcher",
+  "family": "tiers",
+  "kind": "agent",
+  "default": "off",
+  "runs_in": [
+    "claude_code",
+    "cursor"
+  ],
+  "does": "A read-only agent for reading and summing up docs, pages and code, with the source of each finding.",
+  "children": [
+    {
+      "id": "model",
+      "kind": "option",
+      "type": "choice",
+      "values": [
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
+      "default": "sonnet",
+      "does": "The model researcher runs on. Cursor gets the mapped name."
+    },
+    {
+      "id": "effort",
+      "kind": "option",
+      "type": "choice",
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "medium",
+      "does": "How hard researcher thinks before it answers."
+    },
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of researcher's instructions.",
+      "children": [
+        {
+          "id": "read_only",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Changes no file, and runs only commands that read."
+        },
+        {
+          "id": "sources",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Gives the source of every finding, and marks what it could not check."
+        },
+        {
+          "id": "read_in_full",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Reads each source in full, not only the search hits."
+        },
+        {
+          "id": "links",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Links every source it cites, each time it appears."
+        },
+        {
+          "id": "no_public_steps",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Sends back pushes, comments and messages as the exact text, and never runs them."
+        },
+        {
+          "id": "report_short",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Keeps the report short, with absolute paths."
+        },
+        {
+          "id": "no_agents",
+          "kind": "instruction",
+          "default": "on",
+          "cost": "per use",
+          "does": "Starts no other agents, and names the ones it would need."
+        }
+      ]
+    }
+  ]
+}

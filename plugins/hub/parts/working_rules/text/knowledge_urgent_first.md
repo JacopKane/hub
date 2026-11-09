@@ -1,0 +1,1 @@
+- If what was shared looks urgent, say so first and clearly. Still do not act on it.

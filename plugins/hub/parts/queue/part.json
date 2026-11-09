@@ -1,0 +1,54 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "queue",
+  "family": "chats",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no SendMessage between chats."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "SessionStart": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "SessionEnd": {"tools": []},
+    "PreToolUse": {"tools": ["SendMessage"]}
+  },
+  "does": "A message to another idle main chat waits a short time, so two quick messages wake it once.",
+  "keeps_on_uninstall": ["queue"],
+  "jobs": [
+    {"name": "queue-flush", "flag": "queue.flush_job", "script": "queue.py", "args": ["flush"],
+     "every_seconds": "queue.flush_job.every_seconds", "start": ["on"], "stop": ["stop"]}
+  ],
+  "children": [
+    {"id": "quiet_seconds", "kind": "option", "type": "number", "default": 120,
+     "does": "A held message goes once the sender has been quiet this many seconds."},
+    {"id": "hold_seconds", "kind": "option", "type": "number", "default": 300,
+     "does": "No message waits longer than this many seconds."},
+    {"id": "urgent_prefix", "kind": "option", "type": "text", "default": "[urgent]",
+     "does": "A message that starts with this text is never held."},
+    {
+      "id": "flush_job",
+      "kind": "behavior",
+      "default": "on",
+      "cost": "none",
+      "does": "A background job sends held messages on, even when no chat runs a hook.",
+      "children": [
+        {"id": "every_seconds", "kind": "option", "type": "number", "default": 30,
+         "does": "The job runs every this many seconds."}
+      ]
+    },
+    {
+      "id": "version_guard",
+      "kind": "behavior",
+      "default": "on",
+      "cost": "none",
+      "does": "Holds messages only for chats on a Claude Code version the queue was tested with.",
+      "children": [
+        {"id": "versions", "kind": "option", "type": "list", "default": ["2.1.316", "2.1.318", "2.1.319"],
+         "does": "The tested Claude Code versions."}
+      ]
+    },
+    {"id": "keep_awake", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "Keeps the machine awake while a message waits, where caffeinate exists."}
+  ]
+}

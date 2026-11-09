@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "slack_write_gate",
+  "family": "gates",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": []}},
+  "reason_not_in": {"cursor": "It watches Claude Code's tool names for the Slack server."},
+  "does": "Experimental. Lets a chat read Slack but never post, react, join or mark anything other people see.",
+  "children": [
+    {"id": "server_pattern", "kind": "option", "type": "text", "check": "pattern", "default": "mcp__slack__.*",
+     "does": "A pattern for the full tool names of your Slack server, such as mcp__slack__.*."},
+    {"id": "read_tools_only", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "Only the read tools of the tested server version pass. Every other tool is refused, and so are unknown tools and broken input."}
+  ]
+}

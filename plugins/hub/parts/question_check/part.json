@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "question_check",
+  "family": "questions",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": ["AskUserQuestion"]}},
+  "reason_not_in": {"cursor": "Cursor's docs describe no question tool a hook can check."},
+  "does": "Opens a question dialog only when it carries what the user needs to answer it.",
+  "children": [
+    {
+      "id": "context",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["refused", "near_miss"],
+      "cost": "per use",
+      "does": "Each question and each option is long enough to give its context.",
+      "children": [
+        {"id": "question_min", "kind": "option", "type": "number", "default": 250,
+         "does": "The fewest characters a question may have."},
+        {"id": "option_min", "kind": "option", "type": "number", "default": 60,
+         "does": "The fewest characters an option's description may have, unless it has a preview."},
+        {"id": "near_miss", "kind": "option", "type": "number", "default": 10,
+         "does": "How far under a minimum, in percent, a part may be and still pass with a soft note."}
+      ]
+    },
+    {"id": "paths", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "A question about code shows a code line with its file path. Other questions need none."},
+    {"id": "example", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "Each question gives an example of what the user would see, or an option has a preview."},
+    {"id": "pick", "kind": "behavior", "default": "on", "signals": ["noted"], "cost": "per use",
+     "does": "A soft note when the recommended option is not first or does not say (Recommended). It never refuses."},
+    {"id": "plain_names", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "No item is named only by a code, such as item 8a. A code may follow the plain name in brackets."}
+  ]
+}

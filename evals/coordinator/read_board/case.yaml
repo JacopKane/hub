@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: read_board
+tags: [coordinator, chat_board]
+context:
+  scaffold_script: scaffold.sh

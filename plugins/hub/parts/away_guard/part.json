@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "away_guard",
+  "family": "questions",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {
+    "PreToolUse": {"tools": ["AskUserQuestion"]},
+    "PostToolUse": {"tools": ["AskUserQuestion"]},
+    "UserPromptSubmit": {"tools": []}
+  },
+  "reason_not_in": {"cursor": "Cursor's docs describe no question tool a hook can check."},
+  "commands": {"away": {"script": "away.py", "does": "Set, clear or show the away state, with away set \"<reason>\" [--hours N], away clear and away status."}},
+  "does": "Holds question dialogs while the user is away, and lets only urgent ones through.",
+  "children": [
+    {"id": "idle_minutes", "kind": "option", "type": "number", "default": 60,
+     "does": "Minutes with no typed prompt and no dialog answer before the user counts as away."},
+    {"id": "time_zone", "kind": "option", "type": "text", "default": "",
+     "does": "The time zone for the quiet hours and the times shown, such as Europe/Paris. Empty means the system time zone."},
+    {"id": "quiet_hours", "kind": "option", "type": "text", "default": "",
+     "does": "Hours that count as away until the user types, such as 23:30-06:30. Empty means none."},
+    {"id": "hold_not_urgent", "kind": "behavior", "default": "on", "signals": ["held", "urgent"], "cost": "per use",
+     "does": "While the user is away, a dialog opens only when its metadata.source says \"urgent: <why>\". Each urgent one is logged."},
+    {"id": "release_on_return", "kind": "behavior", "default": "on", "signals": ["reminded"], "cost": "per use",
+     "does": "After a silent stretch, the next typed prompt asks the chat to judge from the user's words whether they are back. When off, any typed prompt ends the silence."}
+  ]
+}

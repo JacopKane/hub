@@ -1,0 +1,1 @@
+- Scale these rules to the size and risk of the task. When you skip one, say which and why in one line.

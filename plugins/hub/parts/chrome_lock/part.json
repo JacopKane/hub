@@ -1,0 +1,23 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "chrome_lock",
+  "family": "gates",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": []}},
+  "reason_not_in": {"cursor": "It watches Claude Code's tool names for Claude in Chrome."},
+  "commands": {"browser-lock": {"script": "lock.py", "does": "Share Chrome between chats with browser-lock take, wait, release, status and clear."}},
+  "does": "Lets one chat at a time drive Chrome. The others wait for the lock.",
+  "children": [
+    {"id": "tool_prefix", "kind": "option", "type": "text", "default": "mcp__claude-in-chrome__",
+     "does": "The start of the tool names that drive Chrome."},
+    {"id": "one_chat", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "While a chat holds the lock, Chrome calls from every other chat are refused. A chat's subagents count as that chat."},
+    {"id": "wait", "kind": "instruction", "default": "on", "text": "text/wait.md", "cost": "per use",
+     "does": "The refusal tells the chat how to wait for the lock."},
+    {"id": "user_clears", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
+     "does": "A chat may not run browser-lock clear. Only the user clears a lock, from a terminal."}
+  ]
+}

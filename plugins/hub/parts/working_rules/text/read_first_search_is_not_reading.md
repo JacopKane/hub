@@ -1,0 +1,1 @@
+- A search only confirms what you already suspect. Read each source in full the first time.

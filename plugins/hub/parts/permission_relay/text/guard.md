@@ -1,0 +1,1 @@
+This call names the permission relay's folder, so it did not run. The folder stays private, so text from another chat's prompt never reaches a model. The user sees how many prompts wait in the coordinator chat's band, and can run /hub relay there.

@@ -1,0 +1,1 @@
+- Before the first edit, read every source that governs the work: the ticket with its parent and siblings, the design doc and the pages it links, the repo's own specs for the area, and the outside contract in full.

@@ -1,0 +1,8 @@
+{
+  "_recorded": "Captured from Claude Code 2.1.319 at session start in a temporary HOME. The ids and paths were replaced with made-up ones.",
+  "session_id": "00000000-0000-4000-8000-000000000003",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "hook_event_name": "SessionStart",
+  "source": "startup"
+}

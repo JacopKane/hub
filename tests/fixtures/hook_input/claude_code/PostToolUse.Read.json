@@ -1,0 +1,20 @@
+{
+  "_source": "Built from Claude Code's hooks docs (PostToolUse common input) and the Read tool's input fields, not captured. Replace with a live capture from the test account.",
+  "session_id": "00000000-0000-4000-8000-000000000004",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000004.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/home/sam/work/demo/tests/test_app.py"
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "/home/sam/work/demo/tests/test_app.py",
+      "content": "def test_app():\n    assert True\n"
+    }
+  },
+  "tool_use_id": "toolu_000000000000000000000005"
+}

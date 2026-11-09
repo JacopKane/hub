@@ -1,0 +1,27 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "restart",
+  "family": "chats",
+  "kind": "skill",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no chat listing and no way to resume a chat from a terminal."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "SessionStart": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "SessionEnd": {"tools": []}
+  },
+  "does": "Restarts the running chats, each in its own terminal under its own name, and the calling chat last.",
+  "children": [
+    {"id": "ask_first", "kind": "behavior", "default": "on", "cost": "per use",
+     "does": "Each chat is asked first, and only a chat that answered ready is stopped."},
+    {"id": "upgrade", "kind": "behavior", "default": "on", "cost": "per use",
+     "does": "A restart may upgrade Claude Code between the last stop and the first resume."},
+    {"id": "terminal", "kind": "option", "type": "choice", "values": ["auto", "tmux", "iterm", "plain"],
+     "default": "auto",
+     "does": "Where to look for chats. auto looks in tmux panes and iTerm tabs, tmux or iterm in only one, and plain in none, which holds every chat."},
+    {"id": "wait_minutes", "kind": "option", "type": "number", "default": 10,
+     "does": "How long a restart waits for each chat to become safe to stop."}
+  ]
+}

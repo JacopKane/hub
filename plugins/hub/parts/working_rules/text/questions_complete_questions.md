@@ -1,0 +1,1 @@
+- Give each question its context in product terms, the code lines it touches, an example of the result, what each option leads to and costs, and your recommendation first.

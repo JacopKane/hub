@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "sentry_write_gate",
+  "family": "gates",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"PreToolUse": {"tools": []}},
+  "reason_not_in": {"cursor": "Cursor's preToolUse does not enforce ask, so the gate's ask would turn into a block."},
+  "does": "Experimental. Asks the user before a Sentry tool changes anything the team sees, such as a resolve or an assign.",
+  "children": [
+    {"id": "server_pattern", "kind": "option", "type": "text", "check": "pattern", "default": "mcp__(?:.*_)?[Ss]entry__.*",
+     "does": "A pattern for the full tool names of your Sentry servers. The default takes mcp__sentry__ and the hosted connector."},
+    {"id": "read_tools", "kind": "behavior", "default": "on", "signals": [], "cost": "per use",
+     "does": "The read tools of the tested server version run without asking. When off, they ask too."},
+    {"id": "ask_before_write", "kind": "behavior", "default": "on", "signals": ["asked"], "cost": "per use",
+     "does": "Every other tool asks first. So does a write run through execute_sentry_tool, an unknown tool or broken input."}
+  ]
+}

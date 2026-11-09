@@ -1,0 +1,57 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "path_rules",
+  "family": "rules",
+  "kind": "rule",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"PostToolUse": {"tools": ["Edit", "Read", "Write"]}},
+  "does": "Gives the rules for UI, tests or docs the first time a chat reads or changes a matching file, so they cost nothing until then.",
+  "children": [
+    {
+      "id": "ui",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/ui.md",
+      "cost": "per use",
+      "does": "UI rules that ask you to follow the design, use one grid, label every control, translate every word and check in a real browser.",
+      "children": [
+        {"id": "paths", "kind": "option", "type": "list",
+         "default": ["**/*.{svelte,vue,tsx,jsx,astro}", "**/*.{css,scss,sass,less}",
+                     "**/{components,routes,pages,views,layouts}/**", "**/{locales,translations,i18n}/**",
+                     "**/{tailwind,postcss}.config.*"],
+         "does": "The files that bring the UI rules, as globs from the repo's top folder."}
+      ]
+    },
+    {
+      "id": "tests",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/tests.md",
+      "cost": "per use",
+      "does": "Test rules that ask for the test first, a test seen failing, no weakened tests and no flaky ones.",
+      "children": [
+        {"id": "paths", "kind": "option", "type": "list",
+         "default": ["**/*.{test,spec}.{ts,tsx,js,jsx,mjs,cjs}", "**/{test_*,*_test,conftest}.py", "**/*.test.sh",
+                     "**/{tests,test,__tests__,e2e,playwright}/**", "**/{playwright,vitest,jest}*.config.*",
+                     "**/pytest.ini"],
+         "does": "The files that bring the test rules, as globs from the repo's top folder."}
+      ]
+    },
+    {
+      "id": "docs",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/docs.md",
+      "cost": "per use",
+      "does": "Rules for specs and design docs, written for a reader outside the code, with evidence for each decision.",
+      "children": [
+        {"id": "paths", "kind": "option", "type": "list",
+         "default": ["**/{specs,docs,documentation,design-docs,rfcs,adr,adrs,decisions}/**",
+                     "**/*{SPEC,Spec,spec,DESIGN,Design,design}*.md", "**/{rfc,adr}-*.md"],
+         "does": "The files that bring the docs rules, as globs from the repo's top folder."}
+      ]
+    }
+  ]
+}

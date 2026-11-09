@@ -1,0 +1,4 @@
+{
+  "--version": "version.txt",
+  "auth status": "auth-status.json"
+}

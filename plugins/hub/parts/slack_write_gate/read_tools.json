@@ -1,0 +1,7 @@
+{
+  "server": "slack-mcp-server",
+  "version": "1.3.0",
+  "how": "The tools marked readOnlyHint in this version whose handlers make no write call.",
+  "read_tools": ["channels_list", "conversations_history", "conversations_replies", "conversations_search_messages",
+                 "users_search"]
+}

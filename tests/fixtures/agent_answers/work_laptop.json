@@ -1,0 +1,20 @@
+{
+  "profile": {"this_machine": "laptop"},
+  "questions": [
+    {"id": "gate_mode", "text": "When a push or PR holds a private path or an em dash, should hub warn you or stop it?",
+     "options": [
+       {"label": "warn", "does": "Says what it found once, then lets you go ahead.", "flags": {"public_text_gate": "warn"}},
+       {"label": "block", "does": "Stops it until the text is fixed.", "flags": {"public_text_gate": "block"}}
+     ]},
+    {"id": "use", "text": "Is this machine for work, for home, or both?",
+     "options": [
+       {"label": "work", "does": "Work only.", "machine": {"use": "work"}},
+       {"label": "home", "does": "Home only.", "machine": {"use": "home"}},
+       {"label": "both", "does": "Both.", "machine": {"use": "both"}}
+     ]},
+    {"id": "made_up", "text": "Turn on the made-up part?",
+     "options": [{"label": "yes", "does": "It does not exist.", "flags": {"nope.flag": "on"}}]}
+  ],
+  "instructions_off": [],
+  "offers": []
+}

@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: first_run_questions
+tags: [setup]
+context:
+  scaffold_script: scaffold.sh
+expected_outcome: |
+  On the first run the setup agent reads the scan and hub asks in one dialog with at most three questions. None asks about something the scan already shows.

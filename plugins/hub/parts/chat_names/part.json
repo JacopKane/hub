@@ -1,0 +1,34 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "chat_names",
+  "family": "chats",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no SendMessage between chats."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "SessionStart": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "SessionEnd": {"tools": []},
+    "PreToolUse": {"tools": ["SendMessage"]},
+    "PostToolUse": {"tools": ["SendMessage"]}
+  },
+  "does": "Messages sent by a chat's name reach the live chat of that name, never a dead row.",
+  "children": [
+    {"id": "resolve", "kind": "behavior", "default": "on", "cost": "listing",
+     "does": "A plain chat name becomes the inbox address of the one live chat of that name on this machine."},
+    {
+      "id": "offline_note",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/offline_note.md",
+      "cost": "per use",
+      "does": "One note when a send by plain name went to an offline row.",
+      "children": [
+        {"id": "stopped", "kind": "behavior", "default": "on", "text": "text/stopped_note.md", "cost": "per use",
+         "does": "One note when a chat on this machine stopped before the message arrived."}
+      ]
+    }
+  ]
+}

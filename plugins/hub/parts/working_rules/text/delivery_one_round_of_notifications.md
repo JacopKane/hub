@@ -1,0 +1,1 @@
+- Gather the public steps of one piece of work into one list the user can order at once, so people are notified once.

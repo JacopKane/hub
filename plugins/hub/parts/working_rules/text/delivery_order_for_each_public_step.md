@@ -1,0 +1,1 @@
+- Take no public step, such as a push, comment, review, merge, PR change or ticket change, until the user orders that exact step. One order covers one step.

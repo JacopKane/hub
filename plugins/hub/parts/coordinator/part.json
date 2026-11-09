@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "coordinator",
+  "family": "chats",
+  "kind": "skill",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no ListAgents, no SendMessage and no question tool a hook can check."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "SessionStart": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "SessionEnd": {"tools": []},
+    "PreToolUse": {"tools": ["AskUserQuestion", "Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Write"]},
+    "PostToolUse": {"tools": ["Skill"]}
+  },
+  "does": "One chat the user talks to, which forwards work to the chat that owns it and relays questions back.",
+  "children": [
+    {"id": "name", "kind": "option", "type": "text", "default": "HUB",
+     "does": "The name of the coordinator chat. A chat takes it with /rename or --name."},
+    {"id": "start_nudge", "kind": "behavior", "default": "on", "text": "text/start_nudge.md", "cost": "per use",
+     "does": "The chat with the coordinator's name is told to load hub-coordinator until it does."},
+    {
+      "id": "work_guard",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/work_guard.md",
+      "cost": "none",
+      "does": "Refuses topic edits, test runs and commits in the coordinator. Its subagents and other chats pass.",
+      "children": [
+        {"id": "allowed", "kind": "option", "type": "list",
+         "default": ["*/live_notes.md", "~/.claude/projects/*/memory/*", "{state}/*"],
+         "does": "Paths the coordinator may still write, as globs. {state} is hub's state folder."}
+      ]
+    },
+    {
+      "id": "delegate_nudge",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/delegate_nudge.md",
+      "cost": "per use",
+      "does": "Adds one line that asks whether to delegate, after every few tool calls on one prompt.",
+      "children": [
+        {"id": "every", "kind": "option", "type": "number", "default": 3,
+         "does": "The line comes on every this many Read, Grep, Glob, Bash, Edit or Write calls."}
+      ]
+    },
+    {"id": "question_guard", "kind": "behavior", "default": "on", "text": "text/question_guard.md", "cost": "none",
+     "does": "While the coordinator is live, a question dialog in another chat goes to the coordinator instead."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of the hub-coordinator skill.",
+      "children": [
+        {"id": "forward", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Forward the user's words to the chat that owns the topic."},
+        {"id": "relay", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Relay questions to the user and bring the user's answer and yes back."},
+        {"id": "follow_through", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Follow each job to its outcome and keep every chat aware of the others."},
+        {"id": "topic_chat", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Every topic chat reports to the coordinator when it starts, ends or is blocked."},
+        {"id": "read_board", "kind": "instruction", "default": "on", "needs": ["chat_board"], "cost": "per use",
+         "does": "The coordinator reads the chat board before it says what the chats do or forwards work."}
+      ]
+    }
+  ]
+}

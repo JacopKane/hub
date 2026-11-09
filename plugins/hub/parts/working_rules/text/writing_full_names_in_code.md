@@ -1,0 +1,1 @@
+- Name the variables, functions and files you write by what they hold or do, in full words.

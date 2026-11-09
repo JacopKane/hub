@@ -1,0 +1,15 @@
+{
+  "_source": "Built from Claude Code's hooks docs (PreToolUse common input) and the Agent tool's input fields, not captured. A call from the main chat, so it has no agent_id.",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Count the test files",
+    "prompt": "Count the test files under tests and report the number.",
+    "subagent_type": "scout"
+  },
+  "tool_use_id": "toolu_000000000000000000000003"
+}

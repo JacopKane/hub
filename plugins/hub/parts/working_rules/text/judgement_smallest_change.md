@@ -1,0 +1,1 @@
+- Make the smallest change that does what was asked. Show a rename, a migration or a refactor first, with its cost.

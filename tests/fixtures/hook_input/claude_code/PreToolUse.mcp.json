@@ -1,0 +1,13 @@
+{
+  "_source": "Built from Claude Code's hooks docs (PreToolUse common input; MCP tools are named mcp__<server>__<tool>), not captured. Replace with a live capture from the test account.",
+  "session_id": "00000000-0000-4000-8000-000000000021",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-000000000021.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__claude-in-chrome__navigate",
+  "tool_input": {
+    "url": "https://example.com"
+  },
+  "tool_use_id": "toolu_000000000000000000000023"
+}

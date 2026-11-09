@@ -1,0 +1,1 @@
+- Read a source again when it changed, when a decision changed, or when a review raises it.

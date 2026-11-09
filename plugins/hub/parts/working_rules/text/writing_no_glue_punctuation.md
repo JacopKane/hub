@@ -1,0 +1,1 @@
+- Write ordinary sentences instead of joining clauses with em dashes, or a label and its explanation with a colon.

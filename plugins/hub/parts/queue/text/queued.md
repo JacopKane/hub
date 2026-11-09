@@ -1,0 +1,1 @@
+Queued, not an error. {name} is idle, so the message waits until the sender has been quiet for {quiet} seconds, and {limit} seconds at most. It goes sooner if {name} turns busy. Do not send it again, unless {name} must see it now. Then send it again with {urgent} at the start of the first line.

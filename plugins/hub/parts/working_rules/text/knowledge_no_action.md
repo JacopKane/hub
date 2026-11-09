@@ -1,0 +1,1 @@
+- When the user shares a link, a screenshot, a thread, a review or a doc and asks for no change, change nothing. Read it in full, say what it changes for the current work and what you would do, then wait.

@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "chat_board",
+  "family": "chats",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor does not list its chats, so hub can not see them."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "SessionStart": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "PreToolUse": {"tools": []},
+    "PostToolUse": {"tools": ["ListAgents"]},
+    "Stop": {"tools": []},
+    "SubagentStop": {"tools": []},
+    "Notification": {"tools": []},
+    "PermissionRequest": {"tools": []},
+    "SessionEnd": {"tools": []}
+  },
+  "commands": {
+    "board": {"script": "board_cli.py", "does": "the chat board: every chat with its state and tasks"}
+  },
+  "does": "Shows every Claude Code chat as busy, idle, offline or needs you, with its current task and its tasks.",
+  "children": [
+    {"id": "states", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "Sets each chat's state from its hook events."},
+    {"id": "listing", "kind": "behavior", "default": "on", "cost": "listing",
+     "does": "Shows offline chats, and chats on other machines, from the chat listing."},
+    {"id": "list_agents_mirror", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "Keeps a copy of each ListAgents result, so the board needs no extra call."},
+    {"id": "tasks", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "Keeps a task list for each chat. Each chat writes its own."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "What the board tells each chat.",
+      "children": [
+        {"id": "keep_task_line", "kind": "instruction", "default": "on", "text": "text/keep_task_line.md",
+         "cost": "start text", "does": "The chat keeps its task line and task list current with hubctl board task."}
+      ]
+    }
+  ]
+}

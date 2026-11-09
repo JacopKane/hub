@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "link_check",
+  "family": "rules",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"Stop": {"tools": []}},
+  "does": "Sends a reply back once when it names a PR, issue or ticket without a link, so every reference can be opened.",
+  "children": [
+    {"id": "prs", "kind": "behavior", "default": "on", "signals": ["sent_back"], "cost": "per use",
+     "does": "Finds PR numbers such as #123 or PR 123."},
+    {"id": "issues", "kind": "behavior", "default": "on", "signals": ["sent_back"], "cost": "per use",
+     "does": "Finds issues such as owner/repo#123 or issue 123."},
+    {
+      "id": "tickets",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["sent_back"],
+      "cost": "per use",
+      "does": "Finds ticket ids such as APP-42.",
+      "children": [
+        {"id": "prefixes", "kind": "option", "type": "list", "default": [],
+         "does": "Only these ticket prefixes count, such as APP. When the list is empty, every upper-case prefix counts."},
+        {"id": "skip", "kind": "option", "type": "list",
+         "default": ["UTF", "SHA", "ISO", "AES", "RSA", "TLS", "SSL", "HTTP", "IPV", "MP", "ES"],
+         "does": "Prefixes that are never tickets, such as UTF in UTF-8."}
+      ]
+    }
+  ]
+}

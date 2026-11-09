@@ -1,0 +1,22 @@
+{
+  "docs_based": "Built from Cursor's docs, not captured from the app.",
+  "_source": "Cursor docs, hooks reference: common input and preToolUse. Replace with a live capture.",
+  "conversation_id": "00000000-0000-4000-8000-000000000011",
+  "generation_id": "00000000-0000-4000-8000-000000000012",
+  "model": "default",
+  "hook_event_name": "preToolUse",
+  "cursor_version": "3.0.0",
+  "workspace_roots": [
+    "/home/sam/work/demo"
+  ],
+  "user_email": null,
+  "transcript_path": null,
+  "tool_name": "Shell",
+  "tool_input": {
+    "command": "git status --short",
+    "working_directory": "/home/sam/work/demo"
+  },
+  "tool_use_id": "call_000000000000000000000001",
+  "cwd": "/home/sam/work/demo",
+  "agent_message": "Checking the status"
+}

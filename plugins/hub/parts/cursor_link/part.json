@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "cursor_link",
+  "family": "tools",
+  "kind": "extra",
+  "stage": "beta",
+  "default": "off",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"SessionStart": {"tools": []}},
+  "does": "Gives Cursor the same parts, with hub's hooks, the start text and copies of the agents.",
+  "children": [
+    {"id": "plugin", "default": "on", "runs_in": ["cursor"],
+     "does": "Writes hub's plugin folder to ~/.cursor/plugins/local/hub. Its hooks call this copy of hub."},
+    {"id": "text_slots", "default": "on", "runs_in": ["cursor"], "needs": ["cursor_link.plugin"],
+     "does": "Gives Cursor the start text at the start of each chat."},
+    {
+      "id": "agent_copies",
+      "default": "on",
+      "runs_in": ["cursor"],
+      "does": "Writes a copy of each agent that runs to ~/.cursor/agents, with Cursor's model name.",
+      "children": [
+        {"id": "effort_map", "kind": "option", "type": "list",
+         "default": ["opus=claude-opus-5", "sonnet=claude-sonnet-5", "haiku=claude-haiku-5"],
+         "does": "Cursor's name for each model, as model=name pairs. The effort goes after the name in brackets."}
+      ]
+    },
+    {"id": "style_as_rule", "default": "on", "runs_in": ["cursor"], "needs": ["hub_style", "cursor_link.text_slots"],
+     "cost": "start text",
+     "does": "Cursor has no output styles, so the parts of hub's style that run go first in Cursor's start text."},
+    {"id": "tuner_chat_line", "stage": "beta", "default": "off", "runs_in": ["cursor"], "needs": ["tuner"],
+     "does": "Shows the tuner's line as the first line of the next chat in Cursor."}
+  ]
+}

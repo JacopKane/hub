@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hub.schema.json",
+  "title": "hub settings (hub.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "flags": {
+      "type": "object",
+      "description": "Flag id to entry. Only values that differ from the default, plus pins.",
+      "additionalProperties": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "private_words": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The value of core.private_words."
+    },
+    "private_words_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The value of core.private_words_files."
+    },
+    "options": {
+      "type": "object",
+      "description": "Reserved for part values that are not flags."
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "description": "The flag's value."
+        },
+        "by": {
+          "enum": [
+            "user",
+            "model",
+            "setup",
+            "tuner"
+          ],
+          "description": "Who set it. A value set by the user is pinned. A value from a command the model runs is set by the model, and is never a pin."
+        }
+      }
+    }
+  }
+}

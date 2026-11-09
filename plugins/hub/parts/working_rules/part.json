@@ -1,0 +1,342 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "working_rules",
+  "family": "rules",
+  "kind": "rule",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": [
+    "claude_code",
+    "cursor"
+  ],
+  "does": "Start text with working rules for shared links, questions, reading first, writing, published text, delivery and judgement.",
+  "children": [
+    {
+      "id": "knowledge",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/knowledge.md",
+      "cost": "start text",
+      "does": "Treats a link, screenshot or doc shared without a request as something to understand, not to act on.",
+      "children": [
+        {
+          "id": "no_action",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/knowledge_no_action.md",
+          "cost": "start text",
+          "does": "Reads what was shared and waits, instead of editing."
+        },
+        {
+          "id": "answer_questions",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/knowledge_answer_questions.md",
+          "cost": "start text",
+          "does": "Answers a question instead of acting on it."
+        },
+        {
+          "id": "read_only_is_fine",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/knowledge_read_only_is_fine.md",
+          "cost": "start text",
+          "does": "Allows read-only steps while nothing was asked."
+        },
+        {
+          "id": "urgent_first",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/knowledge_urgent_first.md",
+          "cost": "start text",
+          "does": "Flags an urgent item first, without acting on it."
+        },
+        {
+          "id": "ask_when_unsure",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/knowledge_ask_when_unsure.md",
+          "cost": "start text",
+          "does": "Asks in one line when it is unclear whether to act."
+        }
+      ]
+    },
+    {
+      "id": "questions",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/questions.md",
+      "cost": "start text",
+      "does": "Asks the open questions before the work, each with its full context.",
+      "children": [
+        {
+          "id": "ask_before_starting",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/questions_ask_before_starting.md",
+          "cost": "start text",
+          "does": "Asks about the choices the user will see before the first change."
+        },
+        {
+          "id": "complete_questions",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/questions_complete_questions.md",
+          "cost": "start text",
+          "does": "Gives each question what the user needs to answer it."
+        },
+        {
+          "id": "question_dialog",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/questions_question_dialog.md",
+          "cost": "start text",
+          "does": "Asks in the tool's question dialog."
+        },
+        {
+          "id": "plain_names",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/questions_plain_names.md",
+          "cost": "start text",
+          "does": "Names things by what they are, not by codes."
+        }
+      ]
+    },
+    {
+      "id": "read_first",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/read_first.md",
+      "cost": "start text",
+      "does": "Reads every source that governs the work before the first edit.",
+      "children": [
+        {
+          "id": "governing_sources",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/read_first_governing_sources.md",
+          "cost": "start text",
+          "does": "Reads the ticket, the design and the specs before the first edit."
+        },
+        {
+          "id": "search_is_not_reading",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/read_first_search_is_not_reading.md",
+          "cost": "start text",
+          "does": "Reads sources in full instead of searching them."
+        },
+        {
+          "id": "say_what_you_read",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/read_first_say_what_you_read.md",
+          "cost": "start text",
+          "does": "Names the sources read and the ones left out."
+        },
+        {
+          "id": "read_again_on_change",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/read_first_read_again_on_change.md",
+          "cost": "start text",
+          "does": "Reads a source again after it changes."
+        }
+      ]
+    },
+    {
+      "id": "writing",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/writing.md",
+      "cost": "start text",
+      "does": "Keeps text plain, short and ready to paste.",
+      "children": [
+        {
+          "id": "plain_words",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/writing_plain_words.md",
+          "cost": "start text",
+          "does": "Asks for plain words that a reader of English as a second language can follow."
+        },
+        {
+          "id": "no_glue_punctuation",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/writing_no_glue_punctuation.md",
+          "cost": "start text",
+          "does": "Asks for ordinary sentences instead of dashes and colons as glue."
+        },
+        {
+          "id": "full_names_in_code",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/writing_full_names_in_code.md",
+          "cost": "start text",
+          "does": "Asks for names in code that say what they hold or do."
+        },
+        {
+          "id": "thirty_seconds",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/writing_thirty_seconds.md",
+          "cost": "start text",
+          "does": "Keeps text to about 30 seconds of reading."
+        },
+        {
+          "id": "paste_ready",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/writing_paste_ready.md",
+          "cost": "start text",
+          "does": "Shows text to paste cleanly between two rules."
+        }
+      ]
+    },
+    {
+      "id": "published",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/published.md",
+      "cost": "start text",
+      "does": "Rules for PR bodies, issues, docs and commit messages.",
+      "children": [
+        {
+          "id": "settled_before_publishing",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/published_settled_before_publishing.md",
+          "cost": "start text",
+          "does": "Keeps working notes out of published text."
+        },
+        {
+          "id": "describe_the_change",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/published_describe_the_change.md",
+          "cost": "start text",
+          "does": "Published text describes the change, not its history."
+        },
+        {
+          "id": "no_mentions",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/published_no_mentions.md",
+          "cost": "start text",
+          "does": "Leaves out mentions that notify people."
+        },
+        {
+          "id": "publish_the_question",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/published_publish_the_question.md",
+          "cost": "start text",
+          "does": "Publishes an open decision as a question."
+        }
+      ],
+      "relevant_if": "repos_with_remote != 0"
+    },
+    {
+      "id": "delivery",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/delivery.md",
+      "cost": "start text",
+      "does": "Rules for public steps, PRs and notifications.",
+      "children": [
+        {
+          "id": "order_for_each_public_step",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/delivery_order_for_each_public_step.md",
+          "cost": "start text",
+          "does": "Waits for an order for each public step."
+        },
+        {
+          "id": "one_round_of_notifications",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/delivery_one_round_of_notifications.md",
+          "cost": "start text",
+          "does": "Gathers public steps so people get one round of notifications."
+        },
+        {
+          "id": "change_on_its_pr",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/delivery_change_on_its_pr.md",
+          "cost": "start text",
+          "does": "Puts a change on the PR it belongs to."
+        },
+        {
+          "id": "environment_changes_first",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/delivery_environment_changes_first.md",
+          "cost": "start text",
+          "does": "Puts environment changes first in the status."
+        },
+        {
+          "id": "read_every_review",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/delivery_read_every_review.md",
+          "cost": "start text",
+          "does": "Reads every review thread before and after each round."
+        }
+      ]
+    },
+    {
+      "id": "judgement",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/judgement.md",
+      "cost": "start text",
+      "does": "Scales the rules to the task and keeps changes small.",
+      "children": [
+        {
+          "id": "scale_to_the_task",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/judgement_scale_to_the_task.md",
+          "cost": "start text",
+          "does": "Scales the rules to the task and names any rule it skips."
+        },
+        {
+          "id": "smallest_change",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/judgement_smallest_change.md",
+          "cost": "start text",
+          "does": "Keeps each change small, and shows bigger ones first."
+        },
+        {
+          "id": "do_local_steps",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/judgement_do_local_steps.md",
+          "cost": "start text",
+          "does": "Does local steps instead of handing over commands."
+        },
+        {
+          "id": "review_your_diff",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/judgement_review_your_diff.md",
+          "cost": "start text",
+          "does": "Reviews its own diff first."
+        },
+        {
+          "id": "checks_change_nothing",
+          "kind": "instruction",
+          "default": "on",
+          "text": "text/judgement_checks_change_nothing.md",
+          "cost": "start text",
+          "does": "Keeps checks read-only."
+        }
+      ]
+    }
+  ]
+}

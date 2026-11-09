@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "part.schema.json",
+  "title": "A hub part manifest (part.json)",
+  "type": "object",
+  "required": [
+    "id",
+    "family",
+    "kind",
+    "does"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "The part id, equal to its folder name."
+    },
+    "kind": {
+      "enum": [
+        "core",
+        "hook",
+        "agent",
+        "skill",
+        "rule",
+        "style",
+        "mod",
+        "extra"
+      ]
+    },
+    "type": {
+      "enum": [
+        "switch",
+        "mode",
+        "list",
+        "text",
+        "number",
+        "choice"
+      ]
+    },
+    "does": {
+      "type": "string",
+      "description": "One line on what the flag does."
+    },
+    "default": {
+      "description": "A value, or a condition that gives one.",
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "array"
+      ]
+    },
+    "values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "runs_in": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "claude_code",
+          "cursor"
+        ]
+      }
+    },
+    "needs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Flags that must all run for this one to run."
+    },
+    "needs_any": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Flags of which one must run for this one to run."
+    },
+    "relevant_if": {
+      "type": "string",
+      "description": "When false, the flag is hidden. It never turns the flag off."
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Signal names the handler logs for this flag."
+    },
+    "cost": {
+      "enum": [
+        "none",
+        "listing",
+        "start text",
+        "per use"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "description": "A text file in the part's folder, for an instruction."
+    },
+    "privacy": {
+      "enum": [
+        "guard",
+        "loosens",
+        "none"
+      ],
+      "description": "guard: a project file may raise it but never lower it, and a guarded list adds up over the scopes. loosens: on makes the checks weaker, so a project file may only set it off. A child of a guarded node is guarded unless it says otherwise."
+    },
+    "stage": {
+      "enum": [
+        "beta"
+      ],
+      "description": "Marks an untested part or flag. A beta flag must default off, a beta part is never offered, and the doors show it in a group named \"Beta, untested\". A child takes its parent's stage."
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "$schema": {
+      "type": "string"
+    },
+    "family": {
+      "enum": [
+        "core",
+        "setup",
+        "tiers",
+        "chats",
+        "questions",
+        "gates",
+        "rules",
+        "learning",
+        "housekeeping",
+        "screens",
+        "tools",
+        "notify"
+      ]
+    },
+    "offer_when": {
+      "type": "string",
+      "description": "When true, a part that is off is offered."
+    },
+    "handlers": {
+      "type": "object",
+      "description": "The events the part's handler.py takes, with the tools it watches.",
+      "propertyNames": {
+        "enum": [
+          "Notification",
+          "PermissionDenied",
+          "PermissionRequest",
+          "PreCompact",
+          "PostToolUse",
+          "PreToolUse",
+          "SessionEnd",
+          "SessionStart",
+          "Stop",
+          "SubagentStop",
+          "UserPromptSubmit"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "runs_in": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "claude_code",
+                "cursor"
+              ]
+            },
+            "description": "The tools the handler runs in, when fewer than the part's. Leave it out to run where the part runs."
+          }
+        }
+      }
+    },
+    "reason_not_in": {
+      "type": "object",
+      "description": "One line per tool the flag does not run in.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "requires": {
+      "type": "object",
+      "description": "Programs, systems and lowest tool versions the part needs."
+    },
+    "keeps_on_uninstall": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Names of folders and files in hub's state folder that belong to the user, so hubctl uninstall keeps them."
+    },
+    "range": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "The lowest and the highest value a number takes."
+    },
+    "check": {
+      "enum": [
+        "pattern"
+      ],
+      "description": "A check on the value of a text option. \"pattern\" means a regular expression that is not empty."
+    },
+    "commands": {
+      "type": "object",
+      "description": "hubctl commands the part adds, by name. A name may not be a core verb.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "script",
+          "does"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The script in the part's folder that runs."
+          },
+          "does": {
+            "type": "string",
+            "description": "One line for hubctl --help."
+          }
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "description": "Background jobs the part needs. Each runs one of the part's scripts while its flag runs, and hubctl apply and uninstall install and remove them.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "flag",
+          "script"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "The job's name, unique over all parts."
+          },
+          "flag": {
+            "type": "string",
+            "description": "The flag id that must run for the job to be installed."
+          },
+          "script": {
+            "type": "string",
+            "description": "A script in the part's folder."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments for each run."
+          },
+          "every_seconds": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Seconds between runs, or the id of a number flag that holds them."
+          },
+          "at_login": {
+            "type": "boolean"
+          },
+          "keep_alive": {
+            "type": "boolean"
+          },
+          "start": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments for one run of the script when the job is first installed."
+          },
+          "stop": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments for one run of the script after the job is removed."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "does"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The last segment of the flag id."
+        },
+        "kind": {
+          "enum": [
+            "behavior",
+            "instruction",
+            "option",
+            "group"
+          ]
+        },
+        "type": {
+          "enum": [
+            "switch",
+            "mode",
+            "list",
+            "text",
+            "number",
+            "choice"
+          ]
+        },
+        "does": {
+          "type": "string",
+          "description": "One line on what the flag does."
+        },
+        "default": {
+          "description": "A value, or a condition that gives one.",
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array"
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runs_in": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "claude_code",
+              "cursor"
+            ]
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Flags that must all run for this one to run."
+        },
+        "needs_any": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Flags of which one must run for this one to run."
+        },
+        "relevant_if": {
+          "type": "string",
+          "description": "When false, the flag is hidden. It never turns the flag off."
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Signal names the handler logs for this flag."
+        },
+        "cost": {
+          "enum": [
+            "none",
+            "listing",
+            "start text",
+            "per use"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "A text file in the part's folder, for an instruction."
+        },
+        "privacy": {
+          "enum": [
+            "guard",
+            "loosens",
+            "none"
+          ],
+          "description": "guard: a project file may raise it but never lower it, and a guarded list adds up over the scopes. loosens: on makes the checks weaker, so a project file may only set it off. A child of a guarded node is guarded unless it says otherwise."
+        },
+        "reason_not_in": {
+          "type": "object",
+          "description": "One line per tool the flag does not run in.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "stage": {
+          "enum": [
+            "beta"
+          ],
+          "description": "Marks an untested part or flag. A beta flag must default off, a beta part is never offered, and the doors show it in a group named \"Beta, untested\". A child takes its parent's stage."
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "The lowest and the highest value a number takes."
+        },
+        "check": {
+          "enum": [
+            "pattern"
+          ],
+          "description": "A check on the value of a text option. \"pattern\" means a regular expression that is not empty."
+        }
+      }
+    }
+  }
+}

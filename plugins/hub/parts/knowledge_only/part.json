@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "knowledge_only",
+  "family": "questions",
+  "kind": "hook",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code"],
+  "handlers": {"UserPromptSubmit": {"tools": []}},
+  "reason_not_in": {"cursor": "Cursor's beforeSubmitPrompt can only let a prompt through or block it, so it can not add a reminder."},
+  "does": "Reminds the chat to explain shared material, such as a link, a paste or an image, and to change nothing.",
+  "children": [
+    {
+      "id": "detect_shared_material",
+      "kind": "behavior",
+      "default": "on",
+      "signals": ["reminded"],
+      "cost": "per use",
+      "does": "Spots a prompt that starts with a marker word, or is mostly a paste, links or images with no ask for a change.",
+      "children": [
+        {"id": "markers", "kind": "option", "type": "list",
+         "default": ["btw", "fyi", "side info", "just notifying", "for your info", "for your information"],
+         "does": "Words that mark a prompt as shared material when it starts with one."}
+      ]
+    },
+    {"id": "reminder", "kind": "instruction", "default": "on", "text": "text/reminder.md", "cost": "per use",
+     "does": "Tells the chat to say what the material changes and what it would do, and to act only on words that ask for it."}
+  ]
+}

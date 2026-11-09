@@ -1,0 +1,1 @@
+- Show text the user will paste as plain text between two horizontal rules, one message per pair, with nothing that shows a tool wrote it.

@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "self_protection",
+  "family": "gates",
+  "kind": "hook",
+  "default": "on",
+  "privacy": "guard",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"PreToolUse": {"tools": ["Bash", "Delete", "Edit", "Write"]}},
+  "cost": "per use",
+  "does": "Stops a tool call that would lower hub's own protections, so only you change them.",
+  "children": [
+    {"id": "hubctl", "default": "on", "signals": ["blocked"],
+     "does": "Stops hubctl in a tool call when it would lower a gate, a guard, a privacy check or a pin, or uninstall hub."},
+    {"id": "agent_marker", "default": "on", "signals": ["blocked"],
+     "does": "Stops a command that unsets or overrides the marker that tells hub a tool call is running."},
+    {"id": "settings_files", "default": "on", "signals": ["blocked"],
+     "does": "Stops writes to hub's settings and state files. Reading them still works."},
+    {"id": "ask_the_user", "kind": "instruction", "default": "on", "text": "text/ask_the_user.md",
+     "cost": "per use", "does": "Tells Claude to ask you to make the change with /hub in Claude Code."}
+  ]
+}

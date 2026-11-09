@@ -1,0 +1,1 @@
+- Before a job that is not small and obvious, list what you would have to assume, drop what a source already answers, and ask the rest before the first change.

@@ -1,0 +1,47 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "live_notes",
+  "family": "tiers",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no SendMessage to pass a new rule to a running agent, and its hook input may have no transcript folder for the notes."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "PreToolUse": {"tools": ["Agent"]},
+    "PostToolUse": {"tools": ["SendMessage"]}
+  },
+  "does": "Each agent a chat starts gets the chat's live notes file, so new rules reach agents the chat would forget.",
+  "children": [
+    {"id": "path", "kind": "option", "type": "text", "default": "{transcript_folder}/{session}/live_notes.md",
+     "does": "Where each chat's notes file is. {transcript_folder} is the folder of the chat's transcript, {session} its id, and ~/ the home folder."},
+    {
+      "id": "brief_names_file",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/brief_hint.md",
+      "cost": "per use",
+      "does": "An agent brief that does not name the chat's notes file is refused, and the reason gives the path.",
+      "children": [
+        {"id": "create_file", "kind": "behavior", "default": "on", "text": "text/header.md", "cost": "none",
+         "does": "Makes the notes file with a short header when it is missing."},
+        {"id": "size_warning", "kind": "behavior", "default": "on", "text": "text/size_warning.md", "cost": "per use",
+         "does": "One line when the notes file grows past 30 KB, then once for every 20 KB more. It never changes the file."}
+      ]
+    },
+    {
+      "id": "stay_line",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/stay_line.md",
+      "cost": "per use",
+      "does": "A brief that starts background work without saying to stay until it ends gets that line added.",
+      "children": [
+        {"id": "tell_sender", "kind": "behavior", "default": "on", "text": "text/stay_line_told.md", "cost": "per use",
+         "does": "Tells the chat that the stay line was added to its brief."}
+      ]
+    },
+    {"id": "broadcast", "kind": "behavior", "default": "on", "text": "text/broadcast.md", "cost": "per use",
+     "does": "After a message to an agent that carries a new rule, reminds the sender to add it to the notes and pass it on."}
+  ]
+}

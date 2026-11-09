@@ -1,0 +1,1 @@
+hub can not read the text this command would publish, since it comes from a variable, a pipe, another command or a missing file. Put the text in a file and pass the file, as in git commit -F message.txt or gh pr comment 3 --body-file message.txt. Then send the command again.

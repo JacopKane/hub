@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "core",
+  "family": "core",
+  "kind": "core",
+  "default": "on",
+  "privacy": "guard",
+  "runs_in": [
+    "claude_code",
+    "cursor"
+  ],
+  "does": "The settings, the dispatcher and the values other parts share.",
+  "children": [
+    {
+      "id": "private_words",
+      "kind": "option",
+      "type": "list",
+      "default": [],
+      "does": "Words that must never go public, such as names of people, projects and machines."
+    },
+    {
+      "id": "private_words_files",
+      "kind": "option",
+      "type": "list",
+      "default": [],
+      "does": "Files with one private word per line. A file missing on this machine is skipped."
+    },
+    {
+      "id": "terminal_link",
+      "kind": "behavior",
+      "default": "off",
+      "does": "Links ~/.local/bin/hubctl, so any terminal finds hubctl by name. Made by hubctl setup link-bin."
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+- Do every local step yourself. Ask the user only for what needs their hands, such as a sign-in.

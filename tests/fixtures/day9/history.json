@@ -1,0 +1,6 @@
+[
+  {"id": "d9old0000001", "hours_ago": 30, "flag": "scout.model", "scope": "user", "old": "haiku", "new": "haiku",
+   "by": "setup", "door": "setup", "reason": "setup kept the default model"},
+  {"id": "d9dash000001", "hours_ago": 3, "flag": "public_text_gate.dashes", "scope": "user", "old": "on", "new": "off",
+   "by": "tuner", "door": "tuner", "reason": "you went ahead after 4 of 5 dash warnings this week"}
+]

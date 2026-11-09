@@ -1,0 +1,1 @@
+Wait in the foreground with hubctl browser-lock wait "<your job>". It tries for up to 9 minutes, so run it again if it times out. Do not hand back while you wait, because a background wait does not wake an agent that has handed back. A subagent that can not wait stops and tells its main chat, which takes the lock for it.

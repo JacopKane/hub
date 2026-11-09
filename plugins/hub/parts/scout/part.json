@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "scout",
+  "family": "tiers",
+  "kind": "agent",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "A small, cheap agent for one mechanical job that ends in a report.",
+  "children": [
+    {"id": "model", "kind": "option", "type": "choice", "values": ["haiku", "sonnet", "opus"], "default": "haiku",
+     "does": "The model scout runs on. Cursor gets the mapped name."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of scout's instructions.",
+      "children": [
+        {"id": "one_job", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "One small job that ends in a report."},
+        {"id": "no_driving", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Never starts other agents or drives other tools or loops."},
+        {"id": "bounded_search", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Searches a named folder, with a depth limit and a time limit."},
+        {"id": "report_shape", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Reports a short list or count, with absolute paths."},
+        {"id": "stop_background", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Stops every background process it started."}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "tier_rule",
+  "family": "tiers",
+  "kind": "rule",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"PreToolUse": {"tools": ["Agent"], "runs_in": ["claude_code"]}},
+  "does": "Start text that tells the main chat which agent tier fits a job.",
+  "children": [
+    {
+      "id": "table",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/table.md",
+      "cost": "start text",
+      "does": "A table of the agent tiers, with one row for each agent that runs.",
+      "children": [
+        {"id": "mechanical", "kind": "instruction", "default": "on", "needs": ["scout"],
+         "text": "text/mechanical.md", "cost": "start text",
+         "does": "The row for small jobs that end in a report, done by scout."},
+        {"id": "standard", "kind": "instruction", "default": "on", "needs_any": ["researcher", "worker"],
+         "text": "text/standard.md", "cost": "start text",
+         "does": "The row for reading, research, test runs and edits that follow a plan, done by researcher and worker."},
+        {"id": "judgement", "kind": "instruction", "default": "on", "needs_any": ["builder", "reviewer"],
+         "text": "text/judgement.md", "cost": "start text",
+         "does": "The row for jobs that need judgement, done by builder and reviewer."},
+        {"id": "planning", "kind": "instruction", "default": "on", "needs": ["planner"],
+         "text": "text/planning.md", "cost": "start text",
+         "does": "The row for plans and specs that code will follow, done by planner."},
+        {"id": "critical", "kind": "instruction", "default": "on", "needs": ["critic"],
+         "text": "text/critical.md", "cost": "start text",
+         "does": "The row for reviews where a miss is expensive, done by critic."}
+      ]
+    },
+    {"id": "delegate_when", "kind": "instruction", "default": "on", "text": "text/delegate_when.md",
+     "cost": "start text", "does": "A job of several steps goes to an agent, and a quick check does not."},
+    {"id": "higher_tier_when_unsure", "kind": "instruction", "default": "on",
+     "text": "text/higher_tier_when_unsure.md", "cost": "start text",
+     "does": "A job between two tiers goes to the higher one."},
+    {"id": "rerun_one_up", "kind": "instruction", "default": "on", "text": "text/rerun_one_up.md",
+     "cost": "start text", "does": "A weak result runs again one tier up, never on the same tier."},
+    {"id": "check_claims", "kind": "instruction", "default": "on", "text": "text/check_claims.md",
+     "cost": "start text", "does": "A cheaper agent's claim is checked before anything is built on it."},
+    {"id": "public_needs_yes", "kind": "instruction", "default": "on", "text": "text/public_needs_yes.md",
+     "cost": "start text", "does": "An agent sends back anything public as the exact text, for the user to decide."},
+    {"id": "description_prefix", "kind": "instruction", "default": "on", "runs_in": ["claude_code"],
+     "text": "text/description_prefix.md", "cost": "start text",
+     "does": "An agent's description starts with its model in brackets, so the task list shows the tier."},
+    {
+      "id": "guard",
+      "kind": "behavior",
+      "default": "off",
+      "runs_in": ["claude_code"],
+      "signals": ["untiered", "refused"],
+      "cost": "per use",
+      "reason_not_in": {"cursor": "Cursor's Task input is known only from its docs, so hub does not stop agent calls there yet."},
+      "does": "Stops an agent call that sets no model and starts no tier agent, and names the tiers that run. While it is off, it only counts such calls.",
+      "children": [
+        {"id": "allowed", "kind": "option", "type": "list", "default": [],
+         "does": "More agent names the guard lets through, such as a built-in agent you trust with the main chat's model."}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "permission_relay",
+  "family": "chats",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "Cursor has no permission events a hook can see."},
+  "needs": ["coordinator"],
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "PermissionRequest": {"tools": []},
+    "PermissionDenied": {"tools": []},
+    "PostToolUse": {"tools": []},
+    "Stop": {"tools": []},
+    "UserPromptSubmit": {"tools": []},
+    "SessionEnd": {"tools": []},
+    "PreToolUse": {"tools": ["Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Write"]}
+  },
+  "commands": {
+    "relay": {"script": "relay_cli.py", "does": "Internal. The prompts that wait in other chats, for the coordinator's mod (next, pick, again)."}
+  },
+  "does": "Shows the coordinator the permission prompts and auto mode blocks that wait in other chats, with a button that opens that chat's tab. It approves nothing.",
+  "children": [
+    {
+      "id": "list",
+      "kind": "behavior",
+      "default": "on",
+      "cost": "none",
+      "does": "Records each permission prompt that waits in another chat. The record goes when the prompt is answered, its turn ends or the chat ends.",
+      "children": [
+        {"id": "blocks", "kind": "behavior", "default": "on", "cost": "none",
+         "does": "Also lists calls that auto mode blocked. They stay until you keep them blocked, the chat ends or an hour passes."},
+        {"id": "preview_chars", "kind": "option", "type": "number", "default": 300, "range": [0, 2000],
+         "does": "How many characters of the command the dialog shows. 0 shows only the chat and the tool."}
+      ]
+    },
+    {"id": "dialogs", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "The coordinator shows one dialog at a time, and only while its prompt box is idle."},
+    {"id": "jump", "kind": "behavior", "default": "on", "cost": "none",
+     "does": "Open the tab brings the waiting chat's tab or pane to the front. It never types there."},
+    {"id": "guard", "kind": "behavior", "default": "on", "text": "text/guard.md", "cost": "none",
+     "signals": ["blocked"],
+     "does": "Refuses tool calls that read, search or write the relay folder, so a prompt's text never reaches a model."}
+  ]
+}

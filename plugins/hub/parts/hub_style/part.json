@@ -1,0 +1,24 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "hub_style",
+  "family": "rules",
+  "kind": "style",
+  "default": "off",
+  "offer_when": "true",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "An output style with a status block around each step, short plain replies, linked references and big jobs handed to agents. Cursor gets it as start text.",
+  "children": [
+    {"id": "status_block", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Shows what is done, what is next, what was assumed and what the user must decide, before and after each step."},
+    {"id": "short_replies", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Keeps each reply short enough to read in 30 seconds."},
+    {"id": "narrate_steps", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Says in one line what each step does and where, with full paths."},
+    {"id": "plain_words", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Asks for short sentences and common words."},
+    {"id": "linked_sources", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Links every PR, issue, ticket, doc and file each time a reply names it."},
+    {"id": "delegation_section", "kind": "instruction", "default": "on", "cost": "start text",
+     "does": "Keeps quick checks in the main chat and hands larger jobs to agents."}
+  ]
+}

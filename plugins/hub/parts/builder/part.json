@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "builder",
+  "family": "tiers",
+  "kind": "agent",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "An agent for work that needs judgement, such as building, debugging, review and text people read.",
+  "children": [
+    {"id": "model", "kind": "option", "type": "choice", "values": ["haiku", "sonnet", "opus"], "default": "opus",
+     "does": "The model builder runs on. Cursor gets the mapped name."},
+    {"id": "effort", "kind": "option", "type": "choice", "values": ["low", "medium", "high", "xhigh", "max"],
+     "default": "high", "does": "How hard builder thinks before it answers."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of builder's instructions.",
+      "children": [
+        {"id": "read_first", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Reads every source that governs the work first, and names them."},
+        {"id": "test_first", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Writes or runs the test before the change."},
+        {"id": "review_own_diff", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Reviews its own diff before it reports."},
+        {"id": "ask_before_people_text", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Gathers its open questions before code or text that people read."},
+        {"id": "no_public_steps", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Sends back pushes, comments and messages as the exact text, and never runs them."},
+        {"id": "own_worktree", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Works in its own git worktree or branch."},
+        {"id": "report_short", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Keeps the report short, with absolute paths."}
+      ]
+    }
+  ]
+}

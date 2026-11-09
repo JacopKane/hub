@@ -1,0 +1,1 @@
+- Write short sentences in common words, with no idioms. Explain a term of art once in plain words.

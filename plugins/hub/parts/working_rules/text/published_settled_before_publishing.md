@@ -1,0 +1,1 @@
+- Publish a PR body, issue or doc only when the work is settled enough to read. Keep working notes local until then.

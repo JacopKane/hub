@@ -1,0 +1,9 @@
+{
+  "docs_based": "Built from Cursor's hooks docs (sessionStart input), not captured from Cursor.",
+  "conversation_id": "00000000-0000-4000-8000-000000000004",
+  "session_id": "00000000-0000-4000-8000-000000000004",
+  "hook_event_name": "sessionStart",
+  "is_background_agent": false,
+  "composer_mode": "agent",
+  "workspace_roots": ["/home/sam/work/demo"]
+}
