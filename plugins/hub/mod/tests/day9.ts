@@ -624,7 +624,7 @@ export const DAY9: HubScreen = /* json */ {
           "id": "humanize",
           "name": "humanize",
           "depth": 0,
-          "does": "A writing skill that rewrites model text so a person can read it once and remember it.",
+          "does": "Hands writing work to the user's own writing skill, or says in one line how to add one.",
           "value": "off",
           "effective": "off",
           "runs": false,

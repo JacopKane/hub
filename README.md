@@ -132,7 +132,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | core | Holds the settings, the dispatcher and the private words list | on | Claude Code, Cursor | Always on |
 | tuner | Sets hub up on the first run, then turns off what you keep ignoring and offers what you need | on | Claude Code, Cursor | "turn off the tuner" |
 | hub_style | An output style with a status block, short replies and linked sources | off | Claude Code, Cursor | "turn on the hub style" |
-| humanize | A writing skill that makes model text easy to read | off | Claude Code, Cursor | "turn on humanize" |
+| humanize | Hands writing work to your own writing skill, or says how to add one | off | Claude Code, Cursor | "turn on humanize" |
 | link_check | Sends a reply back once when it names a PR, issue or ticket without a link | off | Claude Code, Cursor | "turn on the link check" |
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |

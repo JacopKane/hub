@@ -8,7 +8,7 @@ and one after:
     <!-- hub:end -->
 
 A marker can also name one value of a choice option, as in
-`<!-- hub:section humanize.em_dash=warn -->`, and its section stays only
+`<!-- hub:section builder.effort=max -->`, and its section stays only
 while the option runs with that value.
 
 The other .md files of a skill, such as its references, can hold sections
@@ -153,7 +153,7 @@ def marker_problems(folder):
 def body_only(text, flags, where):
     """(text without markers and without the sections that do not run, whether one was dropped).
 
-    For a file a skill reads, such as references/tells-and-fixes.md. Any
+    For a file a skill reads, such as one under its references/ folder. Any
     front matter stays as it is.
     """
     built, dropped = sections(text, section_runs(flags, where), where)

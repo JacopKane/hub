@@ -6,38 +6,5 @@
   "default": "off",
   "offer_when": "true",
   "runs_in": ["claude_code", "cursor"],
-  "does": "A writing skill that rewrites model text so a person can read it once and remember it.",
-  "children": [
-    {"id": "em_dash", "kind": "option", "type": "choice", "values": ["warn", "rewrite", "allow"], "default": "warn",
-     "does": "What the skill does with an em dash. warn points out each one and leaves it, rewrite turns each into an ordinary sentence, and allow says nothing."},
-    {
-      "id": "instructions",
-      "kind": "group",
-      "does": "The sections of the skill.",
-      "children": [
-        {"id": "lead_with_point", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Puts the main point in the first sentence and cuts the warm-up."},
-        {"id": "spine", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Orders the text so each paragraph follows from the one before."},
-        {"id": "chunks", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Keeps one idea per sentence and breaks paragraphs where the idea changes."},
-        {"id": "cut_repeats", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Keeps one restatement of the main point and cuts the other repeats."},
-        {"id": "front_load", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Puts what matters first and makes the text shorter."},
-        {"id": "trust_context", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Drops definitions and hedges the reader does not need."},
-        {"id": "surface_tells", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Cuts the phrases and patterns that make text read as machine-written."},
-        {"id": "concrete", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Swaps vague claims for one specific example or number."},
-        {"id": "plain_words", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Asks for short sentences and common words that a reader of English as a second language can follow."},
-        {"id": "diagrams", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Makes diagrams readable for a person, with a rendered picture, one direction and plain labels."},
-        {"id": "self_check", "kind": "instruction", "default": "on", "cost": "per use",
-         "does": "Runs a short list of checks before the text goes back."}
-      ]
-    }
-  ]
+  "does": "Hands writing work to the user's own writing skill, or says in one line how to add one."
 }

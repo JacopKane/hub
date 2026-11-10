@@ -1,5 +1,6 @@
 """Slice 7: the working rules, the path rules, the output style, the writing
 skill and the link check, each a part with its own switches in both tools."""
+import hashlib
 import json
 import os
 import re
@@ -319,32 +320,15 @@ def test_uninstall_puts_back_the_values_hub_wrote(home):
         assert not os.path.lexists(style_link(home))
 
 
-def test_the_writing_skill_links_as_hub_humanize_with_its_sections(home):
-    with given("humanize is on"):
-        home.install()
-        home.hubctl("on", "humanize")
-        link = os.path.join(home.root, ".claude", "skills", "hub-humanize")
-    with then("~/.claude/skills/hub-humanize holds the skill and the files it reads"):
-        skill = read(os.path.join(link, "SKILL.md"))
-        assert "name: hub-humanize" in skill
-        for name in re.findall(r"`(references/[a-z-]+\.md)`", skill):
-            assert os.path.isfile(os.path.join(link, name)), name
-    with when("its diagrams section is off"):
-        home.hubctl("off", "humanize.instructions.diagrams")
-    with then("the built copy leaves that section out and keeps plain_words"):
-        skill = read(os.path.join(link, "SKILL.md"))
-        assert "Diagrams" not in skill and "<!-- hub:" not in skill
-        assert "plain words" in skill.lower()
-
-
-def skill_section(home, marker):
-    text = read(os.path.join(home.plugin, "parts", "humanize", "skill", "SKILL.md"))
-    match = re.search(rf"<!-- hub:section {re.escape(marker)} -->\n(.*?)\n<!-- hub:end -->", text, re.S)
-    assert match, marker
-    return match.group(1).strip()
-
-
-DASH_TALK = re.compile(r"\bdash(?:es)?\b", re.I)
+# sha256 hashes of five lines from the long writing guide that hub's humanize
+# part used to ship. The test keeps only the hashes, so it holds none of that text.
+OLD_GUIDE_LINES = {
+    "a5cc3c069cf62fcb8e30bb92e505150870b51c04c4538e7f3689864bdf3bafc9",
+    "83ae58dde4ac62a3ef79c168c169a340d25544ed549d0ef6e7ac4048b098f077",
+    "4e83e069c364fc41a0b99c73eb046b2873771422097bd29ec521e194a25d7497",
+    "475063a21c3e3994feb82d6c118ff0f82d70f3a5a38b78876afdf9a6471aa768",
+    "6c9c13b53bbb3168a1ece4146bb60c4f5b2beacbdf406497410696e02962b95c",
+}
 
 
 def files_in(folder):
@@ -357,86 +341,79 @@ def files_in(folder):
     return found
 
 
-def dash_lines_for(home, value):
-    """The lines about dashes in the shipped skill's sections for one em dash value, in every file."""
-    found = set()
-    for text in files_in(os.path.join(home.plugin, "parts", "humanize", "skill")).values():
-        pattern = rf"<!-- hub:section humanize\.em_dash={value} -->\n(.*?)\n<!-- hub:end -->"
-        for body in re.findall(pattern, text, re.S):
-            found.update(line for line in body.splitlines() if DASH_TALK.search(line))
-    return found
+def line_hashes(texts):
+    return {hashlib.sha256(line.strip().encode()).hexdigest() for text in texts for line in text.splitlines()}
 
 
-def linked_dash_lines(folder):
-    """{(file, line)} of each line about dashes in the skill as linked, and the files that keep a marker."""
-    lines, markers = set(), []
-    for name, text in files_in(folder).items():
-        lines.update((name, line) for line in text.splitlines() if DASH_TALK.search(line))
-        if "<!-- hub:" in text:
-            markers.append(name)
-    return lines, markers
-
-
-def assert_every_file_follows(home, folder, value):
-    lines, markers = linked_dash_lines(folder)
-    wanted = dash_lines_for(home, value)
-    assert markers == [], markers
-    assert {line for _name, line in lines} == wanted, sorted(lines)
-
-
-def test_the_writing_skill_points_out_em_dashes_by_default_and_rewrites_them_when_set(home):
-    with given("humanize is on with its em dash setting at the default"):
+def test_hubs_humanize_points_to_the_users_own_skill(home):
+    with given("humanize is on"):
         home.install()
         home.hubctl("on", "humanize")
-        folder = os.path.join(home.root, ".claude", "skills", "hub-humanize")
-        link = os.path.join(folder, "SKILL.md")
-        warn, rewrite = skill_section(home, "humanize.em_dash=warn"), skill_section(home, "humanize.em_dash=rewrite")
-    with then("the skill says to point out each em dash and leave the choice to the writer"):
-        assert home.settings()["flags"].get("humanize.em_dash") is None
-        skill = read(link)
-        assert warn in skill and rewrite not in skill and "<!-- hub:" not in skill
-    with and_("every file the skill links to speaks of dashes only in the warn text"):
-        assert dash_lines_for(home, "warn")
-        assert_every_file_follows(home, folder, "warn")
-    with when("the setting is rewrite"):
-        home.hubctl("set", "humanize.em_dash", "rewrite")
-    with then("the skill says to rewrite every em dash, and the warning text is gone"):
-        skill = read(link)
-        assert rewrite in skill and warn not in skill
-    with and_("every file the skill links to speaks of dashes only in the rewrite text"):
-        assert_every_file_follows(home, folder, "rewrite")
-    with when("the setting is allow"):
-        home.hubctl("set", "humanize.em_dash", "allow")
-    with then("the skill says nothing about em dashes, and no shipped file holds one"):
-        skill = read(link)
-        assert warn not in skill and rewrite not in skill
-    with and_("no file the skill links to speaks of dashes at all"):
-        assert dash_lines_for(home, "allow") == set()
-        assert_every_file_follows(home, folder, "allow")
-        for root, _folders, names in os.walk(os.path.join(home.plugin, "parts", "humanize")):
-            for name in names:
-                assert DASH not in read(os.path.join(root, name)), name
+        skill = read(os.path.join(home.root, ".claude", "skills", "hub-humanize", "SKILL.md"))
+        words = " ".join(skill.split())
+    with then("hub-humanize tells Claude to find the user's own writing skill in its skill listing and run it"):
+        assert "name: hub-humanize" in skill
+        assert "skill listing" in words and "Skill tool" in words
+    with and_("when the user has none, it says in one line how to add one"):
+        assert "~/.claude/skills/" in words
+    with and_("it names none of the user's skills, has no sections to switch, and stays short"):
+        assert "humanize-ai-writing" not in skill and "<!-- hub:" not in skill
+        assert manifest(home, "humanize").get("children", []) == []
+        assert len(skill.splitlines()) <= 30
+    with and_("no file of the old writing guide is left in the part"):
+        part = files_in(os.path.join(home.plugin, "parts", "humanize"))
+        assert sorted(part) == ["part.json", os.path.join("skill", "SKILL.md")], sorted(part)
+        assert not line_hashes(part.values()) & OLD_GUIDE_LINES
+
+
+VALUE_SECTION = "<!-- hub:section builder.effort={value} -->\nSay that effort is {value}.\n<!-- hub:end -->\n"
+
+
+def add_value_sections(home, *values):
+    """Adds one section per effort value to the test copy of builder's agent file, and returns its path."""
+    path = os.path.join(home.plugin, "parts", "builder", "agent.md")
+    text = read(path) + "".join(VALUE_SECTION.format(value=value) for value in values)
+    with open(path, "w") as handle:
+        handle.write(text)
+    return path
+
+
+def test_a_section_for_one_value_of_an_option_stays_only_while_the_option_has_that_value(home):
+    with given("builder is on, and its agent file has a section for effort high and one for effort max"):
+        home.install()
+        add_value_sections(home, "high", "max")
+        home.hubctl("on", "builder")
+        link = os.path.join(home.root, ".claude", "agents", "hub-builder.md")
+    with then("at the default effort the agent keeps the high section only, with no marker left"):
+        agent = read(link)
+        assert "Say that effort is high." in agent and "effort is max" not in agent
+        assert "<!-- hub:" not in agent
+    with when("the effort is max"):
+        home.hubctl("set", "builder.effort", "max")
+    with then("the agent keeps the max section only"):
+        agent = read(link)
+        assert "Say that effort is max." in agent and "effort is high" not in agent
+    with when("the effort is low"):
+        home.hubctl("set", "builder.effort", "low")
+    with then("neither section is left"):
+        assert "Say that effort" not in read(link)
 
 
 def test_a_section_marker_with_a_value_the_option_does_not_have_is_an_error_not_a_dropped_section(home):
-    with given("hub is installed with humanize on, and one marker in the skill names a value that does not exist"):
+    with given("hub is installed with builder on, and one marker in its agent file names a value that does not exist"):
         home.install()
-        home.hubctl("on", "humanize")
-        path = os.path.join(home.plugin, "parts", "humanize", "skill", "SKILL.md")
-        lines = read(path).split("\n")
-        number = next(index for index, line in enumerate(lines, 1) if "hub:section humanize.em_dash=warn" in line)
-        lines[number - 1] = lines[number - 1].replace("em_dash=warn", "em_dash=wran")
-        with open(path, "w") as handle:
-            handle.write("\n".join(lines))
+        home.hubctl("on", "builder")
+        path = add_value_sections(home, "hgih")
+        number = next(index for index, line in enumerate(read(path).split("\n"), 1) if "builder.effort=hgih" in line)
     with when("hub applies, and the user runs the doctor"):
         applied = home.hubctl("apply", check=False)
         doctor = home.hubctl("doctor", check=False)
     with then("apply fails and names the file, the line and the bad value"):
         assert applied.returncode == 1
-        for text in (path, f":{number}", "wran"):
+        for text in (path, f":{number}", "hgih"):
             assert text in applied.stderr, applied.stderr
     with and_("the doctor shows the same file, line and value"):
-        for text in (path, f":{number}", "wran"):
+        for text in (path, f":{number}", "hgih"):
             assert text in doctor.stdout, doctor.stdout
 
 
