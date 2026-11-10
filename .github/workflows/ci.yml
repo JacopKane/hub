@@ -2,6 +2,7 @@ name: tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -18,6 +19,64 @@ jobs:
         run: docker run --rm -v "$PWD:/src" -w /src hub-test python3 -m pytest -q
       - name: Run the shape scan
         run: docker run --rm -v "$PWD:/src" -w /src hub-test python3 -I tests/scrub_scan.py .
+
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Find the commits to check
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          if [ -n "$PR_HEAD" ]; then
+            echo "BASE=$PR_BASE" >> "$GITHUB_ENV"
+            echo "HEAD_SHA=$PR_HEAD" >> "$GITHUB_ENV"
+          elif [ -z "$PUSH_BEFORE" ] || [ -z "${PUSH_BEFORE//0/}" ]; then
+            echo "BASE=$PUSH_AFTER^" >> "$GITHUB_ENV"
+            echo "HEAD_SHA=$PUSH_AFTER" >> "$GITHUB_ENV"
+          else
+            echo "BASE=$PUSH_BEFORE" >> "$GITHUB_ENV"
+            echo "HEAD_SHA=$PUSH_AFTER" >> "$GITHUB_ENV"
+          fi
+      # The two check scripts come from the base commit, not from the PR.
+      # A check the base lacks but this change adds is skipped with a notice, on every run of the PR and on its merge push. The PR's own copy never runs.
+      - name: Take the checks from the base
+        run: |
+          mkdir -p "$RUNNER_TEMP/checks"
+          git cat-file -e "$BASE^{commit}" 2> /dev/null || { echo "The base $BASE is not in the clone." >&2; exit 1; }
+          for name in scrub_scan.py commit_check.py; do
+            if git show "$BASE:tests/$name" > "$RUNNER_TEMP/checks/$name" 2> /dev/null; then
+              continue
+            fi
+            rm -f "$RUNNER_TEMP/checks/$name"
+            if git cat-file -e "$HEAD_SHA:tests/$name" 2> /dev/null; then
+              echo "::notice::base has no privacy checks yet, skipped (tests/$name)"
+              continue
+            fi
+            echo "The base $BASE has no tests/$name, so there is no check to run." >&2
+            exit 1
+          done
+      - name: Run the shape scan on the changed files
+        run: |
+          [ -f "$RUNNER_TEMP/checks/scrub_scan.py" ] || exit 0
+          set -o pipefail
+          # Each name starts with ./ so the scan reads it as a file. GNU xargs exits 123 on a hit, so exit 1.
+          git diff --name-only -z --diff-filter=ACMR "$BASE...$HEAD_SHA" \
+            | while IFS= read -r -d '' name; do printf './%s\0' "$name"; done \
+            | xargs -0 -r python3 -I "$RUNNER_TEMP/checks/scrub_scan.py" || exit 1
+      - name: Run the commit check
+        run: |
+          [ -f "$RUNNER_TEMP/checks/commit_check.py" ] || exit 0
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            python3 -I "$RUNNER_TEMP/checks/commit_check.py" --squash "$BASE..$HEAD_SHA"
+          else
+            python3 -I "$RUNNER_TEMP/checks/commit_check.py" "$BASE..$HEAD_SHA"
+          fi
 
   macos:
     runs-on: macos-latest

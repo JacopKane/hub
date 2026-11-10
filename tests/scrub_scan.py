@@ -2,7 +2,8 @@
 """Shape scan for every commit and for the release tree.
 
 It looks for shapes that should never be published: home and temp paths,
-email addresses, UUIDs, host-like names, token shapes and the em dash.
+email addresses, UUIDs, host-like names, token shapes, the em dash and
+links into chat, note and document pages.
 It prints the file, the line and the class of each hit, never the value,
 and exits 1 when it finds anything.
 
@@ -19,6 +20,16 @@ MADE_UP_NAMES = ["sam", "alex", "acme"]
 MADE_UP_DOMAINS = ["example.com", "example.org", "example.net"]
 # A UUID made of zeros in its first group is a test value.
 MADE_UP_UUID = re.compile(r"^0{8}-")
+PAGE_HOSTS = r"(?:claude\.ai|notion\.so|notion\.site|docs\.google\.com|drive\.google\.com)"
+# A link into a page host is a test value when its only id is eight or more zeros, perhaps after a page title,
+# and every other part of its path is a short word. It may sit under www or a made-up name, and has no query.
+MADE_UP_LINK = re.compile(
+    r"(?:(?:www|" + "|".join(MADE_UP_NAMES) + r")\.)?" + PAGE_HOSTS
+    + r"(?:/[A-Za-z]{1,12})*/(?:[A-Za-z]+[-_])*0{8,}(?:-0+)*(?:/[A-Za-z]{1,12})*/?",
+    re.IGNORECASE,
+)
+# Marks that end a sentence, a markdown link or a quote, not the link itself.
+AFTER_LINK = "`'\").,;:!?]>*"
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules"}
 
 NAME = r"[A-Za-z0-9._-]+"
@@ -49,6 +60,13 @@ CLASSES = [
         ),
     ),
     ("em_dash", re.compile(chr(0x2014))),
+    (
+        "private_link",
+        re.compile(
+            r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)*" + PAGE_HOSTS + r"/\S+",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 
@@ -59,14 +77,16 @@ def allowed(kind, match):
         return match.group(1).lower() in MADE_UP_DOMAINS
     if kind == "uuid":
         return bool(MADE_UP_UUID.match(match.group(0)))
+    if kind == "private_link":
+        return bool(MADE_UP_LINK.fullmatch(match.group(0).rstrip(AFTER_LINK)))
     return False
 
 
-def scan_text(text):
+def scan_text(text, allow=allowed):
     """Yield (line number, class) for each hit in the text."""
     for number, line in enumerate(text.splitlines(), 1):
         for kind, pattern in CLASSES:
-            if any(not allowed(kind, match) for match in pattern.finditer(line)):
+            if any(not allow(kind, match) for match in pattern.finditer(line)):
                 yield number, kind
 
 
