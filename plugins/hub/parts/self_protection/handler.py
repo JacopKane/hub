@@ -158,6 +158,7 @@ WHAT = {
     "agent_marker": "unset or change the marker that tells hub a tool call is running, or name HUB_DOOR",
     "settings_files": "write hub's settings or state files",
 }
+TOO_DEEP = "a line nested too deep for hub to check"
 
 
 # The hook input of the call being checked, for the checks that read the chat.
@@ -1296,8 +1297,19 @@ def check_relayed_programs(command):
             raise Stop("lowering", "a variable names the program another program runs")
 
 
+def refuse_too_deep(flags):
+    """Refuse a line hub can not read in full, under the first check that runs."""
+    running = [name for name in WHAT if flags.runs(f"{PART}.{name}")]
+    if running:
+        raise Stop(running[0], TOO_DEEP)
+
+
 def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=False):
     """Raise Stop for the first step in the line that a running check refuses."""
+    if depth > MAX_DEPTH:
+        # hub does not read a script relayed past the limit, so the script could do anything
+        refuse_too_deep(flags)
+        return
     parser = gate()
     command = parser.Command(line, cwd, script, parent)
     segments = command.segments()
@@ -1328,30 +1340,27 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
                 for typed in typed_lines(text):
                     if types_a_door(typed):
                         raise Stop("lowering", "a /hub command typed into a prompt")
-                    if depth < MAX_DEPTH:
-                        check_line(typed, cwd, flags, depth + 1, script=True, relayed=True)
+                    check_line(typed, cwd, flags, depth + 1, script=True, relayed=True)
         if flags.runs(f"{PART}.agent_marker"):
             check_marker(words, command)
         if flags.runs(f"{PART}.settings_files"):
             check_files(words, command, cwd)
         cwd = moved(words, cwd)
-        if depth < MAX_DEPTH:
-            for script_text in wrapped_scripts(words, command):
-                check_line(script_text, cwd, flags, depth + 1, script=True)
-            if hubctl_check:
-                for script_text in relayed_scripts(words):
-                    check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
-            if reads_runners:
-                for script_text in runner_scripts(tmux_words, flags, cwd):
-                    check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
-    if depth < MAX_DEPTH and hubctl_check:
+        for script_text in wrapped_scripts(words, command):
+            check_line(script_text, cwd, flags, depth + 1, script=True)
+        if hubctl_check:
+            for script_text in relayed_scripts(words):
+                check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
+        if reads_runners:
+            for script_text in runner_scripts(tmux_words, flags, cwd):
+                check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
+    if hubctl_check:
         for script_text in stdin_scripts(command, segments):
             if types_a_door(plain(script_text)):
                 raise Stop("lowering", "a /hub command typed into a prompt")
             check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
-    if depth < MAX_DEPTH:
-        for source in command.sources:
-            check_line(source, cwd, flags, depth + 1, script=True, parent=command)
+    for source in command.sources:
+        check_line(source, cwd, flags, depth + 1, script=True, parent=command)
 
 
 def rough_check(line, flags):
@@ -1421,6 +1430,10 @@ def find(hook_input, flags):
 
 
 def reason(stop, hint):
+    if stop.detail == TOO_DEEP:
+        # not a settings change, so the hint about asking the user does not fit
+        return (f"hub stopped this call, because the command is nested too deep for hub to check "
+                f"({PART}.{stop.check}). Please send a simpler command, with fewer substitutions inside each other.")
     lines = [f"hub stopped this call, because it would {WHAT[stop.check]} ({PART}.{stop.check})."]
     if hint:
         lines.append(hint)

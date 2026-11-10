@@ -71,6 +71,43 @@ def test_hubctl_written_in_an_odd_way_is_still_refused(home, tool, command):
         assert home.settings() == before
 
 
+def nested_heredocs(levels, script):
+    """A line where bash reads its script from a heredoc, nested this many shells deep."""
+    starts = [f"bash <<'LEVEL{level}'" for level in range(1, levels + 1)]
+    ends = [f"LEVEL{level}" for level in range(levels, 0, -1)]
+    return "\n".join(starts + [script] + ends)
+
+
+@pytest.mark.parametrize("script, check", [
+    ("hubctl off self_protection", "lowering"),
+    ("echo '{}' > ~/.config/hubctl/hub.json", "settings_files"),
+    ("env -u AI_AGENT true", "agent_marker"),
+    ("true", None),
+], ids=["a hubctl change", "a settings file write", "the marker unset", "naming nothing of hub's"])
+def test_a_script_relayed_deeper_than_hub_reads_is_refused(home, tool, script, check):
+    with given("hub is installed and the user switched the public text gate off in /hub, so self-protection is the only check"):
+        home.install()
+        home.hubctl_from_mod("off", "public_text_gate")
+        before = home.settings()
+    with when("the model runs the script four shells deep, as deep as hub reads"):
+        within = home.hook(tool, "PreToolUse", nested_heredocs(4, script))
+    with then("hub reads it and judges the script itself"):
+        if check is None:
+            assert not within.refused, within.reason
+        else:
+            assert refused_by(within, check), within.reason
+            assert "nested too deep" not in within.reason
+    with when("the model runs the same script five shells deep, one more than hub reads"):
+        past = home.hook(tool, "PreToolUse", nested_heredocs(5, script))
+    with then("it is refused as too deep to check, whatever the script does, and nothing changed"):
+        assert past.refused, past.reason
+        assert f"({PART}." in past.reason
+        assert "nested too deep for hub to check" in past.reason
+        assert "simpler command" in past.reason
+        assert "in their own words" not in past.reason
+        assert home.settings() == before
+
+
 @pytest.mark.parametrize("words", [
     ["off", f"public_text_g{CYRILLIC_A}te"],
     ["off", "PUBLIC_TEXT_GATE"],
