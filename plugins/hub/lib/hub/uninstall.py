@@ -25,8 +25,11 @@ import shlex
 import shutil
 import subprocess
 
-from . import files, keys, links, resolve, tree as tree_module
-from .adapters import jobs
+from . import files, resolve
+
+# Every hook asks is_out, so this module loads on every tool call. It skips only
+# the job code, plistlib and the XML parser. Keys, links and the part tree still
+# load through apply.
 
 HELD = "held"
 MARK = "uninstalled.json"
@@ -89,10 +92,12 @@ def remove_plugins(lines):
 
 
 def restore_keys(lines):
+    from . import keys
     keys.restore_all(lines)
 
 
 def kept_names():
+    from . import tree as tree_module
     names = {HELD, MARK}
     try:
         tree = tree_module.load(files.PARTS_DIR)
@@ -105,6 +110,8 @@ def kept_names():
 
 def run():
     """Returns the lines to print."""
+    from . import links
+    from .adapters import jobs
     lines = []
     with files.locked():
         files.write_json(files.state_path(MARK), {"copy": copy_stamp(), "time": resolve.now()})

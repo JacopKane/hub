@@ -540,6 +540,47 @@ def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(hom
         assert tool_marker(home, "Bash") is None and group.python_starts() == 2
 
 
+# Code a Bash call never needs: the job code, which loads an XML parser, and the code that changes a
+# setting. Each would slow every Bash call that the guards check and let through.
+NOT_FOR_A_CHECKED_CALL = ("hub.adapters.jobs", "hub.changes")
+
+
+def dispatch_loading(home, command):
+    """Run the dispatcher as pre_check.sh starts it (-I -S) on one Bash call. Returns (result, names of the modules it loaded)."""
+    data = home.hook_input("claude_code", "PreToolUse", command)
+    script = os.path.join(home.plugin, "lib", "hub", "dispatch.py")
+    process = home.run([sys.executable, "-I", "-S", "-X", "importtime", script, "PreToolUse"], stdin=json.dumps(data))
+    names = {line.rsplit("|", 1)[1].strip() for line in process.stderr.splitlines() if line.startswith("import time:")}
+    assert "hub.files" in names, process.stderr  # the list is real, not empty
+    return HookResult("claude_code", process), names
+
+
+def stored_answers(home):
+    folder = os.path.join(home.state, "calls")
+    return sorted(name for name in os.listdir(folder) if name.endswith(".json")) if os.path.isdir(folder) else []
+
+
+def test_a_bash_call_the_guards_let_through_loads_only_the_code_they_need(home):
+    with given("hub is installed as it ships, where self_protection and the public text gate check every command"):
+        home.install()
+    with when("the main chat runs git status"):
+        result, names = dispatch_loading(home, "git status")
+    with then("it runs with no answer, and the dispatcher stored that answer for a second copy of the plugin"):
+        assert result.output == {} and len(stored_answers(home)) == 1
+        assert not os.path.exists(os.path.join(home.state, "errors.log"))
+    with and_("the dispatcher loaded no job or change code"):
+        assert sorted(set(NOT_FOR_A_CHECKED_CALL) & names) == []
+    with when("the main chat turns self_protection off with hubctl"):
+        result, _names = dispatch_loading(home, "hubctl off self_protection")
+    with then("self_protection still refuses it"):
+        assert result.refused and "(self_protection.lowering)" in result.reason
+    with when("the main chat commits a message that holds a home path"):
+        result, _names = dispatch_loading(home, commit("Keep the plan in /home/sam/plan.md"))
+    with then("the gate still refuses it"):
+        assert result.refused and result.findings == ["private_paths"]
+        assert len(stored_answers(home)) == 3
+
+
 def test_a_marker_that_can_not_be_read_or_is_empty_still_starts_the_dispatcher(home):
     with given("the coordinator is on, so Read and Edit have markers"):
         home.install()
