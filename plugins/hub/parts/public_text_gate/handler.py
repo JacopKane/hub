@@ -754,12 +754,13 @@ def rough_steps(command):
 def substituted_steps(command, depth):
     """The steps inside the command's substitutions, each checked like any other command.
 
-    Past the nesting limit, a substitution that could publish counts as unreadable.
+    Past the nesting limit, every substitution counts as unreadable, since the
+    gate does not read what it runs.
     """
     steps = []
     for source in command.sources:
         if depth > 3:
-            steps += [] if quiet_source(source) else [(WRAPPED, UNREADABLE)]
+            steps.append((WRAPPED, UNREADABLE))
         else:
             steps += public_steps(source, command.cwd, depth + 1, script=True, parent=command)
     return steps

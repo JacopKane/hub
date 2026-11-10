@@ -367,3 +367,22 @@ def test_a_public_command_inside_a_command_substitution_is_checked_like_any_othe
         clean_results = [home.hook(tool, "PreToolUse", command) for command in clean]
     with then("each runs with no answer"):
         assert [result.output for result in clean_results] == [{}] * len(clean)
+
+
+def substitutions(levels, inner):
+    """A line with that many substitutions inside each other, and inner in the last one."""
+    return "echo $(" * levels + inner + ")" * levels
+
+
+def test_a_substitution_past_the_gates_reading_depth_is_refused_whatever_it_names(home, tool):
+    with given("hub is installed with the gate at warn, and self_protection off, so the gate alone answers"):
+        home.install()
+        home.hubctl_from_mod("off", "self_protection")
+    with when("a command names no public tool four substitutions deep, as deep as the gate reads"):
+        within = home.hook(tool, "PreToolUse", substitutions(4, "date"))
+    with then("the gate reads it and it runs"):
+        assert within.output == {}
+    with when("the same command sits five substitutions deep, one more than the gate reads"):
+        past = home.hook(tool, "PreToolUse", substitutions(5, "date"))
+    with then("it is refused as unreadable, since the gate can not tell what the deepest one runs"):
+        assert past.findings == ["unreadable"]
