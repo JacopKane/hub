@@ -1,0 +1,1 @@
+hub never runs {call} in {repo}, even after the user's yes. A merge goes to main only at the reviewed head, with --match-head-commit, after every check passed. hub never deletes, never pushes to main and never force-pushes without a lease.
