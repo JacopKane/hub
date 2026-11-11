@@ -465,8 +465,10 @@ def test_the_dispatcher_asks_for_a_skill_reload_after_apply_changed_a_skill_link
                  {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nTake notes.\n"})
         home.hubctl("apply")
         _, first = session_start(home)
-    with then("a session start asks for nothing"):
-        assert "reloadSkills" not in json.dumps(first)
+        _, settled = session_start(home)
+    with then("the first session start asks once for the hub-pr skill that pr links by default, and the next for nothing"):
+        assert first["hookSpecificOutput"]["reloadSkills"] is True
+        assert "reloadSkills" not in json.dumps(settled)
     with when("the user turns the skill on and a session starts"):
         home.hubctl("on", "notes")
         _, second = session_start(home)

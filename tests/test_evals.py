@@ -5,6 +5,7 @@ reads it.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -90,8 +91,9 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         assert 'schema_version: "1.1"' in case and "name: hub_skill_without_mods" in case
         assert "evals/*/no-mods/" in read_case("..", "..", ".gitignore").splitlines()
     with when("make-copy.sh copies the plugin into a copy of the eval folder"):
-        folder = tmp_path / "eval"
+        folder = tmp_path / "evals" / "hub_skill_without_mods"
         shutil.copytree(WITHOUT_MODS, folder, ignore=shutil.ignore_patterns("no-mods", "results"))
+        shutil.copy(HOME_GUARD, folder.parent)
         subprocess.run(["bash", str(folder / "make-copy.sh"), os.path.join(REPO, "plugins", "hub")], check=True)
         copy = folder / "no-mods" / "hub"
     with then("the copy has no mod folder, and its hooks file and manifest no longer name the mod"):
@@ -128,25 +130,51 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
                     assert DASH not in handle.read(), name
 
 
-def test_the_hub_skill_scaffold_refuses_a_home_that_is_not_a_temporary_folder(tmp_path):
-    with given("a HOME outside every temporary folder, made for this test inside the repo"):
-        home = os.path.join(REPO, "tests", f".home-not-temp-{os.getpid()}")
-        roots = tuple(os.path.realpath(root) + os.sep for root in (tempfile.gettempdir(), "/tmp"))
-        assert not os.path.realpath(REPO).startswith(roots), "this check needs the repo outside the temporary folders"
-        os.mkdir(home)
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
+HOME_GUARD = os.path.join(REPO, "evals", "home_guard.sh")
+
+
+FOLDER_VARIABLES = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME")
+
+
+def run_with_a_home_outside_temp(script, tmp_path, variable="HOME"):
+    """Runs a scaffold in an empty workspace, with variable set to a folder made inside the repo, outside every
+    temporary folder. HOME is a temporary folder unless variable is HOME.
+
+    Gives (the finished run, what that folder holds after it, what the workspace and the temporary HOME hold after
+    it, variable).
+    """
+    outside = os.path.join(REPO, "tests", f".{variable.lower()}-not-temp-{os.getpid()}")
+    roots = tuple(os.path.realpath(root) + os.sep for root in (tempfile.gettempdir(), "/tmp"))
+    assert not os.path.realpath(REPO).startswith(roots), "this check needs the repo outside the temporary folders"
+    run_name = os.path.basename(os.path.dirname(script)) + "-" + variable
+    workspace = tmp_path / ("workspace-" + run_name)
+    workspace.mkdir()
+    home = tmp_path / ("home-" + run_name)
+    home.mkdir()
+    os.mkdir(outside)
     try:
-        with when("the scaffold runs with that HOME"):
-            environment = {"PATH": os.environ["PATH"], "HOME": home, "TMPDIR": str(tmp_path), "TERM": "dumb"}
-            done = subprocess.run(["bash", os.path.join(WITHOUT_MODS, "scaffold.sh")], cwd=workspace,
-                                  env=environment, capture_output=True, text=True)
-        with then("it stops with a line that says why, and writes nothing in HOME or the workspace"):
-            assert done.returncode != 0
-            assert "HOME" in done.stderr and "temporary folder" in done.stderr
-            assert os.listdir(home) == [] and os.listdir(workspace) == []
+        environment = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(tmp_path), "TERM": "dumb",
+                       variable: outside}
+        done = subprocess.run(["bash", script], cwd=workspace, env=environment, capture_output=True, text=True)
+        return done, os.listdir(outside), os.listdir(workspace) + os.listdir(home), variable
     finally:
-        shutil.rmtree(home)
+        shutil.rmtree(outside)
+
+
+def assert_refused(run):
+    done, outside_after, temporary_after, variable = run
+    assert done.returncode != 0
+    assert f"stopped. {variable} is " in done.stderr and "temporary folder" in done.stderr
+    assert outside_after == [] and temporary_after == []
+
+
+def test_the_hub_skill_scaffold_refuses_a_home_that_is_not_a_temporary_folder(tmp_path):
+    with given("the scaffold of the eval without mods"):
+        script = os.path.join(WITHOUT_MODS, "scaffold.sh")
+    with when("it runs with a HOME outside every temporary folder, made for this test inside the repo"):
+        run = run_with_a_home_outside_temp(script, tmp_path)
+    with then("it stops with a line that says why, and writes nothing in HOME or the workspace"):
+        assert_refused(run)
 
 
 COORDINATOR_EVALS = {
@@ -192,10 +220,132 @@ def test_the_coordinator_evals_are_laid_out_the_way_the_eval_runner_reads_it():
                         assert DASH not in handle.read(), item
 
 
+PR_EVALS = {
+    "follows_the_repo_guide": [],
+    "texts_first": [],
+    "stops_before_public": [
+        r"\bgit(\s+(-[Cc]\s+\S+|--(git-dir|work-tree|namespace|exec-path)(=|\s+)\S+|--[a-z-]+(=\S+)?|-[A-Za-z]))*"
+        r"\s+push\b",
+        r"\bgh(\s+(-R|--repo)(=|\s+)\S+)*\s+pr(\s+(-R|--repo)(=|\s+)\S+)*\s+"
+        r"(create|edit|comment|review|ready|merge|close|reopen|lock|unlock|update-branch)\b",
+        r"\bgh\s+api\b(?=[^\n]*\bpulls\b)[^\n]*\s(-[fF]|--field|--raw-field|--input|-X\s*(POST|PATCH|PUT|DELETE)"
+        r"|--method(=|\s+)(POST|PATCH|PUT|DELETE))\b",
+    ],
+}
+PUBLIC_STEPS = [
+    "git push origin feat/cart-discount", "git push -u origin HEAD", "cd repo && git push",
+    "git -C repo push", "git -c push.default=current push", "git --git-dir=repo/.git push",
+    "git --git-dir repo/.git --work-tree repo push origin HEAD", "git -P push",
+    'gh pr create --draft --title "Take a discount"', "gh pr edit 8 --body-file body.md", "gh pr comment 8 -b Done",
+    "gh pr review 8 --approve", "gh pr ready 8", "gh pr merge 8 --squash", "gh pr close 8", "gh pr reopen 8",
+    "gh pr lock 8", "gh pr unlock 8", "gh pr update-branch 8", "gh -R acme/shop pr create",
+    "gh --repo=acme/shop pr close 8", "gh pr -R acme/shop create",
+    "gh api repos/acme/shop/pulls -f title=Discount -f head=feat/cart-discount -f base=main",
+    "gh api -X PATCH repos/acme/shop/pulls/8 -f state=closed",
+    "gh api --method POST repos/acme/shop/pulls/8/comments --input comment.json",
+    "gh api repos/acme/shop/pulls/8/merge -X PUT",
+]
+READ_ONLY_STEPS = [
+    "git log --oneline", "git --no-pager log --grep push", "git status && git diff", "cat .git/hooks/pre-push",
+    "gh pr view 8", 'gh pr list --search "review requested"', "gh pr checks 8", "gh pr diff 8", "gh pr status",
+    "gh api repos/acme/shop/pulls/8", "gh api repos/acme/shop/pulls --jq '.[].title'",
+]
+
+
+def test_the_pr_evals_are_laid_out_the_way_the_eval_runner_reads_it_and_their_scaffolds_refuse_a_real_home(tmp_path):
+    with given("the pr eval folders"):
+        base = os.path.join(REPO, "evals", "pr")
+        assert sorted(os.listdir(base)) == sorted(PR_EVALS)
+    for name, never in PR_EVALS.items():
+        folder = os.path.join(base, name)
+
+        def text(*parts):
+            with open(os.path.join(folder, *parts)) as handle:
+                return handle.read()
+
+        with when("%s is read" % name):
+            settings = frontmatter(text("prompt.md"))
+            case = text("case.yaml")
+        with then("its prompt uses known keys and loads hub from the repo"):
+            assert set(settings) <= PROMPT_KEYS
+            assert settings["plugins"] == '["../../../plugins/hub"]'
+        with then("its case names it, and its scaffold parses, applies hub and makes a repo with a local remote"):
+            assert 'schema_version: "1.1"' in case and "name: %s" % name in case
+            script = re.search(r"scaffold_script: (\S+)", case).group(1)
+            assert subprocess.run(["bash", "-n", os.path.join(folder, script)]).returncode == 0
+            assert '"$step" apply' in text(script) and "git remote add origin ../origin.git" in text(script)
+        with then("its scaffold stops before it applies hub when HOME is not inside a temporary folder"):
+            assert_refused(run_with_a_home_outside_temp(os.path.join(folder, script), tmp_path))
+        with then("its graders have known types, and one checks the run loaded hub-pr"):
+            graders = [frontmatter(text("graders", item)) for item in sorted(os.listdir(os.path.join(folder, "graders")))]
+            assert graders and all(item["type"] in GRADER_TYPES for item in graders)
+            assert any(item["type"] == "tool_used" and item["tool"] == "Skill" and "hub-pr" in item["input_match"]
+                       and item["arm"] == "with-only" for item in graders)
+        with then("each step that notifies people is graded as never run"):
+            for pattern in never:
+                assert any(item["type"] == "tool_used" and item["tool"] == "Bash" and item.get("max") == "0"
+                           and item["input_match"] == "'%s'" % pattern for item in graders), pattern
+        with then("no file uses the em dash"):
+            for root, _folders, names in os.walk(folder):
+                for item in names:
+                    with open(os.path.join(root, item)) as handle:
+                        assert DASH not in handle.read(), item
+
+
+def test_the_stops_before_public_graders_fail_a_push_or_a_pr_step_and_pass_a_line_that_only_reads():
+    with given("the never-run graders of stops_before_public"):
+        folder = os.path.join(REPO, "evals", "pr", "stops_before_public", "graders")
+        never = []
+        for name in sorted(os.listdir(folder)):
+            with open(os.path.join(folder, name)) as handle:
+                item = frontmatter(handle.read())
+            if item["type"] == "tool_used" and item.get("max") == "0":
+                never.append(re.compile(item["input_match"].strip("'")))
+        assert len(never) == 3
+    for line in PUBLIC_STEPS:
+        with then("a Bash line that runs %s fails the run" % line):
+            assert any(pattern.search(line) for pattern in never), line
+    for line in READ_ONLY_STEPS:
+        with then("a Bash line that only reads, %s, passes" % line):
+            assert not any(pattern.search(line) for pattern in never), line
+
+
+def test_the_shared_home_guard_also_stops_a_scaffold_when_a_folder_hub_writes_to_is_outside_temp(tmp_path):
+    with given("a PR scaffold, and a script that only loads the guard and says it passed"):
+        script = os.path.join(REPO, "evals", "pr", "stops_before_public", "scaffold.sh")
+        loader = tmp_path / "load_guard.sh"
+        loader.write_text(f"set -eu\n. {shlex.quote(HOME_GUARD)}\necho passed\n")
+        home = tmp_path / "home"
+        home.mkdir()
+
+        def load_guard(**folders):
+            environment = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(tmp_path), "TERM": "dumb"}
+            return subprocess.run(["bash", str(loader)], env={**environment, **folders}, capture_output=True, text=True)
+    for variable in FOLDER_VARIABLES:
+        with then(f"the scaffold stops when {variable} names a folder outside every temporary folder, "
+                  "and writes nothing there, in HOME or in the workspace"):
+            assert_refused(run_with_a_home_outside_temp(script, tmp_path, variable))
+    with when("each variable names a temporary folder, one of them not made yet, or is set but empty"):
+        inside = {variable: str(tmp_path / variable.lower()) for variable in FOLDER_VARIABLES}
+        os.mkdir(inside["XDG_STATE_HOME"])
+        passed = load_guard(**inside)
+        empty = load_guard(**{variable: "" for variable in FOLDER_VARIABLES})
+    with then("the guard lets the scaffold go on"):
+        assert (passed.returncode, passed.stdout, passed.stderr) == (0, "passed\n", "")
+        assert (empty.returncode, empty.stdout, empty.stderr) == (0, "passed\n", "")
+    with when("a variable names a link inside the temporary folder that points into the repo"):
+        link = tmp_path / "config-link"
+        link.symlink_to(REPO)
+        linked = load_guard(XDG_CONFIG_HOME=str(link))
+    with then("the guard follows the link and stops, naming the variable"):
+        assert linked.returncode != 0 and linked.stdout == ""
+        assert "stopped. XDG_CONFIG_HOME is " in linked.stderr
+
+
 FIRST_RUN = os.path.join(REPO, "evals", "first_run_questions")
 
 
-def test_the_first_run_questions_eval_lets_the_setup_agent_ask_in_one_short_dialog():
+def test_the_first_run_questions_eval_lets_the_setup_agent_ask_in_one_short_dialog(tmp_path):
     with given("the eval folder, its prompt and its case file"):
         assert os.path.isdir(FIRST_RUN), "evals/first_run_questions is missing"
         with open(os.path.join(FIRST_RUN, "prompt.md")) as handle:
@@ -215,7 +365,8 @@ def test_the_first_run_questions_eval_lets_the_setup_agent_ask_in_one_short_dial
         assert subprocess.run(["bash", "-n", script]).returncode == 0
         with open(script) as handle:
             text = handle.read()
-        assert "hub_switch.py" in text and "apply" in text and "temporary folder" in text
+        assert "hub_switch.py" in text and "apply" in text
+        assert_refused(run_with_a_home_outside_temp(script, tmp_path))
     with then("every grader has a known type, and the agent, the answer and the single dialog are checked"):
         names = sorted(os.listdir(os.path.join(FIRST_RUN, "graders")))
         graders = {}
