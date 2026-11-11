@@ -6,6 +6,10 @@
 
 {check}
 
+### How it was tested
+
+{tested}
+
 ## What is decided
 
 {decided}
