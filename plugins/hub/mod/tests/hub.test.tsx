@@ -116,7 +116,8 @@ for (const surface of SURFACES) {
     const undo = await ui.find({ type: 'Button', key: 'd9dash000001:undo' })
     expect(undo?.props.label).toBe('undo')
     expect(undo?.props.hotkey).toBe('2')
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
+    // The undo, then the features button that opens the picker.
+    expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['d9dash000001:undo', 'features'])
 
     await ui.press({ key: 'd9dash000001:undo' })
     expect(hubctlArgs(calls).slice(-2)).toEqual(['undo d9dash000001', 'screen --json --band'])
@@ -130,6 +131,7 @@ for (const surface of SURFACES) {
     expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([
       ['turn on', '2'],
       ['no', '3'],
+      ['features', 'f'],
     ])
     await ui.unmount()
   })
@@ -148,7 +150,7 @@ test('a line older than status_band.notices.keep_hours leaves the band', async (
 
   // The dash line is 3 hours old and the offer 2, so both are past 24 hours after 23.
   await clock.advance(23 * HOUR)
-  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
   expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('7 on · start text 1.2k')
   await ui.unmount()
 })
@@ -176,7 +178,7 @@ test('with notices off the band shows the offer, and with offers off too, the st
   expect((await ui.find({ type: 'Button', key: 'offer:researcher:turn on' }))?.props.hotkey).toBe('2')
 
   await $.command.run({ command: 'hub', args: 'off status_band.offers', origin: TYPED })
-  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
   expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('7 on · start text 1.2k')
   await ui.unmount()
 })
@@ -561,7 +563,7 @@ for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...wide(120), surface })
     expect(await texts(ui)).toEqual(['1 hub', ' │ ', ZONE.full, ' │ ', ZONE.question.line])
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([['open', '2']])
+    expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([['open', '2'], ['features', 'f']])
 
     await ui.press({ key: `open:${API_SESSION}` })
     expect(hubctlArgs(calls).slice(-1)).toEqual([`board show ${API_SESSION}`])

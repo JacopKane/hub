@@ -87,16 +87,19 @@ export type HubFamily = { family: string; label?: string; parts_on: number; part
 export type HubPickerScreen = HubScreen & { families: HubFamily[]; everything: boolean }
 
 // The picker pane's state. It holds the model it last read or why that read failed, the open
-// family, the unfolded parts and instruction groups, the focused element, and the strip lines
-// this visit made (newest last) for its undo.
+// families, the unfolded parts and instruction groups, the focused element, and the strip lines
+// this visit made (newest last) for its undo, each with the row it changed.
 export type HubPicker = {
   screen: HubPickerScreen | null
   failure: string | null
-  family: string | null
+  families: string[]
   parts: string[]
   instructions: string[]
   focused: string | null
-  undo: string[]
+  // The first line the list draws, by its key, or null for the top. Only the ▲ and ▼ rows and an
+  // undo that lands outside the drawn rows move it.
+  top: string | null
+  undo: { change: string; row: string }[]
 }
 
 // What `tuner ask` prints: the request the mod sends to the model, and the candidates in it.
