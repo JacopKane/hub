@@ -6,6 +6,8 @@
               A change whose flag changed since has no undo button.
     families  one row per family that has a part, then a row per part and its children.
               The beta parts leave their family for a last group, labelled "Beta, untested".
+              With --all every row also has its kind, its flag type, the values it takes and
+              what it waits for, and each part row says if it is new (offered, not answered yet).
     band      the status_band flags the band draws from: which zones run, its first digit, keep_hours
     hidden    how many flags are not relevant here
     command_clash  the names Claude Code refused the mod's command, or None (doctor.py)
@@ -157,6 +159,38 @@ def row(node, record):
             "claude_code_only": node.runs_in == ["claude_code"], "stage": node.stage}
 
 
+def waits_for(node, flags):
+    """Why a flag that is on does not run.
+
+    It names the topmost part or flag above it that does not run, or else each need that does not
+    run. When that flag above is on but waits too, its own answer is passed on, so the list names the root.
+    """
+    if not resolve.is_on(node, flags[node.id]["value"]) or flags[node.id]["runs"]:
+        return []
+    above = []
+    parent = node.parent
+    while parent is not None:
+        above.append(parent)
+        parent = parent.parent
+    for ancestor in reversed(above):
+        if not flags[ancestor.id]["runs"]:
+            return waits_for(ancestor, flags) or [ancestor.id]
+    found = [need for need in node.needs if not flags[need]["runs"]]
+    if node.needs_any and not any(flags[need]["runs"] for need in node.needs_any):
+        found.append(" or ".join(node.needs_any))
+    return found
+
+
+def picker_row(node, flags, offered):
+    """A row with the fields only the picker reads."""
+    found = row(node, flags[node.id])
+    found.update({"kind": node.kind, "type": node.type, "values": list(node.allowed_values()),
+                  "waits_for": waits_for(node, flags)})
+    if node.parent is None:
+        found["new"] = node.id in offered
+    return found
+
+
 def model(cwd=None, tool="claude_code", everything=False):
     data = resolve.current(cwd or os.getcwd())
     flags = data["tools"][tool]["flags"]
@@ -166,6 +200,8 @@ def model(cwd=None, tool="claude_code", everything=False):
     keep = flags.get(KEEP_HOURS, {}).get("set")
     keep = keep if isinstance(keep, (int, float)) else 24
     families = []
+    offered = {offer["id"] for offer in files.read_json(files.state_path("offers.json"), {"offers": []})
+               .get("offers", [])} if everything else set()
     groups = [(family, [part for part in parts if part.family == family and part.stage != tree_module.BETA])
               for family in tree_module.FAMILIES]
     groups.append((tree_module.BETA, [part for part in parts if part.stage == tree_module.BETA]))
@@ -176,10 +212,14 @@ def model(cwd=None, tool="claude_code", everything=False):
         for part in members:
             if not everything and not flags[part.id]["relevant"]:
                 continue
-            part_row = row(part, flags[part.id])
-            part_row["children"] = [
-                row(node, flags[node.id]) for node in part.walk() if node is not part
-                and (everything or (flags[node.id]["relevant"] and flags[node.id]["by"] != "default"))]
+            if everything:
+                part_row = picker_row(part, flags, offered)
+                part_row["children"] = [picker_row(node, flags, offered) for node in part.walk() if node is not part]
+            else:
+                part_row = row(part, flags[part.id])
+                part_row["children"] = [
+                    row(node, flags[node.id]) for node in part.walk() if node is not part
+                    and flags[node.id]["relevant"] and flags[node.id]["by"] != "default"]
             rows.append(part_row)
         if rows:
             group = {"family": family, "parts_on": sum(1 for part in members if flags[part.id]["runs"]),
