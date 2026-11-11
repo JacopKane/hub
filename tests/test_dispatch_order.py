@@ -22,7 +22,8 @@ from test_other_tiers import agent_transcript, agent_transcript_path, main_trans
 
 GATE = "public_text_gate"
 EVERY_TOOL_PARTS = "every_tool_parts"
-EVENT_MARKERS = {"PostToolUse": "post_tool_use_parts", "Stop": "stop_parts"}
+POST_TOOL_PARTS = "post_tool_parts"
+EVENT_MARKERS = {"PostToolUse": os.path.join(POST_TOOL_PARTS, "Read"), "Stop": "stop_parts"}
 USER_PROMPT_PARTS = "user_prompt_parts"
 TOOL_PARTS, MARKERS_DONE = "tool_parts", "markers_done"
 REWRITER = {
@@ -143,14 +144,14 @@ def test_the_hooks_files_start_the_dispatcher_only_for_the_tools_parts_handle():
                     hits = [name == "Bash", name in named, bool(every_other.search(name))]
                     assert sum(hits) == (0 if name == "Monitor" else 1), name
         elif event == "PostToolUse" and tools and event in claude_every:
-            with then("PostToolUse has one entry for the tools a part names and one for every other tool except "
-                      "Monitor, for the part that handles every tool"):
+            with then("PostToolUse has one entry for the tools a part names and one for every other tool, "
+                      "for the part that handles every tool"):
                 matchers = [entry.get("matcher") for entry in claude[event]]
                 assert matchers[0] == "|".join(tools) and len(matchers) == 2
                 every_other = re.compile(matchers[1])
                 for name in tools + ["Bash", "Agent", "Monitor", "WebFetch", "mcp__search__query"]:
                     hits = [name in tools, bool(every_other.search(name))]
-                    assert sum(hits) == (0 if name == "Monitor" else 1), name
+                    assert sum(hits) == 1, name
                 commands = [hook["command"] for entry in claude[event] for hook in entry["hooks"]]
                 assert commands[0].endswith("pre_check.sh\" PostToolUse")
                 assert commands[1].endswith("pre_check.sh\" PostToolUse every")
@@ -646,10 +647,13 @@ def test_the_post_tool_use_group_for_every_other_tool_starts_python_only_while_a
         home.hubctl("on", "permission_relay")
         every.send(bash_input)
         named.send(read_input)
-    with then("apply marks the relay for both groups, and each group starts the dispatcher once"):
+    with then("apply marks the relay as a part for every tool, which both groups read, "
+              "and each group starts the dispatcher once"):
         assert marker(home, every_marker) == ["permission_relay"]
-        assert "permission_relay" in marker(home, EVENT_MARKERS["PostToolUse"])
+        assert marker(home, EVENT_MARKERS["PostToolUse"]) is None
         assert every.python_starts() == 1 and named.python_starts() == 1
+    with then("the group for named tools sees the marker first and hands the call on without reading it"):
+        assert "cat" not in named.programs()
     with when("the user switches the relay off again in /hub"):
         home.hubctl_from_mod("off", "permission_relay")
         every.send(bash_input)

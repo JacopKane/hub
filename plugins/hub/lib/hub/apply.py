@@ -35,14 +35,16 @@ from . import files, keys, links, resolve, slots, tree as tree_module, uninstall
 APPLIES = "applies.jsonl"
 COST = "cost.json"
 # The marker pre_check.sh reads for each event, by name.
-MARKERS = {"PreToolUse": "every_tool_parts", "PostToolUse": "post_tool_use_parts",
+MARKERS = {"PreToolUse": "every_tool_parts", "PostToolUseFailure": "post_tool_use_failure_parts",
            "UserPromptSubmit": "user_prompt_parts", "Stop": "stop_parts",
            "SubagentStop": "subagent_stop_parts"}
 # The PostToolUse group for every tool no part names starts Python only for the parts that handle every tool.
 EVERY_TOOL_MARKERS = {"PostToolUse": "post_tool_use_every_parts"}
-# The folder of PreToolUse markers, one file per tool a running part names, and the mark written after
-# every marker. pre_check.sh trusts no marker while the mark is missing or older than resolved.json.
-TOOL_PARTS, MARKERS_DONE = "tool_parts", "markers_done"
+# The folders of PreToolUse and PostToolUse markers, one file per tool a running part names, and the mark
+# written after every marker. pre_check.sh trusts no marker while the mark is missing or older than
+# resolved.json. Older versions kept one PostToolUse marker for every named tool, which apply removes.
+TOOL_PARTS, POST_TOOL_PARTS, MARKERS_DONE = "tool_parts", "post_tool_parts", "markers_done"
+OLD_MARKERS = ("post_tool_use_parts",)
 # The names pre_check.sh reads from hook input. Any other name starts the dispatcher there.
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
@@ -106,7 +108,7 @@ def mark_group_parts(data):
 
     For PreToolUse, and for the PostToolUse group for every other tool, only
     the parts that handle every tool count here, since the tools a part names
-    get their own markers or groups. The done mark goes first and comes back
+    get their own markers, one file per tool. The done mark goes first and comes back
     last, after resolved.json, so pre_check.sh never trusts markers that an
     apply left half written.
     """
@@ -124,13 +126,16 @@ def mark_group_parts(data):
         else:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(path)
-    mark_tool_parts(handlers.get("PreToolUse", []))
+    mark_tool_parts(handlers.get("PreToolUse", []), TOOL_PARTS)
+    mark_tool_parts(handlers.get("PostToolUse", []), POST_TOOL_PARTS)
+    for name in OLD_MARKERS:
+        remove(files.state_path(name))
     files.write_text(done, "")
 
 
-def mark_tool_parts(entries):
-    """Write a marker for each tool that a running part names, and remove the others."""
-    folder = files.state_path(TOOL_PARTS)
+def mark_tool_parts(entries, name):
+    """Write a marker in the folder name for each tool that a running part names, and remove the others."""
+    folder = files.state_path(name)
     named = {}
     for entry in entries:
         for tool in entry["tools"]:

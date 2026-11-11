@@ -1,0 +1,21 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "task_list",
+  "family": "chats",
+  "kind": "hook",
+  "default": "off",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "The task list reads Claude Code's task notices and hook fields. It is not built for Cursor yet."},
+  "offer_when": "profile.chats_running >= 2",
+  "handlers": {
+    "PostToolUse": {"tools": ["Agent", "Bash", "Monitor", "TaskStop"]},
+    "PostToolUseFailure": {"tools": ["Agent"]},
+    "UserPromptSubmit": {"tools": []},
+    "Stop": {"tools": []},
+    "SessionEnd": {"tools": []}
+  },
+  "commands": {
+    "tasks": {"script": "tasks_cli.py", "does": "the task list: what needs you, running agents and jobs, waits on other chats, timers, and the ones done today"}
+  },
+  "does": "Lists each chat's agents, background jobs, questions, waits on other chats and timers, with their state and cost so far."
+}

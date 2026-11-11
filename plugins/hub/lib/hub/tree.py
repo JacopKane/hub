@@ -28,7 +28,7 @@ CURSOR_EVENT_NAMES = {
     "PreCompact": "preCompact",
 }
 # Events only Claude Code sends. A handler for one of them may not run in Cursor.
-CLAUDE_ONLY_EVENTS = ("Notification", "PermissionRequest", "PermissionDenied")
+CLAUDE_ONLY_EVENTS = ("PostToolUseFailure", "Notification", "PermissionRequest", "PermissionDenied")
 # Every event a part may handle, in the order the hooks files list them.
 EVENTS = (*CURSOR_EVENT_NAMES, *CLAUDE_ONLY_EVENTS)
 SWITCH_VALUES = ["off", "on"]

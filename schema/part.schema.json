@@ -156,6 +156,7 @@
           "PermissionRequest",
           "PreCompact",
           "PostToolUse",
+          "PostToolUseFailure",
           "PreToolUse",
           "SessionEnd",
           "SessionStart",
