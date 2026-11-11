@@ -1,0 +1,1 @@
+The body has {words} words outside code blocks, diagrams and details blocks, so it takes longer to read than the 30 to 60 seconds a reader should need. This is a notice, not a failure. Ask the user before you trim it.

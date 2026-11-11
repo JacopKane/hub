@@ -1,0 +1,1 @@
+- Keep a branch current by rebasing it on its base, never by merging the base in. Force-push only with --force-with-lease, and only to a branch made for this work.

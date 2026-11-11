@@ -1,0 +1,1 @@
+- Open new PRs as {{pr.open_as}} PRs, unless the repo's guide or the user asks for something else.

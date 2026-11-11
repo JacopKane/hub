@@ -1,0 +1,1 @@
+- When a change adds or rewrites words that users read, put the texts and every translation in their own small PR that merges before the logic, and name in its body the feature that will use them. That texts PR is the one exception to slicing by feature.
