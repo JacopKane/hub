@@ -12,10 +12,12 @@ backticks is checked like any other command, in an assignment, an argument,
 a heredoc body or another substitution. Text it can not read, such as a
 $VARIABLE, another command's output, a pipe or a missing file, counts as
 unreadable. So does a command the shell fills in, such as eval "$CMD",
-bash -c "$CMD" or a bare $CMD. eval "$(ssh-agent -s)" still runs, because
-the gate can read the inner command and it names no public tool (git, gh,
-curl or wget that writes or sends data, or a package publish). A script that
-a shell reads from a heredoc is checked line by line, like any other command.
+bash -c "$CMD", a bare $CMD or a program name that a substitution prints,
+and a script that a shell reads from a pipe, a process substitution or
+standard input, as in printf ... | bash. eval "$(ssh-agent -s)" still
+runs, because the substitution is the whole script and its command is a
+known setup tool, such as ssh-agent or brew shellenv. A script that a
+shell reads from a heredoc is checked line by line, like any other command.
 A private or unreadable item is refused on every try, in warn and in block.
 The em dash follows the mode: warn refuses a text once and lets it through
 when it comes again, and block refuses it every time. The answer names each
@@ -83,6 +85,8 @@ SECRET = re.compile(
 SESSION_LINK = re.compile(r"claude\.ai/code/session|\bClaude-Session:")
 ESCAPED_DASH = "\\u2014"  # the escape that $'...' in a shell turns into the dash
 SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
+OPERATORS = re.compile(r"[;&|()]+")  # shlex gives operators that touch as one word, such as )|
+PIPE = re.compile(r"(?<![|&])\|(?!\|)")  # a | or |& that feeds the next command, not a ||
 # <<EOF, <<'EOF' or <<-"EOF", the rest of that line, the body, then the end line
 HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.S)
 CAT_FILE = re.compile(r"\$\((?:cat\s+|<\s*)(['\"]?)([^)'\"]+?)\1\s*\)")
@@ -91,9 +95,24 @@ PLACEHOLDER = "__hub_heredoc_{}__"
 # one is unreadable. It never appears in a real command.
 UNREADABLE = "\x00"
 # Put before a command substitution whose source the gate can read and that
-# names no public tool, such as $(ssh-agent -s). As text it is still
-# unreadable, but as a command it is not hidden.
+# names no public tool, such as $(ssh-agent -s). As text and as a program
+# name it is still unreadable, but as the whole script for eval or a shell it
+# is not hidden.
 SUBSTITUTED = UNREADABLE + "\x01"
+# Put after SUBSTITUTED when the substitution stands outside quotes, so the
+# shell splits its output into words. As a program name it is then unreadable,
+# even before a / that would otherwise name only a folder.
+SPLIT = "\x02"
+# The setup tools whose output may be the whole script for eval or a shell, as
+# in eval "$(ssh-agent -s)". Any other source could print a public command.
+# The name has no folder, other than the two that Homebrew's install steps
+# print for brew, and the words are on one line.
+SETUP_SOURCE = re.compile(
+    r"(?:ssh-agent(?:[ \t]+-[sc])?|(?:/opt/homebrew/bin/|/usr/local/bin/)?brew[ \t]+shellenv(?:[ \t]+\w+)?"
+    r"|(?:pyenv|rbenv|nodenv|goenv|jenv)[ \t]+init(?:[ \t]+-{1,2}[\w-]*)*(?:[ \t]+\w+)?"
+    r"|(?:direnv[ \t]+hook|starship[ \t]+init|zoxide[ \t]+init|mise[ \t]+activate)[ \t]+\w+)[ \t]*")
+# The characters before a word starts, where zsh reads =(...) as a process substitution.
+WORD_START = " \t\n;&|()<>"
 # The public tools a substitution's source may not name: git and gh, curl and
 # wget with a write method or data, and a package publish.
 GIT_TOOLS = re.compile(r"(?<![\w./-])(?:[\w./-]*/)?(?:git|gh)(?![\w-])")
@@ -118,9 +137,29 @@ HEREDOC_WORD = re.compile(r"__hub_heredoc_(\d+)__")
 CAT_START = re.compile(r"\$\((?:cat\s+|<\s*)")
 OPEN_HEREDOC_EXPANSION = re.compile(r"(?<!\\)(?:\$[\w{(@*#?!$-]|`)")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+# Builtins that run a script file in the current shell.
+SOURCES = {"source", "."}
 # Paths that name the command's standard input. Opened in the gate, they would read the hook's own input instead.
 STDIN_PATHS = {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
 FEEDERS = {"xargs", "parallel"}
+# Programs that run the next word as a program, with their options that take a value.
+WRAPPERS = {
+    "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T", "-R", "--user", "--group", "--chdir",
+             "--host", "--prompt", "--role", "--type", "--other-user", "--command-timeout", "--chroot"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-P"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "xargs": {"-I", "-n", "-L", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-lines", "--max-procs",
+              "--max-chars", "--delimiter", "--eof", "--arg-file"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "caffeinate": {"-t", "-w"},
+    "time": {"-f", "-o", "--format", "--output"},
+    "exec": {"-a"},
+    "nohup": set(), "command": set(), "builtin": set(), "noglob": set(), "nocorrect": set(),
+    "arch": {"-e", "-d"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+}
 # The text and file options of each gh action that writes. A type flag such as
 # `gh pr review --comment` takes no value, so each action lists only its own.
 BODY = (["--body", "-b"], ["--body-file", "-F"])
@@ -190,6 +229,7 @@ class Command:
             self.heredocs.append(body)
             return PLACEHOLDER.format(len(self.heredocs) - 1) + match.group(3)
 
+        self.fed = getattr(line, "fed", False)  # a process substitution's command reads the pipe that >(...) gets
         self.flat = mark_expansions(HEREDOC.sub(stash, line), self.sources)
         if script:
             self.flat = end_lines(self.flat)
@@ -222,24 +262,52 @@ class Command:
         return read_file(path, self.cwd)
 
     def segments(self):
-        """The simple commands in the line, each as a list of words, or None when the line does not parse."""
+        """The simple commands in the line, each as a list of words, or None when the line does not parse.
+
+        A segment is fed when a pipe gives it its standard input, or when it
+        stands in a ( ) or { } group that a pipe feeds, since every command in
+        the group reads that pipe.
+        """
         try:
             lexer = shlex.shlex(self.flat, posix=True, punctuation_chars=";&|()")
             lexer.whitespace_split = True
             words = list(lexer)
         except ValueError:
             return None
-        found, current = [], []
+        found, groups, piped = [], [], self.fed
+
+        def start():
+            segment = Segment()
+            segment.fed = piped or any(groups)
+            return segment
+
+        current = start()
         for word in words:
-            if word in SEPARATORS:
+            if word in SEPARATORS or OPERATORS.fullmatch(word) or (not current and word in ("{", "}")):
                 if current:
                     found.append(current)
-                current = []
+                    piped = False
+                for operator in re.findall(r"\|\||&&|\|&|;;|[;&|(){}]", word):
+                    if operator in ("(", "{"):
+                        groups.append(piped or any(groups))
+                        piped = False
+                    elif operator in (")", "}"):
+                        piped = False
+                        if groups:
+                            groups.pop()
+                    else:
+                        piped = operator in ("|", "|&")
+                current = start()
             else:
                 current.append(word)
         if current:
             found.append(current)
         return found
+
+
+class Segment(list):
+    """The words of one simple command. fed is True when a pipe gives it its standard input."""
+    fed = False
 
 
 def mark_expansions(line, sources=None):
@@ -248,12 +316,27 @@ def mark_expansions(line, sources=None):
     Single quotes and a backslash keep a $ as it is, and $(cat file) is read
     by the gate, so those stay unmarked. A substitution that may publish
     becomes UNREADABLE alone, so its words never mix with the outer command.
-    Its inner command goes into sources and is checked on its own.
+    Its inner command goes into sources and is checked on its own, and so
+    does the command of a process substitution, <(...), >(...) or zsh's =(...),
+    whose text is a stream the gate can not read. The shell keeps each
+    substitution in one word, so the gate quotes the ones it keeps, and its
+    brackets, spaces and quotes never split the command.
     """
     out, index, quote = [], 0, None
     while index < len(line):
         char = line[index]
         following = line[index + 1] if index + 1 < len(line) else ""
+        if quote is None and following == "(" and (char in "<>" or (char == "=" and (
+                index == 0 or line[index - 1] in WORD_START))):
+            end = closing(line, index + 1)
+            if end > 0:
+                if sources is not None:
+                    source = Source(line[index + 2:end])
+                    source.fed = char == ">"
+                    sources.append(source)
+                out.append(UNREADABLE + one_word(line[index:end + 1], quote))
+                index = end + 1
+                continue
         if quote in ("'", "$'"):
             if quote == "$'" and char == "\\" and following:
                 out.append(char + following)
@@ -278,9 +361,16 @@ def mark_expansions(line, sources=None):
             if end > 0 and sources is not None:
                 sources.append(line[start:end])  # even $(cat file), since its pipe could feed a public tool
             if char == "$" and CAT_START.match(line, index):
-                pass  # the gate reads $(cat file) itself
+                if end > 0 and not any(mark in line[start:end] for mark in ("$", "`", UNREADABLE)):
+                    out.append(one_word(line[index:end + 1], quote))  # the gate reads $(cat file) itself
+                    index = end + 1
+                    continue
+                if end > 0:
+                    out.append(UNREADABLE)  # the shell fills in the file name
+                    index = end + 1
+                    continue
             elif end > 0 and quiet_source(line[start:end]):
-                out.append(SUBSTITUTED + line[index:end + 1])
+                out.append(SUBSTITUTED + ("" if quote else SPLIT) + one_word(line[index:end + 1], quote))
                 index = end + 1
                 continue
             elif end > 0:
@@ -299,6 +389,20 @@ def mark_expansions(line, sources=None):
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def one_word(text, quote):
+    """The text in single quotes, so the gate's lexer keeps it as one word with the same value.
+
+    Inside double quotes it closes them first and opens them again after.
+    """
+    kept = "'" + text.replace("'", "'\\''") + "'"
+    return '"' + kept + '"' if quote == '"' else kept
+
+
+class Source(str):
+    """The command of a substitution. fed is True for >(...), whose command reads what is written to it."""
+    fed = False
 
 
 def closing(line, start):
@@ -681,11 +785,13 @@ def gist_text(action, rest, command):
     return "\n".join(texts)
 
 
-def shell_script(options, command):
+def shell_script(options, command, files=False):
     """What a shell runs, from the words after its name.
 
     It gives ("-c", script) for bash -c, ("input", script) for a heredoc or a
-    here-string the shell reads as its script, or None for a script file.
+    here-string the shell reads as its script, and ("input", None) when -s
+    makes it read standard input. A script file gives None, or ("file", path)
+    with files.
     """
     reads_input, skip, script = False, False, None
     for spot, word in enumerate(options):
@@ -710,11 +816,35 @@ def shell_script(options, command):
         elif word.startswith(("-", "+")):
             reads_input = reads_input or (not word.startswith("--") and "s" in word[1:])
         elif not reads_input:
-            return None  # a script file, which the gate does not read
-    return ("input", script) if script is not None else None
+            return ("file", word) if files else None  # a script file, which the gate does not read
+    return ("input", script) if script is not None or reads_input else None
 
 
-def wrapped_steps(words, index, command, depth):
+def reads_hidden_script(words, spot, command):
+    """Whether the shell or source at spot reads its script from a place the gate can not read.
+
+    That is its standard input when a pipe or a < redirect feeds it or -s
+    tells it to read it, a path such as /dev/stdin, or words that xargs fills
+    in. The gate sees none of these, since the shell gets them only at run time.
+    """
+    program = os.path.basename(words[spot]).casefold()  # macOS runs BASH as bash
+    following = words[spot + 1] if spot + 1 < len(words) else ""
+    if program in SOURCES:
+        return following in STDIN_PATHS or following.startswith("/dev/fd/")
+    if program not in SHELLS:
+        return False
+    if any(os.path.basename(word) in FEEDERS for word in words[:spot]):
+        return True
+    how, script = shell_script(words[spot + 1:], command, files=True) or (None, None)
+    if how == "file":
+        return script in STDIN_PATHS or script.startswith("/dev/fd/")
+    if how == "input":
+        return script is None
+    return how is None and (getattr(words, "fed", False)
+                            or any(re.match(r"\d*<(?!<)", word) for word in words[spot + 1:]))
+
+
+def wrapped_steps(words, index, command, depth, first=False):
     """Steps run inside bash -c, sh -c, eval or a script a shell reads from a heredoc.
 
     The text of a step inside bash -c or eval is unreadable, since the shell
@@ -723,21 +853,47 @@ def wrapped_steps(words, index, command, depth):
     not read or the output of a public tool fills in part of the script, the
     script could run any step.
     """
-    program = os.path.basename(words[index])
+    program = os.path.basename(words[index]).casefold()  # macOS runs BASH as bash
     if program == "eval":
         how, script = "-c", " ".join(words[index + 1:])
     elif program in SHELLS:
-        how, script = shell_script(words[index + 1:], command) or (None, None)
+        how, script = shell_script(words[index + 1:], command, files=True) or (None, None)
+    elif program in SOURCES:
+        how, script = "file", words[index + 1] if index + 1 < len(words) else None
     else:
         return []
     if not script:
         return []
-    if how == "-c":
-        script = command.expand(script)  # $(cat file) and heredoc bodies
+    if how == "file":
+        return [(WRAPPED, UNREADABLE)] if hidden(script) else []  # the shell fills in which file runs
+    script = command.expand(script)  # $(cat file) and heredoc bodies
+    sources = quiet_sources(script, command) if first else None
+    if sources is not None and depth <= 3:
+        # the whole script is what a tool prints, as in eval "$(ssh-agent -s)".
+        # A public step that its source names could print other text, so it is unreadable.
+        return [(target, UNREADABLE) for source in sources
+                for target, _text in public_steps(source, command.cwd, depth + 1, script=True)]
     if hidden(script) or depth > 3:
         return [(WRAPPED, UNREADABLE)]
-    steps = public_steps(script, command.cwd, depth + 1, script=True)
+    steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first)
     return steps if how == "input" else [(target, UNREADABLE) for target, _text in steps]
+
+
+def quiet_sources(script, command):
+    """The source of the substitution that is the whole script, when a known setup tool runs there, or None.
+
+    Only a setup tool such as ssh-agent -s or brew shellenv counts. Any other
+    source, even one that names no public tool, could print a public command.
+    The caller asks only for the first command of the tool call, or the first
+    line of a script that command runs, since an earlier command could change
+    what the tool's name runs.
+    """
+    script = script.strip()
+    for source in command.sources:
+        for whole in ("$(" + source + ")", "`" + source + "`"):
+            if script in (SUBSTITUTED + whole, SUBSTITUTED + SPLIT + whole) and SETUP_SOURCE.fullmatch(source):
+                return [source]
+    return None
 
 
 def rough_steps(command):
@@ -766,28 +922,93 @@ def substituted_steps(command, depth):
     return steps
 
 
-def public_steps(line, cwd, depth=0, script=False, parent=None):
+def program_hidden(word):
+    """Whether the shell fills in the program's name, after the last /.
+
+    That includes the output of a substitution that names no public tool,
+    such as $(printf x), since that output could be the name of one.
+    """
+    tail = word.rsplit("/", 1)[-1]
+    return (UNREADABLE in tail or SUBSTITUTED + SPLIT in word
+            or (UNREADABLE in word and any(char in tail for char in ")`")))
+
+
+def program_spot(words):
+    """(index, hidden) of the program word, past assignments, keywords and wrappers such as sudo and env.
+
+    The index is None when the segment runs no program. hidden is True when
+    the shell fills in the program's name, so it could be any public tool.
+    """
+    index = 0
+    while index < len(words):
+        word = words[index]
+        name = os.path.basename(word).casefold()
+        if re.match(r"[A-Za-z_]\w*=", word) or (word in KEYWORDS and name not in WRAPPERS):
+            index += 1
+            continue
+        if program_hidden(word):
+            return index, True
+        options = WRAPPERS.get(name)
+        if options is None:
+            return index, False
+        index += 1
+        durations = 1 if name == "timeout" else 0
+        while index < len(words):
+            option = words[index]
+            if option == "--":
+                index += 1
+                break
+            if not option.startswith("-") or option == "-":
+                if not durations:
+                    break
+                durations -= 1
+                index += 1
+                continue
+            index += wrapper_option(option, options)
+    return None, False
+
+
+def wrapper_option(option, options):
+    """How many words a wrapper's option takes, itself included.
+
+    A short cluster such as -iu is read letter by letter. The first letter
+    that takes a value takes the rest of the cluster, or the next word.
+    """
+    if option.startswith("--"):
+        key, equals, _value = option.partition("=")
+        return 2 if not equals and key in options else 1
+    for spot in range(1, len(option)):
+        if "-" + option[spot] in options:
+            return 1 if option[spot + 1:] else 2
+    return 1
+
+
+def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False):
     """[(target, text)] for each step in the command line that makes text public.
 
     That includes the steps inside every $(...) and backtick pair, such as
-    in an assignment, an argument or another substitution.
+    in an assignment, an argument or another substitution. opens_the_call
+    says a script is the first thing the tool call runs, as the script of a
+    shell that is the call's first command is.
     """
     command = Command(line, cwd, script, parent)
     segments = command.segments()
     if segments is None:
         return rough_steps(command) + substituted_steps(command, depth)
     steps = []
-    for words in segments:
-        program_word = next((word for word in words
-                             if not re.match(r"[A-Za-z_]\w*=", word) and word not in KEYWORDS), "")
-        if hidden(os.path.basename(program_word)):
-            steps.append((WRAPPED, UNREADABLE))  # a variable names the program, so it could be any step
+    for position, words in enumerate(segments):
+        spot, program_is_hidden = program_spot(words)
+        if program_is_hidden:
+            steps.append((WRAPPED, UNREADABLE))  # the shell fills in the program, so it could be any step
             continue
+        if spot is not None and reads_hidden_script(words, spot, command):
+            steps.append((WRAPPED, UNREADABLE))  # the shell reads a script the gate can not see
         # newlines are spaces to shlex, so look at every git or gh word in the segment
         for index, word in enumerate(words):
-            program = os.path.basename(word)
-            if program in SHELLS or program == "eval":
-                steps += wrapped_steps(words, index, command, depth)
+            program = os.path.basename(word).casefold()  # macOS runs BASH as bash and GIT as git
+            if program in SHELLS or program in SOURCES or program == "eval":
+                first = (opens_the_call or not script) and position == 0 and index == 0
+                steps += wrapped_steps(words, index, command, depth, first)
                 continue
             if program not in ("git", "gh"):
                 continue
