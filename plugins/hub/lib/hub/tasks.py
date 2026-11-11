@@ -1,4 +1,4 @@
-"""The task list shows each agent and background job a chat starts, with its state and cost so far.
+"""The task list shows what each chat started or waits on, with its state and cost so far.
 
 It uses the standard library only, so a setup without hub can copy this one
 file and call `tasks.py --store <folder> hook` from its own hooks.
@@ -15,19 +15,32 @@ close tasks:
 - A task notice in the prompt closes its task. Completed means ok, failed
   means failed and killed means stopped. A later notice always sets the
   outcome.
-- Stop lists the background tasks still in flight. A running task the main
-  thread opened that is not on that list, and whose notice is not in the
-  transcript, closes as gone. A Stop with no list closes nothing.
-- SessionEnd closes that chat's running tasks as gone.
+- A running task that is not on the Stop list of the thread that opened it,
+  and whose notice is not in the transcript, closes as gone. A Stop with no
+  list closes nothing.
+- A question dialog (PreToolUse AskUserQuestion) and a permission prompt
+  (PermissionRequest) open a question that needs you. The dialog closes when
+  its result comes; a prompt closes when its call runs or its result reaches
+  the asking thread's transcript. What is still open when that thread stops,
+  or when the user types a new prompt in the main thread, closes as gone.
+- A SendMessage with notify_when_idle opens a wait on that chat. Its reply
+  or its idle notice in a prompt closes it.
+- Stop lists the chat's timers in session_crons. Each is a held timer. One
+  that leaves the list closes: a one-shot timer fired, a recurring one was
+  deleted.
+- Stop also lists the background tasks still in flight, and SubagentStop does
+  the same for the tasks that subagent started.
+- SessionEnd closes everything still open in that chat as gone.
 
 Each read also reads the chat transcripts from where the last read stopped,
-so a notice that no prompt hook saw still closes its task. Done tasks go
+so a notice or a reply that no prompt hook saw still closes its task. Done tasks go
 after seven days. One lock file covers every change.
 """
 import argparse
 import calendar
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -60,7 +73,8 @@ TEXTS = {
 }
 LABELS = ("Owner", "Call", "Model", "Now", "Cost", "Source")
 OUTCOMES = ("ok", "failed", "stopped", "gone")
-KINDS = ("agent", "job")
+KINDS = ("agent", "job", "question", "wait", "timer")
+OPEN_STATES = ("running", "waiting_on_you", "waiting_on_chat", "held")
 SOURCES = {"agent": "agent", "shell": "background shell", "monitor": "monitor", "question": "question",
            "permission": "permission prompt", "message": "message", "timer": "timer"}
 
@@ -68,8 +82,15 @@ KEEP_SECONDS = 7 * 86400
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
 NOTICE = re.compile(r"<task-notification>(?:\s|\\n)*<task-id>([\w-]+)</task-id>(.*?)</task-notification>", re.S)
 STATUS = re.compile(r"<status>(\w+)</status>")
+MESSAGE = re.compile(r'<cross-session-message from="([^"]*)"(?: from-name="([^"]*)")?')
+IDLE = re.compile(r'\[Cross-session idle notice\] "([^"]*)"')
+NOT_TYPED = ("<task-notification>", "<cross-session-message", "[Cross-session idle notice]")
+LOOK_BACK = 256 * 1024  # how far before a prompt opened its own tool call may sit in the transcript
 NOTICE_OUTCOMES = {"completed": "ok", "failed": "failed", "killed": "stopped"}
-GLYPHS = {"running": "▶", "ok": "✓", "failed": "✗", "stopped": "■", "gone": "?"}
+GLYPHS = {
+    "waiting_on_you": "?", "running": "▶", "waiting_on_chat": "…", "held": "‖",
+    "ok": "✓", "failed": "✗", "stopped": "■", "gone": "?",
+}
 SEEN_KEPT = 64  # one reply can fill several lines in a row, so the last few reply keys are enough
 
 # $ per million tokens: input, output, cache read. A cache write costs input x1.25 for five minutes and x2
@@ -220,14 +241,45 @@ def on_event(folder, event, hook_input, owner_name=""):
         return
     store = Store(folder)
     session = hook_input.get("session_id") if isinstance(hook_input.get("session_id"), str) else ""
+    thread = hook_input.get("agent_id") or None
     tool = hook_input.get("tool_name")
     response = hook_input.get("tool_response") if isinstance(hook_input.get("tool_response"), dict) else {}
     tool_input = hook_input.get("tool_input") if isinstance(hook_input.get("tool_input"), dict) else {}
-    if event == "PostToolUse" and tool in ("Agent", "Bash", "Monitor"):
+    owner = {"session": session, "name": text(owner_name, 60)}
+    if event in ("PostToolUse", "PostToolUseFailure") and isinstance(tool, str) and store_exists(store):
+        with store.locked():  # the call ran or failed, so its prompt or dialog was answered
+            close(store, prompt_key(session, thread, tool, tool_input), "ok", only_open=True)
+            if tool == "AskUserQuestion" and isinstance(hook_input.get("tool_use_id"), str):
+                close(store, hook_input["tool_use_id"], "ok", only_open=True)
+    if event == "PreToolUse" and tool == "AskUserQuestion":
+        call = hook_input.get("tool_use_id")
+        if isinstance(call, str) and SAFE_ID.fullmatch(call):
+            asked = new_task("question", call, "question", call, {}, hook_input)
+            questions = tool_input.get("questions")
+            first = questions[0] if isinstance(questions, list) and questions else {}
+            asked["title"] = text(first.get("question") if isinstance(first, dict) else "", 200) or call
+            open_task(store, asked, owner, hook_input)
+    elif event == "PermissionRequest" and isinstance(tool, str) and tool != "AskUserQuestion":
+        key = prompt_key(session, thread, tool, tool_input)
+        asked = new_task("question", key, "permission", key, {}, hook_input)
+        what = next((text(tool_input.get(field), 120) for field in ("description", "command", "file_path", "url",
+                                                                   "pattern") if text(tool_input.get(field))), "")
+        asked["title"] = TEXTS["permission"].format(tool=text(tool, 60), what=what) if what else text(tool, 60)
+        asked["asked"]["tool"], asked["asked"]["input"] = tool, digest(tool_input)
+        open_task(store, asked, owner, hook_input)
+    elif event == "PostToolUse" and tool == "SendMessage":
+        call, target = hook_input.get("tool_use_id"), tool_input.get("to")
+        if (tool_input.get("notify_when_idle") is True and response.get("success") is True and not thread
+                and isinstance(call, str) and SAFE_ID.fullmatch(call) and text(target)):
+            wait = new_task("wait", call, "message", call, {}, hook_input)
+            wait.update(title=text(tool_input.get("summary"), 200) or text(tool_input.get("message"), 200) or call,
+                        waits_on=text(target, 200))
+            open_task(store, wait, owner, hook_input)
+    elif event == "PostToolUse" and tool in ("Agent", "Bash", "Monitor"):
         task = opened(tool, tool_input, response, hook_input)
         if task is None:
             return
-        task["owner"] = {"session": session, "name": text(owner_name, 60)}
+        task["owner"] = owner
         with store.locked():
             follow(store, session, hook_input.get("transcript_path"))
             old = store.get(task["id"])
@@ -244,38 +296,167 @@ def on_event(folder, event, hook_input, owner_name=""):
         task = new_task("agent", call, "agent", call, tool_input, hook_input)
         stopped = hook_input.get("is_interrupt") is True
         task.update(state="done", outcome="stopped" if stopped else "failed", ended=now(),
-                    detail=text(hook_input.get("error"), 400),
-                    owner={"session": session, "name": text(owner_name, 60)})
+                    detail=text(hook_input.get("error"), 400), owner=owner)
         with store.locked():
             store.put(task)
     elif event == "PostToolUse" and tool == "TaskStop":
         key = response.get("task_id") or tool_input.get("task_id")
         if store_exists(store) and isinstance(key, str):
             with store.locked():
-                close(store, key, "stopped", only_running=True)
+                close(store, key, "stopped", only_open=True)
     elif event == "UserPromptSubmit":
-        found = notices(hook_input.get("prompt"))
-        if found and store_exists(store):
+        prompt = hook_input.get("prompt") if isinstance(hook_input.get("prompt"), str) else ""
+        if store_exists(store):
             with store.locked():
-                for key, outcome in found:
+                for key, outcome in notices(prompt):
                     close(store, key, outcome)
-    elif event == "Stop":
-        listed = hook_input.get("background_tasks")
-        if isinstance(listed, list) and store_exists(store):
-            ids = {item.get("id") for item in listed if isinstance(item, dict)}
-            opener = hook_input.get("agent_id") or None
-            with store.locked():
-                read_transcripts(store)
+                close_waits(store, session, prompt)
+                if not any(mark in prompt for mark in NOT_TYPED):
+                    close_questions(store, session, None)  # a typed prompt means no dialog is open
+    elif event in ("Stop", "SubagentStop"):
+        crons = hook_input.get("session_crons") if event == "Stop" else None
+        if not store_exists(store) and not (isinstance(crons, list) and crons):
+            return
+        with store.locked():
+            read_transcripts(store)
+            close_questions(store, session, thread)
+            listed = hook_input.get("background_tasks")
+            if isinstance(listed, list):
+                ids = {item.get("id") for item in listed if isinstance(item, dict)}
                 for task in store.all():
                     if (task.get("state") == "running" and task["owner"].get("session") == session
-                            and task.get("opened_by") == opener and task["source"]["key"] not in ids):
-                        close(store, task["id"], "gone", only_running=True)
+                            and task.get("opened_by") == thread and task["source"]["key"] not in ids):
+                        close(store, task["id"], "gone", only_open=True)
+            if isinstance(crons, list):
+                follow_timers(store, session, crons, owner, hook_input)
     elif event == "SessionEnd" and store_exists(store):
         with store.locked():
             read_transcripts(store)
             for task in store.all():
-                if task.get("state") == "running" and task["owner"].get("session") == session:
-                    close(store, task["id"], "gone", only_running=True)
+                if is_open(task) and task["owner"].get("session") == session:
+                    if task.get("kind") == "question" and settle(task):
+                        store.put(task)
+                        continue
+                    close(store, task["id"], "gone", only_open=True)
+
+
+def is_open(task):
+    return task.get("state") in OPEN_STATES
+
+
+def digest(value):
+    return hashlib.sha1(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def prompt_key(session, thread, tool, tool_input):
+    """The id of a permission prompt: one tool call with this input, in one thread of one chat."""
+    return "p" + digest([session, thread or "", tool, tool_input])[:20]
+
+
+def thread_transcript(hook_input):
+    """The transcript of the thread that asks: the chat's own, or the subagent's."""
+    transcript, session, agent = (hook_input.get("transcript_path"), hook_input.get("session_id"),
+                                  hook_input.get("agent_id"))
+    if not isinstance(transcript, str):
+        return ""
+    if not agent:
+        return transcript
+    if not (isinstance(session, str) and SAFE_ID.fullmatch(session) and isinstance(agent, str)
+            and SAFE_ID.fullmatch(agent)):
+        return ""
+    return os.path.join(os.path.dirname(transcript), session, "subagents", f"agent-{agent}.jsonl")
+
+
+def open_task(store, task, owner, hook_input):
+    """Write a question or a wait. One that is still open keeps its start; a done one opens again."""
+    task["owner"] = owner
+    task["state"] = "waiting_on_chat" if task["kind"] == "wait" else "waiting_on_you"
+    with store.locked():
+        follow(store, owner["session"], hook_input.get("transcript_path"))
+        old = store.get(task["id"])
+        if old and is_open(old):
+            return
+        store.put(task)
+
+
+def close_waits(store, session, prompt):
+    """Close the waits of this chat on a chat whose message or idle notice is in the prompt."""
+    names = {match.group(1).lower() for match in IDLE.finditer(prompt)}
+    for match in MESSAGE.finditer(prompt):
+        names |= {name.lower() for name in match.groups() if name}
+    if not names:
+        return
+    for task in store.all():
+        if (task.get("kind") == "wait" and is_open(task) and task["owner"].get("session") == session
+                and str(task.get("waits_on", "")).lower() in names):
+            close(store, task["id"], "ok", only_open=True)
+
+
+def close_questions(store, session, thread):
+    """Close one thread's open questions: ok when the transcript holds the answer, else gone."""
+    for task in store.all():
+        if (task.get("kind") == "question" and is_open(task) and task["owner"].get("session") == session
+                and task.get("opened_by") == thread):
+            if settle(task):
+                store.put(task)
+            else:
+                close(store, task["id"], "gone", only_open=True)
+
+
+def settle(task):
+    """Mark a question done ok when its call's result reached the asking thread's transcript after it opened."""
+    asked = task.get("asked") or {}
+    path, offset = asked.get("transcript"), asked.get("offset")
+    if not isinstance(path, str) or not path or not isinstance(offset, int):
+        return False
+    start = max(0, offset - LOOK_BACK) if asked.get("tool") else offset
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            data = handle.read()
+    except OSError:
+        return False
+    calls, results, position = {task["source"].get("call")} - {"", None}, set(), start
+    for raw in data.split(b"\n"):
+        line_start, position = position, position + len(raw) + 1
+        if b"tool_" not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        content = (entry.get("message") or {}).get("content") if isinstance(entry, dict) else None
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict):
+                continue
+            if (part.get("type") == "tool_use" and asked.get("tool") == part.get("name")
+                    and digest(part.get("input")) == asked.get("input")):
+                calls.add(part.get("id"))
+            elif part.get("type") == "tool_result" and line_start >= offset:
+                results.add(part.get("tool_use_id"))
+    if not calls & results:
+        return False
+    task.update(state="done", outcome="ok", ended=task.get("ended") or now())
+    return True
+
+
+def follow_timers(store, session, crons, owner, hook_input):
+    """Hold one timer per listed cron, and close this chat's timers that left the list."""
+    listed = {}
+    for cron in crons:
+        if isinstance(cron, dict) and isinstance(cron.get("id"), str) and SAFE_ID.fullmatch("cron-" + cron["id"]):
+            listed["cron-" + cron["id"]] = cron
+    for key, cron in listed.items():
+        if store.get(key):
+            continue
+        timer = new_task("timer", key, "timer", key, {}, hook_input)
+        timer.update(state="held", owner=owner, title=text(cron.get("prompt"), 200) or key,
+                     detail=text(cron.get("schedule"), 100), recurring=cron.get("recurring") is True)
+        store.put(timer)
+    for task in store.all():
+        if (task.get("kind") == "timer" and is_open(task) and task["owner"].get("session") == session
+                and task["id"] not in listed):
+            close(store, task["id"], "stopped" if task.get("recurring") else "ok", only_open=True)
 
 
 def store_exists(store):
@@ -291,7 +472,17 @@ def new_task(kind, task_id, source, key, tool_input, hook_input):
         "owner": {}, "opened_by": hook_input.get("agent_id") or None,
         "transcript": hook_input.get("transcript_path") if isinstance(hook_input.get("transcript_path"), str) else "",
         "started": now(), "ended": None, "cost": None, "now": None, "now_at": None,
-    }
+    } | (asked_at(hook_input) if kind == "question" else {})
+
+
+def asked_at(hook_input):
+    """Where the asking thread's transcript ended when a question opened."""
+    path = thread_transcript(hook_input)
+    try:
+        offset = os.path.getsize(path) if path else 0
+    except OSError:
+        offset = 0
+    return {"asked": {"transcript": path, "offset": offset}}
 
 
 def opened(tool, tool_input, response, hook_input):
@@ -325,9 +516,9 @@ def notices(prompt):
     return found
 
 
-def close(store, key, outcome, only_running=False):
+def close(store, key, outcome, only_open=False):
     task = store.get(key)
-    if not task or (only_running and task.get("state") != "running"):
+    if not task or (only_open and not is_open(task)):
         return
     task.update(state="done", outcome=outcome)
     task["ended"] = task.get("ended") or now()
@@ -359,7 +550,7 @@ def new_lines(path, offset):
 
 
 def read_transcripts(store):
-    """Close the tasks whose notice reached a transcript after the last read."""
+    """Close the tasks whose notice, reply or idle notice reached a transcript after the last read."""
     for session, data in store.sessions().items():
         transcript, offset = data.get("transcript"), data.get("offset")
         if not isinstance(transcript, str) or not isinstance(offset, int):
@@ -371,10 +562,12 @@ def read_transcripts(store):
             continue
         lines, end = new_lines(transcript, offset)
         for line in lines:
-            if "task-notification" not in line:
+            if "task-notification" not in line and "ross-session" not in line:
                 continue
-            for key, outcome in notices(" ".join(prompt_texts(line))):
+            prompt = " ".join(prompt_texts(line))
+            for key, outcome in notices(prompt):
                 close(store, key, outcome)
+            close_waits(store, session, prompt)
         if end != data.get("offset"):
             write_json(store.session_path(session), dict(data, offset=end))
 
@@ -467,7 +660,7 @@ def refresh(store):
             if task.get("state") == "done" and number(task.get("ended")) < cutoff:
                 remove(store.task_path(task["id"]))
                 continue
-            if read_agent(task):
+            if read_agent(task) or (task.get("kind") == "question" and is_open(task) and settle(task)):
                 store.put(task)
             kept.append(task)
         sessions = {task.get("owner", {}).get("session") for task in kept}
@@ -522,10 +715,17 @@ def cut(value, width, plain):
 
 
 def groups(tasks):
-    running = sorted((task for task in tasks if task.get("state") == "running"), key=lambda task: task["started"])
-    done = sorted((task for task in tasks if task.get("state") == "done" and today(task)),
-                  key=lambda task: -number(task.get("ended")))
-    return running, done
+    """The open tasks by state in OPEN_STATES order, oldest first, then today's done tasks, newest first."""
+    found = {state: sorted((task for task in tasks if task.get("state") == state), key=lambda task: task["started"])
+             for state in OPEN_STATES}
+    found["done"] = sorted((task for task in tasks if task.get("state") == "done" and today(task)),
+                           key=lambda task: -number(task.get("ended")))
+    return found
+
+
+HEADINGS = (("waiting_on_you", "group_needs_you"), ("running", "group_running"), ("waiting_on_chat", "group_waits"),
+            ("held", "group_held"), ("done", "group_done"))
+ALWAYS_SHOWN = ("running", "done")
 
 
 def columns(width, any_cost):
@@ -536,7 +736,7 @@ def columns(width, any_cost):
     return shown
 
 
-OWNER, KIND, STATE, MODEL, COST = 12, 5, 7, 6, 7
+OWNER, KIND, STATE, MODEL, COST = 12, 8, 7, 6, 7
 
 
 def fixed_width(shown):
@@ -544,9 +744,9 @@ def fixed_width(shown):
 
 
 def row(task, width, shown, plain):
-    state = task.get("outcome") or "running"
+    state = task.get("outcome") or task.get("state")
     mark = "" if plain else GLYPHS.get(state, "?") + " "
-    status = age(now() - number(task.get("started"))) if task.get("state") == "running" else state
+    status = age(now() - number(task.get("started"))) if is_open(task) else state
     rest = [cut(owner_of(task), OWNER, plain).ljust(OWNER), task.get("kind", "").ljust(KIND), status.ljust(STATE)]
     if "model" in shown:
         rest.append(model_name(task.get("model")).ljust(MODEL))
@@ -564,19 +764,18 @@ def heading(label, count, width, plain):
 
 
 def render(tasks, width, plain, only_done=False):
-    running, done = groups(tasks)
-    if only_done:
-        running = []
-        if not done:
-            return TEXTS["none_done"] + "\n"
-    elif not running and not done:
+    found = groups(tasks)
+    if only_done and not found["done"]:
+        return TEXTS["none_done"] + "\n"
+    if not any(found.values()):
         return TEXTS["empty"] + "\n"
-    shown = columns(width, any(usd_of(task) for task in running + done))
+    shown = columns(width, any(usd_of(task) for items in found.values() for task in items))
     lines = []
-    for label, items in ((TEXTS["group_running"], running), (TEXTS["group_done"], done)):
-        if only_done and items is running:
+    for state, label in HEADINGS:
+        items = found[state]
+        if (only_done and state != "done") or (not items and state not in ALWAYS_SHOWN):
             continue
-        lines.append(heading(label, len(items), width, plain))
+        lines.append(heading(TEXTS[label], len(items), width, plain))
         lines += [row(task, width, shown, plain) for task in items]
         lines.append("")
     if "cost" in shown:
@@ -584,17 +783,25 @@ def render(tasks, width, plain, only_done=False):
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def brief_rows(items):
+    rows = ", ".join(f"{cut(task.get('title') or task['id'], 40, True)} ({owner_of(task)})" for task in items[:3])
+    return rows + (f", +{len(items) - 3}" if len(items) > 3 else "")
+
+
 def brief(tasks):
-    running, done = groups(tasks)
-    if not running and not done:
+    found = groups(tasks)
+    if not any(found.values()):
         return TEXTS["empty_brief"] + "\n"
     lines = []
+    needs_you, running, done = found["waiting_on_you"], found["running"], found["done"]
+    if needs_you:
+        lines.append(TEXTS["brief_needs_you"].format(count=len(needs_you), rows=brief_rows(needs_you)))
     if running:
-        rows = ", ".join(f"{cut(task.get('title') or task['id'], 40, True)} ({owner_of(task)})" for task in running[:3])
-        if len(running) > 3:
-            rows += f", +{len(running) - 3}"
-        lines.append(TEXTS["brief_running"].format(count=len(running), rows=rows))
+        lines.append(TEXTS["brief_running"].format(count=len(running), rows=brief_rows(running)))
     counts = TEXTS["brief_counts"].format(running=len(running), done=len(done))
+    if needs_you or found["waiting_on_chat"] or found["held"]:
+        counts += " · " + TEXTS["brief_open"].format(needs_you=len(needs_you), waits=len(found["waiting_on_chat"]),
+                                                     held=len(found["held"]))
     usd = sum(usd_of(task) for task in running + done if task.get("kind") == "agent")
     if usd:
         counts += " · " + TEXTS["brief_cost"].format(usd=money(usd))
@@ -624,6 +831,7 @@ def show(task):
     source = task["source"]
     values = [("State", state), ("Owner", owner_of(task)), ("Call", source.get("call")),
               ("Model", task.get("model")), ("Now", None), ("Cost", None),
+              (TEXTS["show_waits_on"], task.get("waits_on")),
               ("Source", f"{SOURCES.get(source.get('type'), source.get('type'))} {source.get('key')}")]
     if task.get("now"):
         values[4] = ("Now", f"{task['now']} ({TEXTS['show_now'].format(age=age(now() - number(task.get('now_at'))))})")

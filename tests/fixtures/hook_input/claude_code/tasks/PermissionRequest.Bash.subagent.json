@@ -1,0 +1,44 @@
+{
+  "_source": "Captured from Claude Code 2.1.322 with the lab's mock API (no model), paths, ids and chat names made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000c3",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000c3.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-00000000001c",
+  "permission_mode": "default",
+  "agent_id": "abdb64e3055b5455f",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "touch sub-made.txt",
+    "description": "Sub makes a file"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [
+        {
+          "toolName": "Bash",
+          "ruleContent": "touch sub-made.txt"
+        }
+      ],
+      "behavior": "allow",
+      "destination": "localSettings"
+    },
+    {
+      "type": "addDirectories",
+      "directories": [
+        "/home/sam/work/demo"
+      ],
+      "destination": "session"
+    },
+    {
+      "type": "setMode",
+      "mode": "acceptEdits",
+      "destination": "session"
+    }
+  ]
+}

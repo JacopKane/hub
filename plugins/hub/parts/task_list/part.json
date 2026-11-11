@@ -8,10 +8,13 @@
   "reason_not_in": {"cursor": "The task list reads Claude Code's task notices and hook fields. It is not built for Cursor yet."},
   "offer_when": "profile.chats_running >= 2",
   "handlers": {
-    "PostToolUse": {"tools": ["Agent", "Bash", "Monitor", "TaskStop"]},
+    "PreToolUse": {"tools": ["AskUserQuestion"]},
+    "PostToolUse": {"tools": ["Agent", "AskUserQuestion", "Bash", "Monitor", "SendMessage", "TaskStop"]},
     "PostToolUseFailure": {"tools": ["Agent"]},
     "UserPromptSubmit": {"tools": []},
+    "PermissionRequest": {"tools": []},
     "Stop": {"tools": []},
+    "SubagentStop": {"tools": []},
     "SessionEnd": {"tools": []}
   },
   "commands": {

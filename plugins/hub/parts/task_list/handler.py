@@ -30,4 +30,9 @@ def owner_name(hook_input):
 
 
 def handle(event, hook_input, flags, answer):
-    tasks.on_event(files.state_path(PART), event, hook_input, owner_name(hook_input))
+    folder = files.state_path(PART)
+    if event == "PreToolUse":  # a dialog another part refuses never opens, so it is no question
+        answer.after_all(lambda final: final.refusal is None
+                         and tasks.on_event(folder, event, hook_input, owner_name(hook_input)))
+        return
+    tasks.on_event(folder, event, hook_input, owner_name(hook_input))

@@ -1,0 +1,11 @@
+{
+  "_source": "Captured from Claude Code 2.1.322 with the lab's mock API (no model), paths, ids and chat names made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000c1",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000c1.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-000000000007",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "<cross-session-message from=\"uds:/tmp/cc-socks/1001.sock\" from-name=\"WEB\" from-mode=\"prompting\">\nPONG the build is green\n</cross-session-message>",
+  "session_title": "DOCS"
+}

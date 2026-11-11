@@ -1,0 +1,26 @@
+{
+  "_source": "Captured from Claude Code 2.1.322 with the lab's mock API (no model), paths, ids and chat names made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000c1",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000c1.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-00000000000c",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "SendMessage",
+  "tool_input": {
+    "to": "uds:/tmp/cc-socks/1001.sock",
+    "summary": "PLAIN just so you know",
+    "message": "PLAIN just so you know"
+  },
+  "tool_response": {
+    "success": true,
+    "message": "“PLAIN just so you know” → uds:/tmp/cc-socks/1001.sock; in that session's inbox, not yet read by its Claude - a [Cross-session delivery notice] follows if that session holds it (usually a different permission mode) or refuses it",
+    "display": "“PLAIN just so you know” → uds:/tmp/cc-socks/1001.sock",
+    "msg_id": "00000000-0000-4000-8000-00000000000e"
+  },
+  "tool_use_id": "toolu_lab0013",
+  "duration_ms": 152
+}

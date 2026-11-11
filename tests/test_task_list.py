@@ -12,6 +12,7 @@ import sys
 import pytest
 
 from conftest import load_fixture
+from dialogs import prompt, set_clock
 from steps import and_, given, then, when
 from test_dispatch_order import EveryToolGroup
 
@@ -458,3 +459,292 @@ def test_a_shell_result_starts_python_only_while_the_task_list_or_a_part_for_tha
         group.send(dict(read, tool_use_id="toolu_again3"))
     with then("the file read starts it too"):
         assert group.python_starts() == 2
+
+
+# Slice 2: questions, waits and timers. Payloads captured from Claude Code 2.1.322.
+
+SENDER = "00000000-0000-4000-8000-0000000000c1"
+HELPER = "abdb64e3055b5455f"  # the subagent in the run2 captures
+
+
+def tool_line(call, name, tool_input):
+    """An assistant line with one tool call, shaped like the captured transcript."""
+    return json.dumps({"type": "assistant", "message": {"id": f"msg_{call}", "role": "assistant", "content": [
+        {"type": "tool_use", "id": call, "name": name, "input": tool_input}]}}) + "\n"
+
+
+def result_line(call, text, is_error=False):
+    """The user line Claude Code writes once the call ran or the prompt was denied."""
+    return json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": call, "content": text, "is_error": is_error}]}}) + "\n"
+
+
+def write(path, *lines):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as handle:
+        handle.write("".join(lines))
+
+
+def open_tasks(home):
+    return {task["source"]["key"]: task for task in listed(home) if task["state"] != "done"}
+
+
+def test_a_question_dialog_needs_you_until_it_is_answered(tasks_on):
+    home = tasks_on
+    with when("a chat opens a question dialog"):
+        send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
+        send(home, payload(home, "PermissionRequest.AskUserQuestion.json"))
+    with then("one question needs you, named by its question"):
+        task = by_key(home)["toolu_lab0002"]
+        assert (task["kind"], task["state"]) == ("question", "waiting_on_you")
+        assert task["title"] == "Which colour should the band use?" and len(listed(home)) == 1
+    with when("the user answers it"):
+        send(home, payload(home, "PostToolUse.AskUserQuestion.json"))
+    with then("the question is done ok"):
+        task = by_key(home)["toolu_lab0002"]
+        assert (task["state"], task["outcome"]) == ("done", "ok")
+
+
+def test_a_question_dialog_without_a_question_list_is_named_by_its_call(tasks_on):
+    home = tasks_on
+    with when("a chat opens a dialog whose questions value is not a list"):
+        ask = payload(home, "PreToolUse.AskUserQuestion.json")
+        ask["tool_input"] = {"questions": {"question": "Which colour?"}}
+        send(home, ask)
+    with then("the question still opens, named by its call"):
+        assert by_key(home)["toolu_lab0002"]["title"] == "toolu_lab0002"
+
+
+def test_a_question_another_part_refuses_opens_nothing(tasks_on):
+    home = tasks_on
+    with given("away_guard holds questions, since the user typed last 61 minutes ago"):
+        home.hubctl("on", "away_guard")
+        set_clock(home, "2026-03-02T08:00:00Z")
+        prompt(home, "Add the layout test, then wait for me.")
+        set_clock(home, "2026-03-02T09:01:00Z")
+    with when("a chat opens a question dialog with no urgent mark"):
+        result = send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
+    with then("the dialog is held and the task list has no question"):
+        assert result.refused and listed(home) == []
+
+
+def test_a_permission_prompt_needs_you_until_the_call_runs(tasks_on):
+    home = tasks_on
+    with when("Claude Code asks to run a shell command"):
+        ask = payload(home, "PermissionRequest.Bash.allowed.json")
+        send(home, ask)
+    with then("a question needs you, saying which tool asks and for what"):
+        (task,) = listed(home)
+        assert (task["kind"], task["state"]) == ("question", "waiting_on_you")
+        assert task["title"] == "Allow Bash: Make an allowed file"
+    with when("the user allows it and the command runs"):
+        send(home, payload(home, "PostToolUse.Bash.allowed.json"))
+    with then("the question is done ok"):
+        (task,) = listed(home)
+        assert (task["state"], task["outcome"]) == ("done", "ok")
+
+
+def test_a_denied_prompt_closes_when_its_result_reaches_the_transcript_or_at_stop(tasks_on):
+    home = tasks_on
+    with given("two shell prompts in one chat, whose calls the transcript already holds"):
+        denied, allowed = payload(home, "PermissionRequest.Bash.denied.json"), payload(home, "PermissionRequest.Bash.allowed.json")
+        write(denied["transcript_path"], tool_line("toolu_lab0006", "Bash", denied["tool_input"]))
+        send(home, denied)
+        write(denied["transcript_path"], tool_line("toolu_lab0004", "Bash", allowed["tool_input"]))
+        send(home, allowed)
+        assert len(open_tasks(home)) == 2
+    with when("the user denies the first, and only its denial reaches the transcript"):
+        write(denied["transcript_path"], result_line("toolu_lab0006", "the lab host says no", is_error=True))
+    with then("the list reads it and shows that question done ok, and the other still open"):
+        found = {task["title"]: task for task in listed(home)}
+        assert found["Allow Bash: Make a denied file"]["outcome"] == "ok"
+        assert found["Allow Bash: Make an allowed file"]["state"] == "waiting_on_you"
+    with when("the chat stops"):
+        send(home, payload(home, "Stop.session_crons.json", session_id=SENDER, session_crons=[]))
+    with then("the open question closes as gone"):
+        found = {task["title"]: task for task in listed(home)}
+        assert (found["Allow Bash: Make an allowed file"]["state"],
+                found["Allow Bash: Make an allowed file"]["outcome"]) == ("done", "gone")
+
+
+def test_a_subagents_prompt_stays_open_through_the_main_chat_and_closes_at_its_own_stop(tasks_on):
+    home = tasks_on
+    with given("a subagent asks to run a shell command"):
+        send(home, payload(home, "PermissionRequest.Bash.subagent.json"))
+        (task,) = listed(home)
+        assert task["state"] == "waiting_on_you" and task["opened_by"] == HELPER
+    with when("the main chat stops and the user types a new prompt"):
+        send(home, payload(home, "Stop.session_crons.json", session_crons=[]))
+        send(home, payload(home, "UserPromptSubmit.cross_session.idle.named.json", prompt="next step"))
+    with then("the subagent's question still needs you"):
+        assert listed(home)[0]["state"] == "waiting_on_you"
+    with when("the subagent stops"):
+        send(home, payload(home, "SubagentStop.first.json"))
+    with then("its question is done"):
+        assert listed(home)[0]["state"] == "done"
+
+
+def test_a_main_chat_prompt_closes_when_the_user_types_again(tasks_on):
+    home = tasks_on
+    with given("a shell prompt in the main chat"):
+        send(home, payload(home, "PermissionRequest.Bash.denied.json"))
+    with when("an idle notice from another chat arrives as a prompt"):
+        send(home, payload(home, "UserPromptSubmit.cross_session.idle.json"))
+    with then("the question still needs you, since no one typed"):
+        assert listed(home)[0]["state"] == "waiting_on_you"
+    with when("the user types a new prompt instead of answering"):
+        send(home, payload(home, "UserPromptSubmit.cross_session.idle.json", prompt="leave it, do the docs"))
+    with then("the question is done"):
+        assert listed(home)[0]["state"] == "done"
+
+
+def test_a_message_sent_with_notify_when_idle_waits_on_that_chat_until_it_replies(tasks_on):
+    home = tasks_on
+    with when("a chat sends a message with no notify_when_idle"):
+        send(home, payload(home, "PostToolUse.SendMessage.plain.json"))
+    with then("nothing waits"):
+        assert listed(home) == []
+    with when("it sends one with notify_when_idle"):
+        sent = payload(home, "PostToolUse.SendMessage.notify.json")
+        send(home, sent)
+    with then("a wait on that chat opens, named by the message summary"):
+        task = by_key(home)[sent["tool_use_id"]]
+        assert (task["kind"], task["state"]) == ("wait", "waiting_on_chat")
+        assert task["title"] == "PING please check the build" and task["waits_on"] == "uds:/tmp/cc-socks/1001.sock"
+    with when("the other chat's reply arrives as a prompt"):
+        send(home, payload(home, "UserPromptSubmit.cross_session.reply.json"))
+    with then("the wait is done ok"):
+        task = by_key(home)[sent["tool_use_id"]]
+        assert (task["state"], task["outcome"]) == ("done", "ok")
+
+
+@pytest.mark.parametrize("sent, notice", [
+    ("PostToolUse.SendMessage.notify.json", "UserPromptSubmit.cross_session.idle.json"),
+    ("PostToolUse.SendMessage.notify.named.json", "UserPromptSubmit.cross_session.idle.named.json"),
+])
+def test_a_wait_closes_on_the_idle_notice_by_address_or_by_name(tasks_on, sent, notice):
+    home = tasks_on
+    with given("a chat waits on another chat"):
+        message = payload(home, sent)
+        send(home, message)
+        assert by_key(home)[message["tool_use_id"]]["state"] == "waiting_on_chat"
+    with when("the idle notice for that chat arrives"):
+        send(home, payload(home, notice))
+    with then("the wait is done ok"):
+        assert by_key(home)[message["tool_use_id"]]["outcome"] == "ok"
+
+
+def test_a_reply_no_prompt_hook_saw_closes_the_wait_from_the_transcript(tasks_on):
+    home = tasks_on
+    with given("a chat waits on another chat"):
+        sent = payload(home, "PostToolUse.SendMessage.notify.json")
+        send(home, sent)
+    with when("the reply reaches the transcript as a queued prompt, with no prompt hook"):
+        reply = payload(home, "UserPromptSubmit.cross_session.reply.json")["prompt"]
+        write(sent["transcript_path"], json.dumps({"type": "attachment", "attachment": {
+            "type": "queued_command", "prompt": reply}}) + "\n")
+    with then("the wait is done ok"):
+        assert by_key(home)[sent["tool_use_id"]]["outcome"] == "ok"
+
+
+def test_timers_follow_the_stop_list(tasks_on):
+    home = tasks_on
+    with when("a Stop lists a one-shot and a recurring timer"):
+        stop = payload(home, "Stop.session_crons.json")
+        send(home, stop)
+    with then("each is a held timer named by its prompt, with its schedule"):
+        found = by_key(home)
+        assert {key: (task["kind"], task["state"], task["title"], task["detail"]) for key, task in found.items()} == {
+            "cron-0b127d7d": ("timer", "held", "Send the public steps", "0 7 * * *"),
+            "cron-a5b221a9": ("timer", "held", "Look at the queue", "*/10 * * * *")}
+    with when("a Stop with no session_crons field arrives"):
+        older = dict(stop)
+        del older["session_crons"]
+        send(home, older)
+    with then("nothing closes"):
+        assert {task["state"] for task in listed(home)} == {"held"}
+    with when("the recurring timer is no longer listed"):
+        send(home, dict(stop, session_crons=stop["session_crons"][:1]))
+    with then("it was deleted, so it is done stopped"):
+        task = by_key(home)["cron-a5b221a9"]
+        assert (task["state"], task["outcome"]) == ("done", "stopped")
+    with when("the one-shot timer is no longer listed"):
+        send(home, dict(stop, session_crons=[]))
+    with then("it fired, so it is done ok"):
+        task = by_key(home)["cron-0b127d7d"]
+        assert (task["state"], task["outcome"]) == ("done", "ok")
+
+
+def test_session_end_closes_the_chats_questions_waits_and_timers_as_gone(tasks_on):
+    home = tasks_on
+    with given("a chat with a question, a wait and a timer"):
+        chat = {"session_id": SENDER}
+        send(home, payload(home, "Stop.session_crons.json", **chat))
+        send(home, payload(home, "PermissionRequest.Bash.denied.json"))
+        send(home, payload(home, "PostToolUse.SendMessage.notify.json"))
+        assert len(open_tasks(home)) == 4
+    with when("the chat ends"):
+        end = payload(home, "Stop.session_crons.json", hook_event_name="SessionEnd", reason="other", **chat)
+        for field in ("background_tasks", "session_crons", "stop_hook_active", "last_assistant_message"):
+            end.pop(field)
+        send(home, end)
+    with then("all four are done and gone"):
+        assert {(task["state"], task["outcome"]) for task in listed(home)} == {("done", "gone")}
+
+
+def test_a_subagent_stop_closes_a_shell_that_subagent_started_once_it_is_no_longer_listed(tasks_on):
+    home = tasks_on
+    with given("a subagent starts a background shell"):
+        send(home, payload(home, "PostToolUse.Bash.subagent_background.json"))
+    with when("the subagent stops while the shell still runs"):
+        send(home, payload(home, "SubagentStop.first.json"))
+    with then("the shell keeps running"):
+        assert by_key(home)["bthrzux39"]["state"] == "running"
+    with when("the subagent stops again and the list no longer holds the shell"):
+        send(home, payload(home, "SubagentStop.second.json"))
+    with then("the shell is done and gone"):
+        task = by_key(home)["bthrzux39"]
+        assert (task["state"], task["outcome"]) == ("done", "gone")
+
+
+def test_the_view_and_brief_put_what_needs_you_first(tasks_on):
+    home = tasks_on
+    with given("a question, a running shell, a wait and a timer"):
+        chat = {"session_title": "DOCS", "session_id": SENDER}
+        send(home, payload(home, "Stop.session_crons.json", **chat, session_crons=[
+            {"id": "0b127d7d", "schedule": "0 7 * * *", "recurring": False, "prompt": "Send the public steps"}]))
+        send(home, payload(home, "PermissionRequest.Bash.denied.json", **chat))
+        send(home, payload(home, "PostToolUse.Bash.background.json", session_title="WEB"))
+        send(home, payload(home, "PostToolUse.SendMessage.notify.json", **chat))
+    with then("the groups come in order: needs you, running, waits on a chat, held"):
+        plain = view(home, "--plain", "--width", "60")
+        order = [plain.index(label) for label in ("NEEDS YOU  1", "RUNNING  1", "WAITS ON A CHAT  1", "HELD  1")]
+        assert order == sorted(order) and all(len(line) <= 60 for line in plain.splitlines()), plain
+        assert not any(glyph in plain for glyph in GLYPHS + "…‖")
+    with and_("the drawn view marks each group with its glyph"):
+        drawn = view(home, "--width", "100")
+        assert all(glyph in drawn for glyph in "?▶…‖")
+    with and_("the brief names the question first, and its counts add the new states"):
+        brief = view(home, "--brief").splitlines()
+        assert brief[0] == "Needs you 1: Allow Bash: Make a denied file (DOCS)"
+        assert brief[-1] == "Running 1 · done today 0 · needs you 1 · waits on a chat 1 · held 1"
+
+
+@pytest.mark.parametrize("record", ["{not json", "[1, 2]"])
+def test_a_bad_chat_record_still_lets_later_parts_hold_a_question(tasks_on, record):
+    home = tasks_on
+    with given("away_guard holds questions, and hub's record of the asking chat is damaged"):
+        home.hubctl("on", "away_guard")
+        set_clock(home, "2026-03-02T08:00:00Z")
+        prompt(home, "Add the layout test, then wait for me.")
+        set_clock(home, "2026-03-02T09:01:00Z")
+        folder = os.path.join(home.state, "sessions")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, f"{SENDER}.json"), "w") as handle:
+            handle.write(record)
+    with when("that chat opens a question dialog with no title in the hook input"):
+        result = send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
+    with then("the dialog is still held and the task list has no question"):
+        assert result.refused and listed(home) == []
+    with and_("the same chat's next prompt runs through every part without an error"):
+        prompt(home, "Go on.", session=SENDER)
