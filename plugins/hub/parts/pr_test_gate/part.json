@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "pr_test_gate",
+  "family": "gates",
+  "kind": "hook",
+  "default": "on",
+  "privacy": "guard",
+  "runs_in": ["claude_code"],
+  "reason_not_in": {"cursor": "It reads Claude Code's shell calls and the test reports hub records for them."},
+  "handlers": {"PreToolUse": {"tools": ["Bash"]}},
+  "does": "Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report. A new PR also needs a body that says how it was tested and what was not.",
+  "children": [
+    {"id": "report", "default": "on", "signals": ["blocked"],
+     "does": "Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report."},
+    {"id": "body", "default": "on", "signals": ["blocked"],
+     "does": "Stops a new PR or a body edit whose body does not say how it was tested and what was not."}
+  ]
+}

@@ -432,8 +432,10 @@ def test_everyday_lines_with_substitutions_and_brackets_still_run(home, tool):
 
 
 def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home, tool):
-    with given("hub is installed with the gate at warn, and a notes file that holds a home path"):
+    with given("hub is installed with the gate at warn and the PR test gate off, and a notes file that holds a "
+               "home path"):
         home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
         write(home, "notes.md", "See /home/sam/n.md\n")
     with when("Claude feeds a shell a script whose public steps hold a home path"):
         private = {
@@ -511,8 +513,9 @@ def test_glued_messages_repo_and_label_descriptions_and_text_release_assets_are_
 
 
 def test_a_public_command_inside_a_command_substitution_is_checked_like_any_other_command(home, tool):
-    with given("hub is installed with the gate at warn"):
+    with given("hub is installed with the gate at warn and the PR test gate off"):
         home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
     with when("Claude runs a public command inside $(...) or backticks, wherever the substitution stands"):
         private = {
             "assignment": "URL=\"$(gh pr create --title Fix --body 'See /home/sam/a.md')\"",

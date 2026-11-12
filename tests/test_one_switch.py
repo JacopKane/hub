@@ -537,9 +537,10 @@ def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits(
 
 
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
-    with given("hub is installed with the em dash check on, and a PR body file holds a dash"):
+    with given("hub is installed with the em dash check on and the PR test gate off, and a PR body file holds a dash"):
         home.install()
         home.hubctl("on", f"{GATE}.dashes")
+        home.hubctl_from_mod("off", "pr_test_gate")
         with open(os.path.join(home.work, "body.md"), "w") as handle:
             handle.write(f"Adds the thing {DASH} finally\n")
     with when("Claude creates a PR from that file, comments on an issue and posts a review comment"):
