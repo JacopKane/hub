@@ -1559,7 +1559,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "id": "humanize",
           "name": "humanize",
           "depth": 0,
-          "does": "A writing skill that rewrites model text so a person can read it once and remember it.",
+          "does": "Hands writing work to the user's own writing skill, or says in one line how to add one.",
           "value": "off",
           "effective": "off",
           "runs": false,
@@ -1579,35 +1579,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           ],
           "waits_for": [],
           "new": false,
-          "children": [
-            {
-              "id": "humanize.em_dash",
-              "name": "em_dash",
-              "depth": 1,
-              "does": "What the skill does with an em dash. warn points out each one and leaves it, rewrite turns each into an ordinary sentence, and allow says nothing.",
-              "value": "warn",
-              "effective": "warn",
-              "runs": false,
-              "by": "default",
-              "scope": "shipped",
-              "relevant": true,
-              "hidden_because": null,
-              "cost": "",
-              "next_session": false,
-              "claude_code_only": false,
-              "stage": null,
-              "kind": "option",
-              "type": "choice",
-              "values": [
-                "warn",
-                "rewrite",
-                "allow"
-              ],
-              "waits_for": [
-                "humanize"
-              ]
-            }
-          ]
+          "children": []
         },
         {
           "id": "link_check",

@@ -918,7 +918,7 @@ for (const bodyColumns of [40, 100, 140]) {
     const buttons = drawn.filter(node => node.type === 'Button').map(node => String(node.key))
     expect(buttons.filter(key => !pressed.includes(key))).toEqual([])
     expect(drawn.filter(node => node.type === 'Select').map(node => String(node.key)).filter(key => !picked.includes(key))).toEqual([])
-    expect(picked).toHaveLength(10)
+    expect(picked).toHaveLength(9)
     expect(PICKER_DAY9.families.map(family => `family:${family.family}`).filter(key => !pressed.includes(key))).toEqual([])
     expect(pressed).toContain('undo')
     await ui.unmount()
