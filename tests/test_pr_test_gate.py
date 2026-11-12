@@ -695,13 +695,15 @@ def test_it_runs_through_hubs_dispatcher_for_bash_and_monitor_calls_until_the_us
         assert quiet(bash(home, "git push"))
 
 
-def slow_git(home, seconds):
-    """A git first on PATH that waits before it runs the real git."""
+def slow_git(home, seconds, log_seconds=None):
+    """A git first on PATH that waits before it runs the real git, and git log waits its own time if given."""
     real = shutil.which("git", path=home.env["PATH"])
     folder = os.path.join(home.root, "slow-bin")
     os.makedirs(folder, exist_ok=True)
+    wait = f"sleep {seconds}" if log_seconds is None else (
+        f'if [ "$1" = log ]; then sleep {log_seconds}; else sleep {seconds}; fi')
     with open(os.path.join(folder, "git"), "w") as handle:
-        handle.write(f"#!/bin/sh\nsleep {seconds}\nexec {shlex.quote(real)} \"$@\"\n")
+        handle.write(f"#!/bin/sh\n{wait}\nexec {shlex.quote(real)} \"$@\"\n")
     os.chmod(os.path.join(folder, "git"), 0o755)
     return folder + os.pathsep + home.env["PATH"]
 
@@ -740,8 +742,14 @@ def test_a_slow_lookup_stays_inside_the_hooks_time(home):
         assert took < 12, took
     with when("every git call takes 1.5 seconds and one push names two branches"):
         result, took = timed(home, "git push origin feature side", slow_git(home, 1.5))
-    with then("no single call is too slow, but the shared time runs out, and the answer still comes in under "
-              "12 seconds"):
+    with then("no single call is too slow, but the gate's own 5 seconds run out, so the answer comes in under "
+              "9 seconds"):
+        assert says(home, result, "slow.md"), result.reason
+        assert took < 9, took
+    with when("the text gate's git log takes 9 seconds before this gate starts, and every other git call 1.5"):
+        result, took = timed(home, "git push", slow_git(home, 1.5, log_seconds=9))
+    with then("this gate gets only the time the hook has left, refuses as too slow, and the whole answer still "
+              "comes in under 12 seconds"):
         assert says(home, result, "slow.md"), result.reason
         assert took < 12, took
 

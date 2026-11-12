@@ -37,6 +37,9 @@ GATE_MODULE = "hub_part_public_text_gate"
 REPORT_MODULE = "hub_part_pr_test_gate_report"
 CHECK_BODY_MODULE = "hub_part_pr_check_body"
 DEADLINE = 5.0  # seconds for all lookups of one call
+# Seconds from when hub's parts start answering until this gate's lookups must end. The hook may run
+# for 15 seconds, and the gates before this one, such as the text gate's git log, use some of that.
+PARTS_SECONDS = 10.0
 GIT_SECONDS = 2.0
 GH_SECONDS = 3.0
 RELEVANT = {"push", "pr", "wrapped"}
@@ -121,6 +124,11 @@ class Lookups:
         self.deadline = time.monotonic() + seconds
         self.cache = {}
 
+    @classmethod
+    def inside_the_hook(cls, parts_started):
+        """Lookups whose deadline is the gate's own, or what the hook has left after the parts before it."""
+        return cls(seconds_for_lookups(time.monotonic() - parts_started))
+
     def run(self, words, cwd, cap):
         """(exit code, output, error), or None when the call took longer than it may."""
         left = self.deadline - time.monotonic()
@@ -159,6 +167,10 @@ class Lookups:
         if done[0] != 0:
             return None, (done[2].strip().splitlines() or ["gh failed"])[0][:120]
         return done[1], ""
+
+
+def seconds_for_lookups(parts_took):
+    return min(DEADLINE, PARTS_SECONDS - parts_took)
 
 
 # Reading the command
@@ -584,7 +596,7 @@ def report_stop(branch, commit, cwd, lookups):
 def check(command_line, cwd, flags, answer):
     report_on = flags.runs(f"{PART}.report")
     command, steps = read_steps(command_line, cwd)
-    lookups = Lookups()
+    lookups = Lookups.inside_the_hook(answer.started)
     needed, candidates = [], []
     for step in steps:
         if os.path.basename(step.words[0]) == "git":

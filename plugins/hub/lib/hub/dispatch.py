@@ -101,6 +101,7 @@ class Answer:
     """What the handlers of one event say, before it is put in a tool's keys."""
 
     def __init__(self):
+        self.started = time.monotonic()  # so a slow part can leave its lookups when the hook's time runs short
         self.refusal = None
         self.question = None
         self.warnings = []
