@@ -322,6 +322,23 @@ def test_a_repos_pr_template_wins_over_the_hub_shape_but_a_template_without_a_te
         assert [(finding["kind"], finding.get("heading")) for finding in untested["findings"]] \
             == [("missing_heading", "How it was tested")]
         assert untested["headings_from"] == os.path.join(".github", "PULL_REQUEST_TEMPLATE", "feature.md")
+    for first, second in (("Testing", "QA"), ("How to test", "Verification")):
+        with when(f"the folder also holds two templates that differ only in their testing heading, "
+                  f"{first} and {second}"):
+            for name, heading in (("a_feature.md", first), ("b_fix.md", second)):
+                with open(os.path.join(folder, name), "w") as handle:
+                    handle.write(f"## Summary\n\n## {heading}\n")
+            result = findings(home, f"## Summary\n\nAdds a retry.\n\n## {second}\n\n"
+                                    "Ran the upload scenario. Not tested on a phone.\n")
+        with then(f"a body that follows the {second} template passes and names that template, not the first by name"):
+            assert result["findings"] == [], second
+            assert result["headings_from"] == os.path.join(".github", "PULL_REQUEST_TEMPLATE", "b_fix.md")
+            assert result["tested"] == {"heading": second, "near_miss": False}
+        with and_(f"a body that follows the {first} template still names that one"):
+            result = findings(home, f"## Summary\n\nAdds a retry.\n\n## {first}\n\n"
+                                    "Ran the upload scenario. Not tested on a phone.\n")
+            assert result["findings"] == [], first
+            assert result["headings_from"] == os.path.join(".github", "PULL_REQUEST_TEMPLATE", "a_feature.md")
     with when("the user turns the test gate method off"):
         home.hubctl("off", "pr.instructions.test_gate")
     with then("the template alone decides again, and the same body passes"):
@@ -383,11 +400,17 @@ def test_a_tested_part_must_say_what_was_not_tested_near_misses_pass_and_the_tes
         sibling = only_passing.replace("All tests pass.\n", "All tests pass.\n\n### Notes\n\nNot tested on a phone.\n")
         for body in (elsewhere, sibling):
             assert kinds(findings(home, body)) == [("missing_not_tested", heading_line)]
+    with and_("a not-tested line inside a code block or a comment in the part does not count either"):
+        fenced = only_passing.replace("All tests pass.\n", "All tests pass.\n\n```\nNot tested on a phone.\n```\n")
+        commented = only_passing.replace("All tests pass.\n", "All tests pass.\n<!-- Not tested on a phone. -->\n")
+        for body in (fenced, commented):
+            assert kinds(findings(home, body)) == [("missing_not_tested", heading_line)]
     with and_("one under a deeper heading inside the part counts, and so does each way of saying it"):
         deeper = only_passing.replace("All tests pass.\n", "All tests pass.\n\n#### Gaps\n\nThe phone app is untested.\n")
         assert findings(home, deeper)["findings"] == []
         for words in ("Un-tested on Windows.", "The phone app is left out.", "The migration was not run.",
-                      "No BDD scenarios, because only texts changed.", "No smoke run, the repo has none."):
+                      "No BDD scenarios, because only texts changed.", "No smoke run, the repo has none.",
+                      "We did not test the phone app.", "We didn't test the phone app."):
             assert findings(home, only_passing.replace("All tests pass.", words))["findings"] == [], words
     for near in NEAR_MISSES:
         with when(f"the tested part is headed {near}"):
