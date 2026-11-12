@@ -125,7 +125,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 ## Feature flags
 
 <details>
-<summary>All 34 parts and how they start</summary>
+<summary>All 35 parts and how they start</summary>
 
 | Part | What it does | Starts | Runs in | To switch it, say |
 |---|---|---|---|---|
@@ -160,6 +160,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | coordinator | One chat you talk to, which forwards work and relays questions | off | Claude Code | "turn on the coordinator" |
 | chat_board | Shows every chat as busy, idle, offline or needs you | off | Claude Code | "turn on the chat board" |
 | chat_names | Sends a message by chat name to the live chat of that name | off | Claude Code | "turn on chat names" |
+| task_list | Lists each chat's agents, background jobs, questions, waits and timers, with their state and cost so far | off | Claude Code | "turn on the task list" |
 | permission_relay | Shows the coordinator the permission prompts waiting in other chats. It approves nothing | off | Claude Code | "turn on the permission relay" |
 | queue | Holds a message to an idle chat for a short time, so two quick messages wake it once | off | Claude Code | "turn on the queue" |
 | restart | Restarts the running chats, each under its own name | off | Claude Code | "turn on restart" |
