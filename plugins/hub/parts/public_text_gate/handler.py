@@ -530,6 +530,8 @@ def read_bytes(path, cwd):
     if UNREADABLE in path or path in STDIN_PATHS:
         return None
     full = os.path.join(cwd, os.path.expanduser(path))
+    if UNREADABLE in full:  # a relative path in a folder the shell fills in
+        return None
     try:
         if not stat.S_ISREG(os.stat(full).st_mode):
             return None
@@ -608,7 +610,8 @@ def git_target(words, command):
     while index < len(words):
         word = words[index]
         if word == "-C" and index + 1 < len(words):
-            cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
+            folder = words[index + 1]
+            cwd = os.path.join(cwd, folder if UNREADABLE in folder else os.path.expanduser(folder))
             index += 2
         elif word in GIT_VALUE_OPTIONS and index + 1 < len(words):
             index += 2

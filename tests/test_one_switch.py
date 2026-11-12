@@ -494,13 +494,24 @@ def test_a_push_whose_remote_branch_or_folder_the_shell_fills_in_is_refused_as_u
         home.git("remote", "add", "origin", bare)
         home.git("push", "-q", "-u", "origin", "main")
         home.git("commit", "-q", "--allow-empty", "-m", "Late change")
-    pushes = ["git push origin $BRANCH", "git push $REMOTE main", "git -C $DIR push",
+    pushes = ["git push origin $BRANCH", "git push $REMOTE main", "git -C $DIR push", "git -C ~$DIR push",
               "git push origin ${BRANCH}:main", "git push origin $(git branch --show-current)"]
     with when("Claude sends pushes whose remote, branch or folder comes from a variable or a substitution"):
         results = {push: home.hook(tool, "PreToolUse", push) for push in pushes}
     with then("the gate reads each one, finds it can not tell the commits, and refuses it as unreadable"):
         for push, result in results.items():
             assert result.refused and result.findings == ["unreadable"], push
+
+
+def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
+    with given("a repo with a message file in it"):
+        home.install()
+        with open(os.path.join(home.root, "body.txt"), "w") as handle:
+            handle.write("Plain change\n")
+    with when("Claude commits with that message file, inside a folder that comes from a variable"):
+        result = home.hook(tool, "PreToolUse", "git -C $DIR commit -F body.txt")
+    with then("the gate can not read the message before the command runs and refuses it as unreadable"):
+        assert result.refused and result.findings == ["unreadable"]
 
 
 def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits():
