@@ -8,6 +8,7 @@
   "runs_in": ["claude_code"],
   "reason_not_in": {"cursor": "It reads Claude Code's shell calls and the test reports hub records for them."},
   "handlers": {"PreToolUse": {"tools": ["Bash"]}},
+  "commands": {"pr-tested": {"script": "report.py", "does": "Record how a commit was tested in the report the PR test gate reads, with pr-tested run, texts or show."}},
   "does": "Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report. A new PR also needs a body that says how it was tested and what was not.",
   "children": [
     {"id": "report", "default": "on", "signals": ["blocked"],

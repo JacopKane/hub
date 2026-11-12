@@ -477,7 +477,7 @@ def test_every_refusal_teaches_the_rule_and_a_subagent_gets_the_same_answer(home
     with then("both get the same refusal"):
         assert main.refused and agent.reason == main.reason
     with and_("it states the rule, both ways to record a report with hub's step filled in, and the tested part"):
-        for words in ("draft or not", "outermost seam", "pr-tested run --scenarios", "pr-tested texts --base",
+        for words in ("draft or not", "outermost seam", "pr-tested run --scenario '<command>' (once for each scenario)", "pr-tested texts --base",
                       "--no-smoke", '"How it was tested"'):
             assert words in main.reason, words
         assert "{{step}}" not in main.reason and "python3 -I " in main.reason
