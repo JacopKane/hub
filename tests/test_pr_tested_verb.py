@@ -6,6 +6,8 @@ asks about open PRs.
 """
 import json
 import os
+import re
+import shlex
 import threading
 import time
 
@@ -220,3 +222,36 @@ def test_reports_land_in_the_common_folder_whole_and_old_ones_are_pruned(home):
         assert sorted(os.listdir(folder)) == sorted(["b" * 40 + ".json", feature + ".json", feature + ".log"])
     with and_("the report older than 60 days is gone, and the newer one stays"):
         assert not os.path.exists(stale) and os.path.exists(recent)
+
+
+def test_the_pr_skill_gives_the_pr_tested_steps_and_the_step_it_gives_records_the_report_the_push_needs(home):
+    with given("branch feature with an open PR, a new commit that has no report, and hub's pr skill built"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        before = bash(home, "git push")
+        skill = os.path.join(home.root, ".claude", "skills", "hub-pr", "SKILL.md")
+    with when("Claude reads the tested steps in the built skill"):
+        with open(skill) as handle:
+            text = handle.read()
+        found = re.search(r"`(\S+ -I \S+) pr-tested run --scenario '<command>' --smoke '<command>' "
+                          r"--not-tested '<what, and why>'`", text)
+    with then("they give the run step with hub's step filled in, the texts step and the step that prints the part"):
+        assert found, text
+        step = found.group(1)
+        assert f"`{step} pr-tested texts --base <branch> --check '<command>' --not-tested '<what, and why>'`" in text
+        assert f"`{step} pr-tested show --body`" in text
+    with when("Claude runs the run step as the skill gives it, with its own commands"):
+        done = home.run([*shlex.split(step), "pr-tested", "run", "--scenario", PASSING, "--smoke", SMOKE,
+                         "--not-tested", LEFT_OUT], check=False)
+        part = home.run([*shlex.split(step), "pr-tested", "show", "--body"], check=False).stdout
+    with then("the push the gate refused now runs, and the show step prints the tested part"):
+        assert done.returncode == 0, done.stderr
+        assert says(home, before, "no_report.md", short=feature[:7], branch="feature"), before.reason
+        assert quiet(bash(home, "git push"))
+        assert part.startswith("### How it was tested\n") and f"- {LEFT_OUT}" in part
+    with when("the user turns the test gate method off"):
+        home.hubctl("off", "pr.instructions.test_gate")
+    with then("the built skill no longer gives the pr-tested steps"):
+        with open(skill) as handle:
+            assert "pr-tested" not in handle.read()
