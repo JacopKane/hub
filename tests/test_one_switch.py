@@ -307,9 +307,14 @@ def cpu_seconds_of_children():
 def test_the_dispatcher_does_less_than_200_ms_of_work_with_every_part_on(home):
     with given("every part in the manifests is on"):
         home.install()
-        for part in sorted(os.listdir(os.path.join(home.plugin, "parts"))):
-            home.hubctl("on", part)
+        parts = os.path.join(home.plugin, "parts")
+        for part in sorted(os.listdir(parts)):
+            if os.path.isfile(os.path.join(parts, part, "part.json")):
+                home.hubctl("on", part)
         home.hubctl("set", "core.private_words", "Quillbrook")
+        manifests = [name for name in os.listdir(parts) if os.path.isfile(os.path.join(parts, name, "part.json"))]
+        header = json.loads(home.hubctl("screen", "--json").stdout)["header"]
+        assert len(manifests) > 30 and header["parts_on"] == header["parts_total"] == len(manifests) - 1, header
         data = home.hook_input("claude_code", "PreToolUse", commit("A clean message"))
         home.send("claude_code", "PreToolUse", data)
     with when("the dispatcher runs 15 times as a real process on a recorded PreToolUse input"):
