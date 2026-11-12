@@ -21,9 +21,8 @@ for folder in (LIB, PART_DIR):
     if folder not in sys.path:
         sys.path.insert(0, folder)
 
-from hub import clock  # noqa: E402
+from hub import clock, resolve  # noqa: E402
 from hub.clock import local as zoned_time  # noqa: E402
-from read_flags import flags as read_flags  # noqa: E402
 from texts import text  # noqa: E402
 
 USAGE = "usage: pr-night"
@@ -65,7 +64,7 @@ def main(words):
     if words:
         print(USAGE, file=sys.stderr)
         return 2
-    flags = read_flags(os.getcwd())
+    flags = resolve.in_memory(os.getcwd())["claude_code"]["flags"]
     print(json.dumps(state(flags, clock.epoch()), indent=2))
     return 0
 

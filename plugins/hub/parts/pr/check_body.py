@@ -37,8 +37,8 @@ for folder in (LIB, PART_DIR):
     if folder not in sys.path:
         sys.path.insert(0, folder)
 
+from hub import resolve  # noqa: E402
 from hub.settings import find_repo  # noqa: E402
-import read_flags  # noqa: E402
 from texts import text  # noqa: E402
 
 USAGE = "usage: pr-check <file> [--json], where - reads the body from stdin"
@@ -261,7 +261,7 @@ def check(body, cwd):
     """{"findings": [{"kind", "line"}], "notice": a line or None, "headings_from": "hub" or a path,
     "tested": {"heading": the testing heading found or None, "near_miss": bool}}."""
     try:
-        flags = read_flags.flags(cwd)
+        flags = resolve.in_memory(cwd)["claude_code"]["flags"]
     except Exception:  # the check still runs with the shipped lists and every method on
         flags = {}
     testing_needed = (flags.get("pr.instructions.test_gate") or {"runs": True}).get("runs")
