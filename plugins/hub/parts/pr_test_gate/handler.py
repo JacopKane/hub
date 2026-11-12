@@ -53,6 +53,17 @@ GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
 GH_ALIASES = {("pr", "new"): ("pr", "create")}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
+CONFIG_OPTIONS = {"-c", "--config-env"}
+CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
+PUSH_SETTING_SECTIONS = {"push", "remote", "url", "branch", "include", "includeif"}
+PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.merge)$"
+FALSE_WORDS = {"false", "no", "off", "0"}
+PUSH_CONFIG_WHY = {
+    "matching": "the repo's push.default sends every branch that has a match on the remote",
+    "refspec": "the remote has its own setting for what a push sends",
+    "mirror": "the remote is set to mirror every branch",
+    "option": "git -c, --config-env or a GIT_CONFIG variable changes its push settings for this one command",
+}
 WHY = {
     "parse": "the line does not parse",
     "inside": "it runs inside another command",
@@ -79,6 +90,10 @@ class Stop(Exception):
 
 def unreadable(why):
     return Stop("unreadable_push.md", why=WHY[why])
+
+
+def push_settings_stop(why):
+    return Stop("push_config.md", why=PUSH_CONFIG_WHY[why])
 
 
 # Modules loaded by path, once per process
@@ -256,7 +271,7 @@ def git_place(step):
     cwd, words, index = step.cwd, step.words, 1
     while index < len(words):
         word = words[index]
-        if word in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
+        if word in ("-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
             if unreadable_mark() in words[index + 1]:
                 raise unreadable("word")
             if word in OTHER_REPO_OPTIONS:
@@ -321,6 +336,8 @@ def push_words(rest):
 def pushed(step, lookups):
     """[(branch, commit, cwd)] the push sends to a GitHub branch that is not the default, with something new."""
     cwd, words = git_place(step)
+    if sets_push_settings_for_one_command(step, words):
+        raise push_settings_stop("option")
     positional, quiet, tags = push_words(words[1:])
     specs = [spec[1:] if spec.startswith("+") else spec for spec in positional[1:]]
     if not quiet and ":" in specs:
@@ -337,11 +354,12 @@ def pushed(step, lookups):
         if branch is None:
             raise unreadable("detached")
         remote = (lookups.git(cwd, "config", f"branch.{branch}.pushRemote")
+                  or lookups.git(cwd, "config", "remote.pushDefault")
                   or lookups.git(cwd, "config", f"branch.{branch}.remote") or "origin")
     if not GITHUB.search(lookups.git(cwd, "ls-remote", "--get-url", remote) or ""):
         return []
     found = []
-    for spec in specs or ["HEAD"]:
+    for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch):
         source, _colon, target = spec.partition(":")
         if not source or "refs/tags/" in (source[:10], target[:10]):
             continue
@@ -366,6 +384,52 @@ def pushed(step, lookups):
             continue
         found.append((target, commit, cwd))
     return found
+
+
+def settings_set_by_options(options):
+    """The name=value settings that git's -c and --config-env options set, read from git's own options."""
+    separate = [value for option, value in zip(options, options[1:]) if option in CONFIG_OPTIONS]
+    attached = [option.split("=", 1)[1] for option in options if option.startswith("--config-env=")]
+    return separate + attached
+
+
+def names_a_push_setting(setting):
+    """Whether a setting such as push.default=matching may change where a push goes or what it sends."""
+    return setting.split("=", 1)[0].split(".", 1)[0].lower() in PUSH_SETTING_SECTIONS
+
+
+def sets_push_settings_for_one_command(step, words_after_options):
+    """Whether git's own options or the step's VAR=value words change push settings that the lookups can not see."""
+    options = step.words[1:len(step.words) - len(words_after_options)]
+    return (any(map(names_a_push_setting, settings_set_by_options(options)))
+            or any(map(CONFIG_VARIABLE.match, step.before)))
+
+
+def push_settings(cwd, lookups):
+    """[(name, value)] of the repo's settings that decide what a push with no branch named sends."""
+    listed = lookups.git(cwd, "config", "--get-regexp", PUSH_SETTINGS) or ""
+    return [tuple((line.split(" ", 1) + [""])[:2]) for line in listed.splitlines()]
+
+
+def last_value(settings, name):
+    return next((value for key, value in reversed(settings) if key == name), None)
+
+
+def is_true(value):
+    return value is not None and value.lower() not in FALSE_WORDS
+
+
+def specs_of_a_bare_push(settings, remote, branch):
+    """The refspecs a push that names no branch sends, by the repo's settings, or a stop when they send more."""
+    if last_value(settings, f"remote.{remote}.push") is not None:
+        raise push_settings_stop("refspec")
+    if is_true(last_value(settings, f"remote.{remote}.mirror")):
+        raise push_settings_stop("mirror")
+    mode = last_value(settings, "push.default")
+    if mode == "matching":
+        raise push_settings_stop("matching")
+    upstream = last_value(settings, f"branch.{branch}.merge") if mode in ("upstream", "tracking") else None
+    return [f"HEAD:{short(upstream)}"] if upstream else ["HEAD"]
 
 
 def short(ref):

@@ -277,6 +277,88 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
         assert len(gh_calls(home)) == calls
 
 
+def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_one_command_is_judged_or_refused(home):
+    with given("branch feature with open PR 7 and a new commit, and a worktree on branch topic whose upstream is "
+               "review, with open PR 9, and a new commit; neither has a report"):
+        bare = with_github(home)
+        feature = pushed_branch(home)
+        topic_folder = worktree(home, "topic", "-b", "review", "main")
+        change(home, message="Start review", cwd=topic_folder)
+        home.git("push", "-q", "-u", "origin", "review", cwd=topic_folder)
+        home.git("branch", "-m", "topic", cwd=topic_folder)
+        topic = change(home, cwd=topic_folder)
+        fake_gh(home, open={"feature": 7, "review": 9})
+    with when("feature's own remote is a local folder while the repo's push remote is origin, and Claude pushes "
+              "with no remote named"):
+        home.git("remote", "add", "local", bare)
+        home.git("config", "branch.feature.remote", "local")
+        home.git("config", "remote.pushDefault", "origin")
+        to_push_remote = bash(home, "git push")
+        home.git("config", "branch.feature.remote", "origin")
+        home.git("config", "--unset", "remote.pushDefault")
+    with then("it is judged as the push to GitHub it is, and refused for feature's commit"):
+        assert says(home, to_push_remote, "no_report.md", short=feature[:7], branch="feature"), to_push_remote.reason
+    with when("push.default is upstream and Claude pushes topic with no branch named"):
+        home.git("config", "push.default", "upstream")
+        to_upstream = bash(home, "git push", cwd=topic_folder)
+        home.git("config", "--unset", "push.default")
+    with then("it is judged as the push to review it is, and refused for topic's commit on review"):
+        assert says(home, to_upstream, "no_report.md", short=topic[:7], branch="review"), to_upstream.reason
+    with when("feature gets a passing report"):
+        record(home)
+    settings = {"push.default": ("matching", "the repo's push.default sends every branch that has a match on "
+                                             "the remote"),
+                "remote.origin.push": ("refs/heads/*:refs/heads/*", "the remote has its own setting for what a "
+                                                                    "push sends"),
+                "remote.origin.mirror": ("true", "the remote is set to mirror every branch")}
+    for name, (value, why) in settings.items():
+        with when(f"the repo sets {name} to {value} and Claude pushes with no branch named, then names it"):
+            home.git("config", name, value)
+            bare_pushes = {form: bash(home, form) for form in ["git push", "git push origin", "git push -u origin"]}
+            named = bash(home, "git push origin feature")
+            home.git("config", "--unset", name)
+        with then("each push with no branch named is refused for that setting, and the named push runs"):
+            for form, result in bare_pushes.items():
+                assert says(home, result, "push_config.md", why=why), (name, form, result.reason)
+            assert quiet(named), (name, named.reason)
+    with when("the repo sets remote.origin.mirror to off and Claude pushes with no branch named"):
+        home.git("config", "remote.origin.mirror", "off")
+        mirror_off = bash(home, "git push")
+        home.git("config", "--unset", "remote.origin.mirror")
+    with then("it runs, since only feature is sent"):
+        assert quiet(mirror_off), mirror_off.reason
+    one_command = ["git -c push.default=matching push",
+                   "git -c Remote.origin.url=https://github.com/acme/other.git push origin feature",
+                   "git -c url.https://github.com/acme/other.git.pushInsteadOf=https://github.com/acme/demo.git "
+                   "push origin feature",
+                   "git -c branch.feature.pushRemote=local push",
+                   "git -c include.path=../other.cfg push origin feature",
+                   "git --config-env push.default=PUSH_DEFAULT push",
+                   "git --config-env=remote.origin.pushurl=OTHER_URL push origin feature",
+                   "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=matching git push",
+                   "GIT_CONFIG_PARAMETERS=\"'push.default'='matching'\" git push",
+                   "GIT_CONFIG_GLOBAL=../other.cfg git push origin feature"]
+    one_command_why = "git -c, --config-env or a GIT_CONFIG variable changes its push settings for this one command"
+    with when("Claude changes push settings for one command with -c, --config-env or a GIT_CONFIG variable"):
+        results = {form: bash(home, form) for form in one_command}
+    with then("each is refused, since the gate's own lookups can not see that setting, and self-protection "
+              "answers first for --config-env, since it reads a value hub can not see"):
+        for form, result in results.items():
+            if "--config-env" in form:
+                assert result.refused and "(self_protection.lowering)" in result.reason, (form, result.reason)
+            else:
+                assert says(home, result, "push_config.md", why=one_command_why), (form, result.reason)
+    with when("self-protection is off and Claude sends the same pushes"):
+        home.hubctl_from_mod("off", "self_protection")
+        results = {form: bash(home, form) for form in one_command}
+    with then("this gate refuses each one for its one-command setting"):
+        for form, result in results.items():
+            assert says(home, result, "push_config.md", why=one_command_why), (form, result.reason)
+    with and_("a one-command setting that does not touch pushes leaves the push to be judged as usual"):
+        for form in ["git -c core.quotepath=off push origin feature", "git -c user.name=Ann push"]:
+            assert quiet(bash(home, form)), form
+
+
 def graphql_call(query, *fields):
     return " ".join(["gh api graphql -f", shlex.quote("query=" + query), *fields])
 
