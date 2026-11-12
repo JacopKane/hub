@@ -12,8 +12,8 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 8,
-    "parts_total": 35,
+    "parts_on": 9,
+    "parts_total": 36,
     "start_text": 1210
   },
   "strip": [
@@ -502,8 +502,8 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "gates",
-      "parts_on": 2,
-      "parts_total": 5,
+      "parts_on": 3,
+      "parts_total": 6,
       "parts": [
         {
           "id": "chrome_lock",
@@ -513,6 +513,24 @@ export const DAY9: HubScreen = /* json */ {
           "value": "off",
           "effective": "off",
           "runs": false,
+          "by": "default",
+          "scope": "shipped",
+          "relevant": true,
+          "hidden_because": null,
+          "cost": "",
+          "next_session": false,
+          "claude_code_only": true,
+          "stage": null,
+          "children": []
+        },
+        {
+          "id": "pr_test_gate",
+          "name": "pr_test_gate",
+          "depth": 0,
+          "does": "Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report. A new PR also needs a body that says how it was tested and what was not.",
+          "value": "on",
+          "effective": "on",
+          "runs": true,
           "by": "default",
           "scope": "shipped",
           "relevant": true,
