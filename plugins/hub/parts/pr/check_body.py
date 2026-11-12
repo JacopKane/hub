@@ -7,9 +7,13 @@ never changes the body. The kinds:
 
 - missing_heading: a heading of the body shape is not there. The shape comes
   from the repo's PR template when it has one, else from text/body.md. While
-  pr.instructions.test_gate runs, a template without a testing heading
-  (see TESTING_NAMES) also needs the "How it was tested" heading of
-  text/body.md.
+  pr.instructions.test_gate runs, tested_part() looks for the testing part
+  instead. It takes the "How it was tested" heading of text/body.md, a near
+  miss of it (see NEAR_MISSES) or the template's own testing heading (see
+  TESTING_NAMES). When the body has none, the missing heading is the
+  template's testing heading, else hub's.
+- missing_not_tested: the testing part has no line on what was not tested.
+  Its line is the heading's.
 - mention: an @ before a name, outside code and links.
 - bare_reference: a PR, issue or ticket without a link, found the way
   link_check finds one in a reply.
@@ -48,6 +52,12 @@ TESTING_NAMES = {"testing", "tests", "test plan", "how to test", "how it was tes
                  "testing done", "testing performed", "testing instructions", "testing steps", "testing notes",
                  "test steps", "test instructions", "steps to test", "manual testing", "qa steps", "qa notes",
                  "qa instructions", "verification steps"}
+# Body headings that pass as hub's "How it was tested", with a reminder to use hub's wording.
+NEAR_MISSES = {"how it s tested", "how its tested", "how this was tested", "how was it tested", "how we tested",
+               "tested", "testing", "tests", "test plan"}
+# A line on what was not tested, searched in the testing part up to the next heading of its level or higher.
+NOT_TESTED = re.compile(r"(?i)\b(not|un)[ -]?tested\b|\bleft out\b|\bnot (covered|run|checked)\b"
+                        r"|\bno (smoke run|bdd|scenarios?)\b")
 # Unlike link_check's LINK, this one keeps the link text, so a mention in it still counts.
 LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 MENTION = re.compile(r"(?<![\w@.+/-])@[A-Za-z0-9][\w-]*")
@@ -140,12 +150,31 @@ def headings_of(body):
     return [match.group(1).strip() for match in map(HEADING.match, plain_lines(body)) if match]
 
 
+def headings_with_lines(body):
+    """[(line number, level, heading)] of the body, outside code and comments."""
+    found = []
+    for number, line in enumerate(plain_lines(body), 1):
+        match = HEADING.match(line)
+        if match:
+            found.append((number, len(line.strip()) - len(line.strip().lstrip("#")), match.group(1).strip()))
+    return found
+
+
 def same(heading):
     return " ".join(heading.lower().rstrip(":").split())
 
 
+def words_of(heading):
+    return " ".join(re.findall(r"[a-z0-9]+", heading.lower()))
+
+
 def about_testing(heading):
-    return " ".join(re.findall(r"[a-z0-9]+", heading.lower())) in TESTING_NAMES
+    return words_of(heading) in TESTING_NAMES
+
+
+def hub_shape():
+    with open(os.path.join(PART_DIR, "text", "body.md"), encoding="utf-8") as handle:
+        return headings_of(handle.read())
 
 
 def templates(root):
@@ -169,33 +198,65 @@ def templates(root):
     return shapes
 
 
-def missing_headings(body, cwd, testing_needed):
-    """(the headings the body lacks, where the shape came from).
+def closest_shape(body, cwd, testing_needed):
+    """(the headings the body lacks, where the shape came from, that shape's testing headings).
 
-    testing_needed adds hub's testing heading to a template that has no testing heading.
+    While testing_needed, testing headings are left to tested_part(). Otherwise a template
+    keeps its own, and hub's shape drops its "How it was tested".
     """
     have = {same(heading) for heading in headings_of(body)}
-    with open(os.path.join(PART_DIR, "text", "body.md"), encoding="utf-8") as handle:
-        hub_headings = headings_of(handle.read())
     root = find_repo(cwd)
     shapes = [(where, headings_of(shape)) for where, shape in templates(root)] if root else []
     if not shapes:
-        shapes = [("hub", hub_headings)]
-    elif testing_needed:
-        tested = next((heading for heading in hub_headings if about_testing(heading)), None)
-        if tested:
-            shapes = [(where, headings if any(map(about_testing, headings)) else headings + [tested])
-                      for where, headings in shapes]
+        shapes = [("hub", hub_shape())]
     best = None
     for where, headings in shapes:
-        missing = [heading for heading in headings if same(heading) not in have]
+        testing = [heading for heading in headings if about_testing(heading)]
+        left_out = testing if testing_needed or where == "hub" else []
+        missing = [heading for heading in headings if heading not in left_out and same(heading) not in have]
         if best is None or len(missing) < len(best[0]):
-            best = (missing, where)
+            best = (missing, where, [] if where == "hub" else testing)
     return best
 
 
+def missing_headings(body, cwd, testing_needed):
+    """(the headings the body lacks, where the shape came from), without the testing part while testing_needed."""
+    missing, where, _testing = closest_shape(body, cwd, testing_needed)
+    return missing, where
+
+
+def tested_part(body, cwd, expected):
+    """{"findings": [...], "heading": the testing heading found or None, "near_miss": bool}.
+
+    expected says whether the body needs a testing part at all. The part counts under hub's
+    "How it was tested", a near miss of it, or the repo template's own testing heading, and
+    runs to the next heading of its level or higher. It needs a line on what was not tested.
+    """
+    if not expected:
+        return {"findings": [], "heading": None, "near_miss": False}
+    hub_tested = next(heading for heading in hub_shape() if about_testing(heading))
+    template_testing = closest_shape(body, cwd, True)[2]
+    exact = {words_of(heading) for heading in [hub_tested] + template_testing}
+    found = headings_with_lines(body)
+    match = next(((index, False) for index, (_, _, heading) in enumerate(found) if words_of(heading) in exact),
+                 None) or next(((index, True) for index, (_, _, heading) in enumerate(found)
+                                if words_of(heading) in NEAR_MISSES), None)
+    if match is None:
+        missing = template_testing[0] if template_testing else hub_tested
+        return {"findings": [{"kind": "missing_heading", "line": None, "heading": missing}],
+                "heading": None, "near_miss": False}
+    index, near_miss = match
+    line, level, heading = found[index]
+    end = next((number for number, next_level, _ in found[index + 1:] if next_level <= level), None)
+    part = plain_lines(body)[line:None if end is None else end - 1]
+    says_what_was_left = any(NOT_TESTED.search(part_line) for part_line in part)
+    findings = [] if says_what_was_left else [{"kind": "missing_not_tested", "line": line}]
+    return {"findings": findings, "heading": heading, "near_miss": near_miss}
+
+
 def check(body, cwd):
-    """{"findings": [{"kind", "line"}], "notice": a line or None, "headings_from": "hub" or a path}."""
+    """{"findings": [{"kind", "line"}], "notice": a line or None, "headings_from": "hub" or a path,
+    "tested": {"heading": the testing heading found or None, "near_miss": bool}}."""
     try:
         flags = read_flags.flags(cwd)
     except Exception:  # the check still runs with the shipped lists and every method on
@@ -204,6 +265,8 @@ def check(body, cwd):
     findings = []
     missing, headings_from = missing_headings(body, cwd, testing_needed)
     findings += [{"kind": "missing_heading", "line": None, "heading": heading} for heading in missing]
+    tested = tested_part(body, cwd, testing_needed)
+    findings += tested["findings"]
     tickets = TicketValues(flags)
     lines = plain_lines(body)
     for number, line in enumerate(body.split("\n"), 1):
@@ -218,7 +281,8 @@ def check(body, cwd):
             findings.append({"kind": "em_dash", "line": number})
     count = sum(len(WORD.findall(line)) for line in readable_lines(lines))
     notice = text("check_length.md", words=count) if count > WORDS_A_MINUTE else None
-    return {"findings": findings, "notice": notice, "headings_from": headings_from}
+    return {"findings": findings, "notice": notice, "headings_from": headings_from,
+            "tested": {"heading": tested["heading"], "near_miss": tested["near_miss"]}}
 
 
 def sentences(result):

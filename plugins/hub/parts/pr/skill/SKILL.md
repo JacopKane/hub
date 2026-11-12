@@ -104,7 +104,8 @@ Every push, to a draft PR too, waits until these steps are done.
 1. Write or change the scenarios before the code. A few fat behaviour scenarios that walk the real flow from end to end beat many small tests. Name the edge cases each one covers in its title, such as empty, huge or odd input or a failing service. Mock only the outermost seam, such as a paid or outside service.
 2. Check that each new scenario fails when the code is wrong.
 3. Run the scenarios, and the repo's smoke run when it has one. A failing or flaky scenario stops the push. Fix the code, or the scenario when it was wrong, and say which. Never skip, loosen or delete a scenario to make it pass.
-4. Fill the body's "How it was tested" part, and add one when the repo's template has none. Name the scenarios and the smoke run that ran, the mocks left and why, and what was not tested and why.
+4. Fill the body's "How it was tested" part, and add one when the repo's template has none. Name the scenarios and the smoke run that ran, the mocks left and why, and what was not tested and why. `{{step}} pr-check` flags a tested part that leaves out what was not tested.
+5. A PR with only texts or docs has no scenarios to run. Its tested part names the text checks that ran and says why no scenario ran.
 <!-- hub:end -->
 
 <!-- hub:section pr.instructions.writing_pass -->

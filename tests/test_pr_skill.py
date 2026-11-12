@@ -212,7 +212,7 @@ def test_every_text_the_skill_or_its_scripts_use_is_a_pr_text_and_each_text_is_u
         scripts = read(part_path(home, "check_body.py")) + read(part_path(home, "night.py"))
         folder = part_path(home, "text")
     with then("each text is quoted in the skill or read by a script, except the start-text rule lines"):
-        check_kinds = {"check_mention.md", "check_bare_reference.md", "check_em_dash.md"}
+        check_kinds = {"check_mention.md", "check_bare_reference.md", "check_em_dash.md", "check_missing_not_tested.md"}
         for name in sorted(os.listdir(folder)):
             if name == "rules.md" or name.startswith("rule_"):
                 continue
@@ -237,7 +237,8 @@ def test_a_body_that_misses_the_shape_or_tags_a_person_fails_by_kind_and_line(ho
                 "Mail sam@example.com, see [#13](https://github.com/acme/app/pull/13) "
                 "and `@types/node`.\n"                                # 5: none of these count
                 "```\n@sam #14\n```\n"                                # 6-8: code is not prose
-                "### To check it\n\nRun the tests.\n\n### How it was tested\n\nThe retry scenario.\n\n"
+                "### To check it\n\nRun the tests.\n\n"
+                "### How it was tested\n\nThe retry scenario. Not tested on a phone.\n\n"
                 "## What is decided\n\nThree tries.\n\n## Env changes\n\nNo env changes.\n")
     with when("the check runs on it"):
         done = pr_check(home, body)
@@ -295,14 +296,15 @@ def test_a_repos_pr_template_wins_over_the_hub_shape_but_a_template_without_a_te
     with when("a body with the template's headings is checked from a folder inside the repo"):
         inside = os.path.join(home.work, "src")
         os.makedirs(inside)
-        result = findings(home, "## Summary\n\nAdds a retry.\n\n## Testing\n\nRun the tests.\n", cwd=inside)
+        result = findings(home, "## Summary\n\nAdds a retry.\n\n## Testing\n\nRun the tests. Not tested on Windows.\n",
+                          cwd=inside)
     with then("no heading is missing, and the shape came from the template"):
         assert result["findings"] == [] and result["headings_from"] == os.path.join(".github",
                                                                                      "PULL_REQUEST_TEMPLATE.md")
     with when("a body in hub's shape is checked in that repo"):
         result = findings(home, good_body())
-    with then("it misses the template's headings"):
-        assert sorted(finding.get("heading") for finding in result["findings"]) == ["Summary", "Testing"]
+    with then("it misses the template's Summary, and hub's How it was tested stands in for the template's Testing"):
+        assert [finding.get("heading") for finding in result["findings"]] == ["Summary"]
     with when("the repo has a folder of templates instead, and the body matches one of them"):
         os.remove(os.path.join(home.work, ".github", "PULL_REQUEST_TEMPLATE.md"))
         folder = os.path.join(home.work, ".github", "PULL_REQUEST_TEMPLATE")
@@ -324,6 +326,12 @@ def test_a_repos_pr_template_wins_over_the_hub_shape_but_a_template_without_a_te
         home.hubctl("off", "pr.instructions.test_gate")
     with then("the template alone decides again, and the same body passes"):
         assert findings(home, "## Motivation\n\nUsers lose uploads.\n")["findings"] == []
+    with and_("with one template again, a body in hub's shape needs the template's own Testing heading"):
+        shutil.rmtree(folder)
+        with open(os.path.join(home.work, ".github", "PULL_REQUEST_TEMPLATE.md"), "w") as handle:
+            handle.write("## Summary\n\n## Testing\n")
+        assert sorted(finding.get("heading") for finding in findings(home, good_body())["findings"]) \
+            == ["Summary", "Testing"]
 
 
 TEMPLATE_TESTING_HEADINGS = [
@@ -341,7 +349,8 @@ def test_a_templates_testing_part_is_known_by_its_name_and_a_heading_that_only_m
         with when(f"the template has a Summary and {heading}, and the body fills both"):
             with open(os.path.join(home.work, ".github", "pull_request_template.md"), "w") as handle:
                 handle.write(f"## Summary\n\n{heading}\n")
-            result = findings(home, f"## Summary\n\nAdds a retry.\n\n{heading}\n\nThe retry scenario ran.\n")
+            result = findings(home, f"## Summary\n\nAdds a retry.\n\n{heading}\n\n"
+                                    "The retry scenario ran. Not tested on a phone.\n")
         if names_testing:
             with then(f"{heading} is the template's testing part, so the body passes"):
                 assert result["findings"] == []
@@ -349,6 +358,74 @@ def test_a_templates_testing_part_is_known_by_its_name_and_a_heading_that_only_m
             with then(f"{heading} is not a testing part, so the body also needs hub's How it was tested"):
                 assert [(finding["kind"], finding.get("heading")) for finding in result["findings"]] \
                     == [("missing_heading", "How it was tested")]
+
+
+NEAR_MISSES = ["How it's tested", "How its tested", "How this was tested", "How was it tested", "How we tested",
+               "Tested", "Testing", "Tests", "Test plan"]
+
+
+def test_a_tested_part_must_say_what_was_not_tested_near_misses_pass_and_the_test_gate_switch_drops_both(home):
+    with given("hub is installed with the test gate method on, in a repo without a PR template"):
+        home.install()
+        tested_words = good_body().split("### How it was tested\n\n")[1].split("\n")[0]
+        heading_line = good_body().split("\n").index("### How it was tested") + 1
+        only_passing = good_body().replace(tested_words, "All tests pass.")
+    with when("the tested part only says that the tests pass"):
+        done = pr_check(home, only_passing)
+        result = findings(home, only_passing)
+    with then("it fails by kind and the heading's line, and the sentence asks what was not tested and why"):
+        assert done.returncode == 1
+        assert kinds(result) == [("missing_not_tested", heading_line)]
+        assert done.stdout.strip() == quoted(home, "check_missing_not_tested.md").replace("{line}", str(heading_line))
+        assert result["tested"] == {"heading": "How it was tested", "near_miss": False}
+    with and_("a not-tested line in another part, or under a heading of the same level, does not count"):
+        elsewhere = only_passing.replace("Whether the limit should be a setting.", "Not tested on a phone.")
+        sibling = only_passing.replace("All tests pass.\n", "All tests pass.\n\n### Notes\n\nNot tested on a phone.\n")
+        for body in (elsewhere, sibling):
+            assert kinds(findings(home, body)) == [("missing_not_tested", heading_line)]
+    with and_("one under a deeper heading inside the part counts, and so does each way of saying it"):
+        deeper = only_passing.replace("All tests pass.\n", "All tests pass.\n\n#### Gaps\n\nThe phone app is untested.\n")
+        assert findings(home, deeper)["findings"] == []
+        for words in ("Un-tested on Windows.", "The phone app is left out.", "The migration was not run.",
+                      "No BDD scenarios, because only texts changed.", "No smoke run, the repo has none."):
+            assert findings(home, only_passing.replace("All tests pass.", words))["findings"] == [], words
+    for near in NEAR_MISSES:
+        with when(f"the tested part is headed {near}"):
+            result = findings(home, good_body().replace("### How it was tested", f"### {near}"))
+        with then(f"{near} passes as the tested part, marked as a near miss"):
+            assert result["findings"] == [], near
+            assert result["tested"] == {"heading": near, "near_miss": True}, near
+    with and_("a near miss is still the tested part, so it needs a not-tested line too"):
+        assert kinds(findings(home, only_passing.replace("### How it was tested", "### Testing"))) \
+            == [("missing_not_tested", heading_line)]
+    for miss in ("How to test", "Notes on testing", "QA"):
+        with when(f"the part is headed {miss}, which neither hub's shape nor a template asks for"):
+            result = findings(home, good_body().replace("### How it was tested", f"### {miss}"))
+        with then("the body misses hub's tested heading, whatever the part says"):
+            assert [(finding["kind"], finding.get("heading")) for finding in result["findings"]] \
+                == [("missing_heading", "How it was tested")], miss
+            assert result["tested"] == {"heading": None, "near_miss": False}
+    with when("the repo's PR template uses How to test"):
+        os.makedirs(os.path.join(home.work, ".github"))
+        with open(os.path.join(home.work, ".github", "pull_request_template.md"), "w") as handle:
+            handle.write("## Summary\n\n## How to test\n")
+        own = "## Summary\n\nAdds a retry.\n\n## How to test\n\nRun the upload scenario. Not tested on a phone.\n"
+    with then("its own heading passes with no near miss, and so does hub's"):
+        result = findings(home, own)
+        assert result["findings"] == [] and result["tested"] == {"heading": "How to test", "near_miss": False}
+        assert findings(home, own.replace("## How to test", "## How it was tested"))["findings"] == []
+    with and_("a body with no testing part misses the template's heading, not hub's"):
+        assert [(finding["kind"], finding.get("heading"))
+                for finding in findings(home, "## Summary\n\nAdds a retry.\n")["findings"]] \
+            == [("missing_heading", "How to test")]
+    with when("the template is gone and the user turns the test gate method off"):
+        os.remove(os.path.join(home.work, ".github", "pull_request_template.md"))
+        home.hubctl("off", "pr.instructions.test_gate")
+    with then("a tested part without a not-tested line passes, and so does a body with no tested part"):
+        tested_part = "### How it was tested\n\n" + tested_words + "\n\n"
+        for body in (only_passing, good_body().replace(tested_part, "")):
+            result = findings(home, body)
+            assert result["findings"] == [] and result["tested"] == {"heading": None, "near_miss": False}
 
 
 REFERENCE_LINES = [
@@ -540,16 +617,18 @@ def test_a_body_draft_goes_from_findings_to_clean_from_a_file_and_stdin_and_an_e
         as_json = json.loads(run_at(home, [*check, draft, "--json"], "2026-03-02T12:00:00Z", deep).stdout)
     with then("it fails with each finding by kind and line, and takes the shape from the repo's template"):
         assert first.returncode == 1, first.stderr
-        assert kinds(as_json) == [("bare_reference", 4), ("em_dash", 3), ("mention", 3), ("missing_heading", None)]
+        assert kinds(as_json) == [("bare_reference", 4), ("em_dash", 3), ("mention", 3), ("missing_heading", None),
+                                  ("missing_not_tested", 6)]
         assert [finding["heading"] for finding in as_json["findings"] if finding.get("heading")] == ["Risks"]
         assert as_json["headings_from"] == os.path.join(".github", "pull_request_template.md")
     with and_("the output names lines, never the values it found"):
         assert "Line 3 tags a person" in first.stdout and '"Risks"' in first.stdout
+        assert "The tested part at line 6 does not say what was left out" in first.stdout
         assert "@sam" not in first.stdout and "#41" not in first.stdout and DASH not in first.stdout
     with when("Claude fixes the draft and passes it on stdin, as the skill allows with -"):
         fixed = ("## Summary\n\nThis retries the upload three times, then stops. It follows "
                  "[#41](https://github.com/acme/shop/pull/41).\n\n## How to test\n\nUpload a file with the "
-                 "network off for two seconds.\n\n## Risks\n\nA slow network waits up to three seconds longer.\n")
+                 "network off for two seconds. Not tested on a phone.\n\n## Risks\n\nA slow network waits up to three seconds longer.\n")
         second = run_at(home, [*check, "-"], "2026-03-02T12:00:00Z", deep, stdin=fixed)
     with then("it passes with the clean line"):
         assert second.returncode == 0 and second.stdout.strip() == quoted(home, "check_clean.md")
