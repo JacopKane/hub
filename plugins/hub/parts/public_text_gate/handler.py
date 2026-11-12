@@ -212,13 +212,15 @@ GH_API_VALUE_OPTIONS = GH_FIELD_OPTIONS | {"-X", "--method", "--input", "-H", "-
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, script=False, parent=None):
+    def __init__(self, line, cwd, script=False, parent=None, read_log=True):
         """With script, each line is its own command, as a shell runs a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
-        because the parent set them aside.
+        because the parent set them aside, and reads the log when its parent does.
+        Without read_log, a push names its step but not the commits it sends.
         """
         self.cwd = cwd
+        self.read_log = parent.read_log if parent else read_log
         self.heredocs = parent.heredocs if parent else []
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
@@ -623,7 +625,7 @@ def git_target(words, command):
         command.cwd = outer
         return ("commit", "\n".join(texts)) if texts else None
     if action == "push":
-        return "push", pushed_commits(rest, cwd)
+        return "push", pushed_commits(rest, cwd) if command.read_log else ""
     if action == "tag":
         command.cwd, outer = cwd, command.cwd
         texts = commit_texts(rest, command)
@@ -876,10 +878,12 @@ def wrapped_steps(words, index, command, depth, first=False):
         # the whole script is what a tool prints, as in eval "$(ssh-agent -s)".
         # A public step that its source names could print other text, so it is unreadable.
         return [(target, UNREADABLE) for source in sources
-                for target, _text in public_steps(source, command.cwd, depth + 1, script=True)]
+                for target, _text in public_steps(source, command.cwd, depth + 1, script=True,
+                                                  log=command.read_log)]
     if hidden(script) or depth > 3:
         return [(WRAPPED, UNREADABLE)]
-    steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first)
+    steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first,
+                         log=command.read_log)
     return steps if how == "input" else [(target, UNREADABLE) for target, _text in steps]
 
 
@@ -987,15 +991,16 @@ def wrapper_option(option, options):
     return 1
 
 
-def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False):
+def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True):
     """[(target, text)] for each step in the command line that makes text public.
 
     That includes the steps inside every $(...) and backtick pair, such as
     in an assignment, an argument or another substitution. opens_the_call
     says a script is the first thing the tool call runs, as the script of a
-    shell that is the call's first command is.
+    shell that is the call's first command is. With log False, a push is
+    named with no text, so a caller that needs only the steps runs no git.
     """
-    command = Command(line, cwd, script, parent)
+    command = Command(line, cwd, script, parent, read_log=log)
     segments = command.segments()
     if segments is None:
         return rough_steps(command) + substituted_steps(command, depth)

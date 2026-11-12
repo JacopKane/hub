@@ -486,6 +486,39 @@ def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home,
             assert result.refused and result.findings == ["private_paths"], (option, result.reason)
 
 
+def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits():
+    import tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        with given("a git first on PATH that logs each call before it runs the real git"):
+            log = os.path.join(folder, "calls.txt")
+            real = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
+            with open(os.path.join(folder, "git"), "w") as handle:
+                handle.write(f"#!/bin/sh\necho \"$*\" >> '{log}'\nexec '{real}' \"$@\"\n")
+            os.chmod(os.path.join(folder, "git"), 0o755)
+            code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import importlib.util as u; "
+                    "spec = u.spec_from_file_location('gate', sys.argv[2]); gate = u.module_from_spec(spec); "
+                    "spec.loader.exec_module(gate); "
+                    "print(json.dumps(gate.public_steps('git push origin main && bash -c \"git push\"', "
+                    "sys.argv[3], log=sys.argv[4] == 'yes')))")
+            env = dict(os.environ, PATH=folder + os.pathsep + os.environ["PATH"])
+
+            def steps(log_too):
+                return json.loads(subprocess.run(
+                    [sys.executable, "-I", "-c", code, os.path.join(PLUGIN, "lib"),
+                     os.path.join(PLUGIN, "parts", GATE, "handler.py"), folder, "yes" if log_too else "no"],
+                    env=env, capture_output=True, text=True, check=True).stdout)
+        with when("the gate's parser reads two pushes, one inside a wrapper, without the log"):
+            skipped = steps(False)
+        with then("it names both pushes and never runs git"):
+            assert [target for target, _text in skipped] == ["push", "push"]
+            assert not os.path.exists(log)
+        with when("it reads them with the log, as the gate itself does"):
+            steps(True)
+        with then("git log runs for each push"):
+            with open(log) as handle:
+                assert [line.split()[0] for line in handle] == ["log", "log"]
+
+
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
     with given("hub is installed with the em dash check on, and a PR body file holds a dash"):
         home.install()
