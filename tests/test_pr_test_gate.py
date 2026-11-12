@@ -277,6 +277,33 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
         assert len(gh_calls(home)) == calls
 
 
+def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):
+    with given("branch feature with a new commit and no report, and a PATH that holds git but no gh"):
+        with_github(home)
+        feature = pushed_branch(home)
+        real_git = shutil.which("git", path=home.env["PATH"])
+        folder = os.path.join(home.root, "git-only")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "git"), "w") as handle:
+            handle.write(f"#!/bin/sh\nexec {shlex.quote(real_git)} \"$@\"\n")
+        os.chmod(os.path.join(folder, "git"), 0o755)
+        assert shutil.which("gh", path=folder) is None
+    with when("Claude pushes"):
+        push, _took = timed(home, "git push", folder)
+    with then("the push is refused for its missing report, as after any failed lookup, and hub logs no error"):
+        assert says(home, push, "no_report.md", short=feature[:7], branch="feature"), push.reason
+        assert home.errors() == ""
+    with when("Claude marks PR 12 ready by number"):
+        ready, _took = timed(home, "gh pr ready 12", folder)
+    with then("it is refused because gh could not say the PR's head"):
+        assert says(home, ready, "pr_head_unknown.md", number="12", why="gh could not start"), ready.reason
+    with when("feature gets a passing report and Claude pushes again"):
+        record(home)
+        again, _took = timed(home, "git push", folder)
+    with then("the push runs"):
+        assert quiet(again), again.reason
+
+
 def test_steps_outside_the_gate_run_quietly(home):
     with given("branch feature with a new commit, a tag, a second remote that is not GitHub, "
                "and gh failing, so any lookup would count as an open PR"):

@@ -144,8 +144,11 @@ class Lookups:
         return self.cache[key]
 
     def gh(self, cwd, *words):
-        """(gh's output or None, why it failed)."""
-        done = self.run(["gh", *words], cwd, GH_SECONDS)
+        """(gh's output or None, why it failed). A gh that can not start is a failed lookup like any other."""
+        try:
+            done = self.run(["gh", *words], cwd, GH_SECONDS)
+        except OSError:
+            return None, "gh could not start"
         if done is None:
             return None, "gh did not answer in time"
         if done[0] != 0:
