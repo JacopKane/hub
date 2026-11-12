@@ -728,11 +728,11 @@ def home_tree(home):
     return found
 
 
-def test_the_body_check_and_the_night_hold_read_settings_on_a_fresh_home_and_write_nothing(home):
+def test_the_body_check_and_the_night_hold_read_settings_and_write_nothing_on_a_fresh_or_a_set_up_home(home):
     with given("hub's files are in a fresh HOME but hub was never applied, so there is no state, no settings and no link"):
         shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
-        check = [sys.executable, "-I", part_path(home, "check_body.py")]
-        night_hold = [sys.executable, "-I", part_path(home, "night.py")]
+        step = [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub_switch.py")]
+        check, night_hold = [*step, "pr-check"], [*step, "pr-night"]
         hub_made = [home.state, home.config, os.path.join(home.root, ".claude")]
         assert not any(os.path.exists(path) for path in hub_made)
     with and_("a repo commits quiet hours of its own, 20:00 to 08:00, written by hand in .hub/hub.json"):
@@ -803,3 +803,17 @@ def test_the_body_check_and_the_night_hold_read_settings_on_a_fresh_home_and_wri
         assert home_tree(home) == {renamed(path): value for path, value in before_move.items()}
         assert read(os.path.join(home.config, "hub.json")) == user_settings
         assert not os.path.exists(home.state) and not os.path.exists(os.path.join(home.root, ".claude"))
+    with when("the user sets hub up, then deletes the link to hub's tuner agent"):
+        home.hubctl("apply")
+        tuner_link = os.path.join(home.root, ".claude", "agents", "hub-tuner.md")
+        assert os.path.islink(tuner_link)
+        os.unlink(tuner_link)
+        set_up = home_tree(home)
+    with and_("Claude runs the check and the night hold as the linked skill gives them"):
+        checked = run_at(home, [*skill_command(home, "pr-check"), draft], "2026-03-02T12:00:00Z", home.work)
+        held = run_at(home, skill_command(home, "pr-night"), "2026-03-02T12:00:00Z", home.work)
+    with then("both answer, the link stays gone, the tuner is not switched off for it, and nothing under HOME changed"):
+        assert checked.returncode == 0, checked.stderr
+        assert held.returncode == 0 and not json.loads(held.stdout)["held"], held.stderr
+        assert not os.path.lexists(tuner_link)
+        assert home_tree(home) == set_up

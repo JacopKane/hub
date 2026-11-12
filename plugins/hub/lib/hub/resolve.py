@@ -196,6 +196,27 @@ def resolve(tree, layer_list, profile, offers=()):
     return result
 
 
+def new_offers(tree, seen, offered):
+    """Ids of the parts an apply offers now: new since seen.json, not offered yet and not beta."""
+    if seen is None:
+        return []
+    return [part.id for part in tree.parts
+            if part.id not in seen["parts"] and part.id not in offered and tree.nodes[part.id].stage != tree_module.BETA]
+
+
+def in_memory(cwd=None):
+    """{tool: {"flags", "handlers"}} for a working folder, as current() gives them, without applying hub.
+
+    It reads the settings of every scope, the profile and the offers, and
+    writes no state file and no link. Reading the user's settings still moves
+    their folder from its old name (files.config_dir), as every hub step does.
+    """
+    tree = tree_module.load(files.PARTS_DIR)
+    recorded = {offer["id"] for offer in files.read_json(files.state_path("offers.json"), {"offers": []})["offers"]}
+    offered = recorded | set(new_offers(tree, files.read_json(files.state_path("seen.json")), recorded))
+    return resolve(tree, settings.layers(cwd), load_profile(), offered)
+
+
 def texts(tree):
     return {node.id: os.path.join(files.PARTS_DIR, node.part.id, node.text)
             for node in tree.nodes.values() if node.text}
@@ -219,10 +240,8 @@ def apply(tree=None, write=True):
     new_children = []
     if seen is not None:
         offered = {offer["id"] for offer in offers["offers"]}
-        for part_id in part_ids:
-            if (part_id not in seen["parts"] and part_id not in offered
-                    and tree.nodes[part_id].stage != tree_module.BETA):
-                offers["offers"].append({"id": part_id, "since": now(), "does": tree.nodes[part_id].does})
+        offers["offers"] += [{"id": part_id, "since": now(), "does": tree.nodes[part_id].does}
+                             for part_id in new_offers(tree, seen, offered)]
         new_children = [flag_id for flag_id in child_ids
                         if flag_id not in seen["nodes"] and tree.nodes[flag_id].part.id in seen["parts"]]
     offer_ids = {offer["id"] for offer in offers["offers"]}
