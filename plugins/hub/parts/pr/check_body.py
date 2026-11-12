@@ -57,7 +57,7 @@ NEAR_MISSES = {"how it s tested", "how its tested", "how this was tested", "how 
                "tested", "testing", "tests", "test plan"}
 # A line on what was not tested, searched in the testing part up to the next heading of its level or higher.
 NOT_TESTED = re.compile(r"(?i)\b(not|un)[ -]?tested\b|\bleft out\b|\bnot (covered|run|checked)\b"
-                        r"|\bno (smoke run|bdd|scenarios?)\b")
+                        r"|\bno (smoke run|bdd|scenarios?)\b|\bdid(?: not|n['\u2019]?t) test\b")
 # Unlike link_check's LINK, this one keeps the link text, so a mention in it still counts.
 LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 MENTION = re.compile(r"(?<![\w@.+/-])@[A-Za-z0-9][\w-]*")
@@ -209,13 +209,16 @@ def closest_shape(body, cwd, testing_needed):
     shapes = [(where, headings_of(shape)) for where, shape in templates(root)] if root else []
     if not shapes:
         shapes = [("hub", hub_shape())]
-    best = None
+    best, best_rank = None, None
     for where, headings in shapes:
         testing = [heading for heading in headings if about_testing(heading)]
         left_out = testing if testing_needed or where == "hub" else []
-        missing = [heading for heading in headings if heading not in left_out and same(heading) not in have]
-        if best is None or len(missing) < len(best[0]):
-            best = (missing, where, [] if where == "hub" else testing)
+        absent = [heading for heading in headings if same(heading) not in have]
+        missing = [heading for heading in absent if heading not in left_out]
+        # Count the testing headings too, so templates that differ only there do not tie.
+        rank = (len(missing), len(absent))
+        if best is None or rank < best_rank:
+            best, best_rank = (missing, where, [] if where == "hub" else testing), rank
     return best
 
 
