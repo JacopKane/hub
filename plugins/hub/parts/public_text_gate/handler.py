@@ -275,7 +275,7 @@ class Command:
         the group reads that pipe.
         """
         try:
-            lexer = shlex.shlex(self.flat, posix=True, punctuation_chars=";&|()")
+            lexer = shlex.shlex(whole_substitutions(self.flat), posix=True, punctuation_chars=";&|()")
             lexer.whitespace_split = True
             words = list(lexer)
         except ValueError:
@@ -309,6 +309,44 @@ class Command:
         if current:
             found.append(current)
         return found
+
+
+def whole_substitutions(flat):
+    """The parser's text with each substitution it kept as text, outside quotes, put in single quotes.
+
+    In single quotes the text stays inside its word, as the shell reads it.
+    Without them the lexer splits $(pwd) at its brackets and loses the
+    command around it.
+    """
+    out, index, quote = [], 0, None
+    while index < len(flat):
+        char = flat[index]
+        if quote == "'":
+            quote = None if char == "'" else quote
+        elif char == "\\" and index + 1 < len(flat):
+            out.append(flat[index:index + 2])
+            index += 2
+            continue
+        elif quote == '"':
+            quote = None if char == '"' else quote
+        elif char in "'\"":
+            quote = char
+        elif flat.startswith(SUBSTITUTED, index):
+            start = index + len(SUBSTITUTED)
+            if flat.startswith("$(", start):
+                end = closing(flat, start + 1)
+            elif flat.startswith("`", start):
+                end = flat.find("`", start + 1)
+            else:
+                end = -1
+            if end > 0:
+                text = flat[start:end + 1].replace("'", "'\\''")
+                out.append(SUBSTITUTED + "'" + text + "'")
+                index = end + 1
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
 
 
 class Segment(list):
@@ -628,7 +666,11 @@ def git_target(words, command):
         command.cwd = outer
         return ("commit", "\n".join(texts)) if texts else None
     if action == "push":
-        return "push", pushed_commits(rest, cwd) if command.read_log else ""
+        if not command.read_log:
+            return "push", ""
+        if any(UNREADABLE in word for word in words[1:index]):
+            return "push", UNREADABLE  # a git option the shell fills in, such as --git-dir, may name other commits
+        return "push", pushed_commits(rest, cwd)
     if action == "tag":
         command.cwd, outer = cwd, command.cwd
         texts = commit_texts(rest, command)

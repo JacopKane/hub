@@ -216,14 +216,15 @@ def git_place(step):
     cwd, words, index = step.cwd, step.words, 1
     while index < len(words):
         word = words[index]
-        if word == "-C" and index + 1 < len(words):
+        if word in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
             if unreadable_mark() in words[index + 1]:
                 raise unreadable("word")
-            cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
-            index += 2
-        elif word in ("-c", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
+            if word == "-C":
+                cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
             index += 2
         elif word.startswith("-"):
+            if unreadable_mark() in word:
+                raise unreadable("word")  # such as --git-dir=... that the shell fills in
             index += 1
         else:
             break
