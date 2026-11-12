@@ -44,6 +44,11 @@ PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec
 EVERY_BRANCH = {"--all", "--mirror", "--branches"}
 FILL_OPTIONS = {"--fill", "-f", "--fill-first", "--fill-verbose", "--web", "-w"}
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
+OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
+OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
+GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
+GH_ALIASES = {("pr", "new"): ("pr", "create")}
+PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
 WHY = {
     "parse": "the line does not parse",
@@ -188,16 +193,34 @@ def read_steps(line, cwd):
             if program not in ("git", "gh"):
                 continue
             command.cwd = here
-            target = (parser.git_target if program == "git" else parser.gh_target)(words[index:], command)
-            api = program == "gh" and words[index + 1:index + 2] == ["api"]
+            step_words = words[index:] if program == "git" else without_gh_alias(words[index:])
+            target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
+            api = program == "gh" and step_words[1:2] == ["api"]
             if not target or (target[0] not in RELEVANT and not api):
                 continue
             if any(os.path.basename(before) in parser.FEEDERS for before in words[:index]):
                 raise unreadable("feeder")
-            found.append(Step(words[index:], words[:index], segments[:position], here, target[0]))
+            found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
     if len(named) > len([step for step in found if step.target in RELEVANT]):
         raise unreadable("inside")
     return command, found
+
+
+def may_push_or_open_a_pr(line, cwd):
+    """Whether the gate reads the line. It does when the line does not parse, when git or gh is in its text or
+    parsed words (so g''it counts), or when the text gate finds a public step inside it, as in bash -c. A line
+    that only a variable fills in, such as $CMD, is left to the text gate."""
+    parser = gate()
+    segments = parser.Command(line, cwd, read_log=False).segments()
+    words = [word for segment in segments or [] for word in segment]
+    return (segments is None or any(GIT_OR_GH.search(text) for text in [line, *words])
+            or any(target != "wrapped" for target, _text in parser.public_steps(line, cwd, log=False)))
+
+
+def without_gh_alias(words):
+    """gh's words with a built-in alias such as pr new spelled as the action it stands for."""
+    action = tuple(words[1:3])
+    return [words[0], *GH_ALIASES[action], *words[3:]] if action in GH_ALIASES else words
 
 
 def unreadable_mark():
@@ -212,6 +235,8 @@ def written_out(step):
             raise unreadable("before")
     if any(not ASSIGNMENT.match(word) for word in step.before):
         raise unreadable("before")
+    if any(word.split("=", 1)[0] in OTHER_REPO_VARIABLES for word in step.before):
+        raise Stop("other_repo.md")
 
 
 def git_place(step):
@@ -222,12 +247,16 @@ def git_place(step):
         if word in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
             if unreadable_mark() in words[index + 1]:
                 raise unreadable("word")
+            if word in OTHER_REPO_OPTIONS:
+                raise Stop("other_repo.md")
             if word == "-C":
                 cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
             index += 2
         elif word.startswith("-"):
             if unreadable_mark() in word:
                 raise unreadable("word")  # such as --git-dir=... that the shell fills in
+            if word.split("=", 1)[0] in OTHER_REPO_OPTIONS:
+                raise Stop("other_repo.md")
             index += 1
         else:
             break
@@ -282,6 +311,8 @@ def pushed(step, lookups):
     cwd, words = git_place(step)
     positional, quiet, tags = push_words(words[1:])
     specs = [spec[1:] if spec.startswith("+") else spec for spec in positional[1:]]
+    if not quiet and ":" in specs:
+        raise unreadable("every")  # a lone colon pushes each branch that has a match on the remote
     if quiet or (tags and not specs) or (specs and all(spec.startswith(":") for spec in specs)):
         return []
     written_out(step)
@@ -466,8 +497,9 @@ def api_step(command, step, flags, answer, lookups):
             endpoints.append(word)
     endpoint = endpoints[0].split("?", 1)[0].strip("/") if endpoints else ""
     methods = parser.option_values(rest, ["-X", "--method"])
-    method = methods[-1].upper() if methods else ("POST" if fields else "GET")
-    for path in parser.option_values(rest, ["--input"]):
+    inputs = parser.option_values(rest, ["--input"])
+    method = methods[-1].upper() if methods else ("POST" if fields or inputs else "GET")  # as gh picks it
+    for path in inputs:
         try:
             sent = json.loads(command.from_file(path))
         except ValueError:
@@ -492,17 +524,23 @@ def api_step(command, step, flags, answer, lookups):
     return []
 
 
+def pr_mutations(query):
+    """The PR fields a GraphQL mutation names, aliased or not, so 'opened: createPullRequest' counts."""
+    if not re.search(r"\bmutation\b", query):
+        return set()
+    return {name for name in PR_MUTATIONS if re.search(r"\b" + name + r"\b", query)}
+
+
 def graphql_step(fields, step, flags, answer, lookups):
     query = fields.get("query", "")
-    mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", query)
-    name = mutation.group(1) if mutation else ""
-    if name == "markPullRequestReadyForReview" and flags.runs(f"{PART}.report"):
+    names = pr_mutations(query)
+    if "markPullRequestReadyForReview" in names and flags.runs(f"{PART}.report"):
         raise unreadable("node")
-    if name not in ("createPullRequest", "updatePullRequest"):
+    if not names & {"createPullRequest", "updatePullRequest"}:
         return []
     written_out(step)
     body = graphql_value(query, "body", fields)
-    if name == "updatePullRequest":
+    if "createPullRequest" not in names:
         body_stop(body, step.cwd, flags, answer)
         return []
     body_stop(body or "", step.cwd, flags, answer)
@@ -567,10 +605,11 @@ def handle(event, hook_input, flags, answer):
     if not (flags.runs(f"{PART}.report") or flags.runs(f"{PART}.body")):
         return
     command_line = (hook_input.get("tool_input") or {}).get("command") or ""
-    if not re.search(r"\b(?:git|gh)\b", command_line):
+    cwd = hook_input.get("cwd") or os.getcwd()
+    if not may_push_or_open_a_pr(command_line, cwd):
         return
     try:
-        check(command_line, hook_input.get("cwd") or os.getcwd(), flags, answer)
+        check(command_line, cwd, flags, answer)
     except Stop as stop:
         answer.signal(f"{PART}.{stop.child}", "blocked")
         answer.refuse(stop.values["text"] if stop.child == "body" else message(stop.name, **stop.values))

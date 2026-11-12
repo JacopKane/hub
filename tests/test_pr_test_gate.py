@@ -277,6 +277,73 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
         assert len(gh_calls(home)) == calls
 
 
+def graphql_call(query, *fields):
+    return " ".join(["gh api graphql -f", shlex.quote("query=" + query), *fields])
+
+
+def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
+    with given("branch feature with open PR 7 and a new commit, branch side with a commit, no reports, "
+               "and new-PR requests for side and feature kept in JSON files"):
+        with_github(home)
+        feature = pushed_branch(home)
+        home.git("branch", "side", "main")
+        side = change(home, cwd=worktree(home, "side", "side"))
+        fake_gh(home, open={"feature": 7})
+        good = body_file(home, CANONICAL)
+        side_request = body_file(home, json.dumps({"head": "side", "base": "main", "title": "T", "body": CANONICAL}),
+                                 "side.json")
+        bare_request = body_file(home, json.dumps({"head": "feature", "base": "main", "title": "T", "body": NO_PART}),
+                                 "bare.json")
+    create = graphql_call('mutation { opened: createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", '
+                          'headRefName: "side", title: "T", body: $body}) { pullRequest { number } } }',
+                          f"-F body=@{good}")
+    ready = graphql_call('mutation { done: markPullRequestReadyForReview(input: {pullRequestId: "PR_kw1"}) '
+                         '{ clientMutationId } }')
+    update = graphql_call('mutation { edited: updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                          'body: "All tests pass."}) { clientMutationId } }')
+    feature_steps = ["g''it push", "'gi't push origin feature", f"gh pr new --title T --body-file {good}",
+                     f"g''h pr new --title T --body-file {good}"]
+    side_steps = [f"gh api repos/acme/demo/pulls --input {side_request}", create]
+    with when("Claude pushes with a quoted program name, opens a PR with gh's pr new, sends a new PR through "
+              "gh api --input or an aliased GraphQL mutation, and pushes every matching branch"):
+        results = {step: bash(home, step) for step in feature_steps + side_steps}
+        matching = {spec: bash(home, f"git push origin {spec}") for spec in (":", "+:")}
+        bare = bash(home, f"gh api repos/acme/demo/pulls --input {bare_request}")
+        aliased = {"ready": bash(home, ready), "update": bash(home, update)}
+    with then("each is refused as its plain form would be: for the missing report of feature or side, for a "
+              "body with no tested part, for a ready step by node id, and for pushing every branch"):
+        for step in feature_steps:
+            assert says(home, results[step], "no_report.md", short=feature[:7], branch="feature"), step
+        for step in side_steps:
+            assert says(home, results[step], "no_report.md", short=side[:7], branch="side"), step
+        for spec, result in matching.items():
+            assert says(home, result, "unreadable_push.md", why="it pushes every branch"), (spec, result.reason)
+        assert bare.refused and bare.reason == missing_part(home)
+        assert says(home, aliased["ready"], "unreadable_push.md", why="a node id names the PR, not its number")
+        assert aliased["update"].refused and aliased["update"].reason == missing_part(home)
+    with when("feature and side get passing reports"):
+        record(home)
+        record(home, sha=side, branch="side")
+    with then("the same steps run with no answer"):
+        for step in feature_steps + side_steps:
+            assert quiet(bash(home, step)), step
+    other = os.path.join(home.root, "other")
+    elsewhere = [f"git --git-dir={other}/.git push origin feature", f"git --git-dir {other}/.git push",
+                 f"git --work-tree={other} push", f"git --work-tree {other} push origin feature",
+                 f"GIT_DIR={other}/.git git push", f"GIT_WORK_TREE={other} git push origin feature",
+                 f"GIT_DIR={other}/.git gh pr create --title T --body-file {good}"]
+    with when("Claude names another repo's git folder or work tree in an option or a variable, even with a report"):
+        results = {step: bash(home, step) for step in elsewhere}
+    with then("each is refused with a sentence that asks for the repo's own folder instead"):
+        for step, result in results.items():
+            assert says(home, result, "other_repo.md"), (step, result.reason)
+    with when("the text gate's unreadable check is off and Claude pushes with a quoted program name inside bash -c"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        wrapped = bash(home, "bash -c 'g\"\"it push origin feature'")
+    with then("this gate refuses it as a push inside another command, even with a report"):
+        assert says(home, wrapped, "unreadable_push.md", why="it runs inside another command"), wrapped.reason
+
+
 def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):
     with given("branch feature with a new commit and no report, and a PATH that holds git but no gh"):
         with_github(home)
