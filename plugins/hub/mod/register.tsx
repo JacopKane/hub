@@ -5,6 +5,8 @@
 import { atom, read, update } from 'claude-code'
 import type { CommandRunInput, EngineInterface, Hook, PromptOrigin, Register, Timer } from 'claude-code'
 
+import { FEATURES_LABEL, openPicker, registerPicker } from './picker'
+import { refusePick } from './picker-texts'
 import type {
   HubBand,
   HubChatsZone,
@@ -24,7 +26,7 @@ const relay = atom({ plugin: 'hub', key: 'relay' } as const, { hub: false, waiti
 // The time of the last tuner list the side call took, so each list gets one try in a session.
 const tried = atom({ plugin: 'hub', key: 'tried' } as const, '')
 
-const COMMAND = 'hub'
+export const COMMAND = 'hub'
 // The name the door takes when Claude Code gives /hub to something else, such as the
 // user's own skill named hub. The band and the doctor both name the clash.
 const FALLBACK = 'hub-flags'
@@ -58,9 +60,9 @@ type Shown = {
 // A change may take a while to apply, but reading the screen should be quick. The band keeps
 // its last state until a read ends. So a stuck step never holds up a session start or a turn.
 const CHANGE_TIMEOUT = 30000
-const SCREEN_TIMEOUT = 5000
+export const SCREEN_TIMEOUT = 5000
 
-async function runStep($: EngineInterface, args: readonly string[], stdin?: string, timeoutMs = CHANGE_TIMEOUT) {
+export async function runStep($: EngineInterface, args: readonly string[], stdin?: string, timeoutMs = CHANGE_TIMEOUT) {
   return $.process.run(['python3', '-I', `${$.plugin.root}/lib/hub_switch.py`, ...args], { timeoutMs, stdin })
 }
 
@@ -88,7 +90,7 @@ async function ticket($: EngineInterface): Promise<string | undefined> {
   return `${text}\n`
 }
 
-async function change($: EngineInterface, args: readonly string[]) {
+export async function change($: EngineInterface, args: readonly string[]) {
   return runStep($, args, await ticket($))
 }
 
@@ -252,7 +254,7 @@ function followBoard($: EngineInterface, latest: HubBand) {
 let reading: Promise<void> | null = null
 let queued: Promise<void> | null = null
 
-function refresh($: EngineInterface): Promise<void> {
+export function refresh($: EngineInterface): Promise<void> {
   if (reading === null) {
     reading = readScreen($).finally(() => {
       reading = null
@@ -553,10 +555,18 @@ async function relayAgain($: EngineInterface): Promise<{ text: string }> {
 }
 
 // Runs the words after a command through hub's step and answers with what it printed. A change
-// runs only when the user typed the command or sent it through the bridge.
-async function run($: EngineInterface, e: CommandRunInput, typed: string): Promise<{ text: string }> {
+// runs only when the user typed the command or sent it through the bridge, and so does `pick`,
+// which opens the picker pane.
+async function run($: EngineInterface, e: CommandRunInput, typed: string): Promise<{ text?: string }> {
   const args = words(e.args)
   const asked = args.length > 0 ? args : ['show']
+  if (asked[0] === 'pick') {
+    if (!fromUser(e.origin)) {
+      return { text: refusePick(typed) }
+    }
+    await openPicker($)
+    return {}
+  }
   const changing = changes(asked)
   if (changing && !fromUser(e.origin)) {
     return {
@@ -641,6 +651,8 @@ export const register: Register = on => {
     }
   })
 
+  registerPicker(on)
+
   on('command.run', { command: COMMAND }, answer)
   on('command.run', { command: FALLBACK }, answer)
 
@@ -681,6 +693,7 @@ export const register: Register = on => {
         {line.buttons.map(button => (
           <Button key={button.key} label={button.label} hotkey={button.hotkey} onPress={() => press($, button)} />
         ))}
+        <Button key="features" label={FEATURES_LABEL} hotkey="f" onPress={() => openPicker($)} />
         {line.failed !== null && separator}
         {line.failed !== null && (
           <Text key="failed" color="red">

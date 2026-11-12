@@ -14,7 +14,7 @@ hub is an early work in progress and is not released yet. Expect changes that br
 
 - Working today are the settings file and its switches, a first-run setup, self-protection, the public text gate, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
 - Cursor support is in beta and untested. It works only from a checkout of this repo, not from the plugin install.
-- Still planned are a full view of every flag, a sandbox command and a first release.
+- Still planned are a sandbox command and a first release.
 
 ## Install
 

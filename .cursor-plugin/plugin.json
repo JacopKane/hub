@@ -1,6 +1,6 @@
 {
   "name": "hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One settings file for the parts of your Claude Code and Cursor setup, each with its own switch. Cursor support is in beta and untested.",
   "author": {
     "name": "JacopKane"

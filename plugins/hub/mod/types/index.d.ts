@@ -53,6 +53,55 @@ export type HubScreen = {
   doors: string
 }
 
+// A flag's value as the screen model prints it, such as a mode word, a number, a text or a list.
+export type HubValue = string | number | boolean | string[]
+
+// One flag's row in the screen model's families.
+export type HubRow = {
+  id: string
+  name: string
+  depth: number
+  does: string
+  value: HubValue
+  effective: HubValue
+  runs: boolean
+  by: string
+  scope: string
+  relevant: boolean
+  hidden_because: string | null
+  cost: string
+  next_session: boolean
+  claude_code_only: boolean
+  stage: string | null
+}
+
+// The fields `screen --json --all` adds to a row for the picker. They give its kind, its flag type,
+// the values it takes, and what keeps it from running while it is on.
+export type HubPickerRow = HubRow & { kind: string; type: string; values: string[]; waits_for: string[] }
+
+// A part row, with whether hub offers it and has no answer yet.
+export type HubPickerPart = HubPickerRow & { new: boolean; children: HubPickerRow[] }
+
+export type HubFamily = { family: string; label?: string; parts_on: number; parts_total: number; parts: HubPickerPart[] }
+
+export type HubPickerScreen = HubScreen & { families: HubFamily[]; everything: boolean }
+
+// The picker pane's state. It holds the model it last read or why that read failed, the open
+// families, the unfolded parts and instruction groups, the focused element, and the strip lines
+// this visit made (newest last) for its undo, each with the row it changed.
+export type HubPicker = {
+  screen: HubPickerScreen | null
+  failure: string | null
+  families: string[]
+  parts: string[]
+  instructions: string[]
+  focused: string | null
+  // The first line the list draws, by its key, or null for the top. Only the ▲ and ▼ rows and an
+  // undo that lands outside the drawn rows move it.
+  top: string | null
+  undo: { change: string; row: string }[]
+}
+
 // What `tuner ask` prints: the request the mod sends to the model, and the candidates in it.
 export type HubTunerRequest = {
   model: string
@@ -77,6 +126,6 @@ export type HubRelay = { hub: boolean; waiting: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    hub: { band: HubBand; now: number; command: HubCommand; relay: HubRelay; tried: string }
+    hub: { band: HubBand; now: number; command: HubCommand; relay: HubRelay; tried: string; picker: HubPicker }
   }
 }
