@@ -268,17 +268,24 @@ def folded(path):
     return path.casefold()
 
 
+# The folder in a repo's git folder where hub's pr-tested step writes the reports the PR test gate reads.
+# The same name as FOLDER in pr_test_gate/report.py.
+REPORTS = "pr-test-reports"
+REPORTS_FOLDER = re.compile(r"(?:^|/)%s(?:/|$)" % re.escape(REPORTS))
+
 # The settings folder under ~/.config, by its name and by its old name.
 CONFIG_NAMES = "|".join(re.escape(name) for name in (files.CONFIG_NAME, files.OLD_CONFIG_NAME))
 HUB_NAME = re.compile(r"\.config/(?:%s)(?:/|$)|\.local/state/hubctl|(?:^|/)hubctl/" % CONFIG_NAMES)
-HUB_TEXT = re.compile(r"\.config/(?:%s)(?![\w.-])|\.local/state/hubctl|\.hub/hub" % CONFIG_NAMES)
+HUB_TEXT = re.compile(r"\.config/(?:%s)(?![\w.-])|\.local/state/hubctl|\.hub/hub|(?<![\w.-])%s(?![\w.-])"
+                      % (CONFIG_NAMES, re.escape(REPORTS)))
 PROJECT_FILE = re.compile(r"(?:^|/)\.hub(?:/(?:hub[^/]*\.json)?)?/?$")
 
 
 def names_hub_by_name(path):
-    """Whether a path's own words name hub's settings or state, or a repo's .hub folder or settings file."""
+    """Whether a path's own words name hub's settings or state, a repo's .hub folder or settings file, or the
+    folder of hub's test reports."""
     path = folded(path)
-    return bool(HUB_NAME.search(path) or PROJECT_FILE.search(path))
+    return bool(HUB_NAME.search(path) or PROJECT_FILE.search(path) or REPORTS_FOLDER.search(path))
 
 
 def under_hub_folder(path):
@@ -309,7 +316,8 @@ def is_hub_path(word, cwd, globs=True):
     joined = os.path.normpath(os.path.join(cwd, text))
     real = os.path.realpath(joined)
     # Only the project file's name counts here, so a repo folder of its own named hubctl is not hub's folder.
-    return any(PROJECT_FILE.search(folded(path)) or under_hub_folder(path) for path in (joined, real))
+    return any(PROJECT_FILE.search(folded(path)) or REPORTS_FOLDER.search(folded(path)) or under_hub_folder(path)
+               for path in (joined, real))
 
 
 def braces(text):
@@ -410,6 +418,8 @@ def glob_could_name_hub(text, cwd):
             if any(names_folder_or_under(parts, folder) for folder in folders):
                 return True
             if any(ends_with(parts, tail) for tail in tails):
+                return True
+            if any(fnmatch.fnmatchcase(REPORTS, part) for part in parts):
                 return True
     return False
 

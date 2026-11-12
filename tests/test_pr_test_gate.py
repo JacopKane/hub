@@ -371,6 +371,52 @@ def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_u
         assert quiet(again), again.reason
 
 
+def file_call(home, tool, cwd=None, **tool_input):
+    return bash(home, "", cwd=cwd, tool_name=tool, tool_input=tool_input)
+
+
+def guarded(result):
+    return result.refused and "(self_protection.settings_files)" in result.reason
+
+
+def test_a_report_comes_only_from_the_pr_tested_step_and_a_file_tool_or_shell_write_is_refused(home):
+    with given("branch feature with open PR 7, a new commit and its report, and a link to the reports folder"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        kept = record(home)
+        folder = os.path.dirname(kept)
+        link = os.path.join(home.root, "reports-link")
+        os.symlink(folder, link)
+        fake = json.dumps({"version": 1, "kind": "code", "head": feature})
+    with when("Claude writes or edits a report with a file tool, by its full path, its path in the repo, the "
+              "link, or with the folder's letters in another case"):
+        calls = {"write": file_call(home, "Write", file_path=os.path.join(folder, "0" * 40 + ".json"), content=fake),
+                 "edit": file_call(home, "Edit", file_path=kept, old_string='"exit": 0', new_string='"exit": 1'),
+                 "relative": file_call(home, "Write", file_path=os.path.join(".git", "pr-test-reports", "a.json"),
+                                       content=fake),
+                 "link": file_call(home, "Write", file_path=os.path.join(link, "a.json"), content=fake),
+                 "folded": file_call(home, "Write", file_path=os.path.join(".git", "PR-Test-Reports", "a.json"),
+                                     content=fake)}
+    with and_("Claude writes one from the shell, by a redirect, a copy, a glob and a script, also with a variable "
+              "in the name, a glob for a new file, and a script that joins the folder from its parts"):
+        shell = {"redirect": bash(home, f"echo {shlex.quote(fake)} > .git/pr-test-reports/a.json"),
+                 "copy": bash(home, f"cp {shlex.quote(kept)} {link}/b.json"),
+                 "glob": bash(home, "rm .git/pr-test-*/*"),
+                 "script": bash(home, "python3 -c \"open('.git/pr-test-reports/c.json', 'w').write('{}')\""),
+                 "variable": bash(home, f"echo {shlex.quote(fake)} > .git/pr-test-reports/$NAME.json"),
+                 "new by glob": bash(home, f"cp {shlex.quote(kept)} .git/pr-test-*/new.json"),
+                 "joined": bash(home, "python3 -c \"import os; open(os.path.join('.git', 'pr-test-reports', "
+                                      "'d.json'), 'w')\"")}
+    with then("self-protection refuses each one"):
+        for name, result in {**calls, **shell}.items():
+            assert guarded(result), (name, result.reason)
+    with and_("reading a report still runs, and the push runs on the report the test wrote"):
+        assert quiet(bash(home, f"cat {shlex.quote(kept)}"))
+        assert quiet(file_call(home, "Read", file_path=kept))
+        assert quiet(bash(home, "git push"))
+
+
 def test_steps_outside_the_gate_run_quietly(home):
     with given("branch feature with a new commit, a tag, a second remote that is not GitHub, "
                "and gh failing, so any lookup would count as an open PR"):
