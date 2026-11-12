@@ -639,7 +639,13 @@ def git_target(words, command):
 
 
 def pushed_commits(rest, cwd):
-    """The log and diff of the commits a push sends, capped in size."""
+    """The log and diff of the commits a push sends, capped in size.
+
+    When the shell fills in the folder or a word of the push, the gate can not
+    tell which commits it sends, so the push counts as unreadable.
+    """
+    if UNREADABLE in cwd or any(UNREADABLE in word for word in rest):
+        return UNREADABLE
     positional = [word for word in rest if not word.startswith("-")]
     remote = positional[0] if positional else None
     source = "HEAD"

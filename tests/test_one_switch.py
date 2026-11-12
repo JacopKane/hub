@@ -486,6 +486,23 @@ def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home,
             assert result.refused and result.findings == ["private_paths"], (option, result.reason)
 
 
+def test_a_push_whose_remote_branch_or_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
+    with given("a repo with a local bare remote and a new commit"):
+        home.install()
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", "Late change")
+    pushes = ["git push origin $BRANCH", "git push $REMOTE main", "git -C $DIR push",
+              "git push origin ${BRANCH}:main", "git push origin $(git branch --show-current)"]
+    with when("Claude sends pushes whose remote, branch or folder comes from a variable or a substitution"):
+        results = {push: home.hook(tool, "PreToolUse", push) for push in pushes}
+    with then("the gate reads each one, finds it can not tell the commits, and refuses it as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], push
+
+
 def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits():
     import tempfile
     with tempfile.TemporaryDirectory() as folder:
