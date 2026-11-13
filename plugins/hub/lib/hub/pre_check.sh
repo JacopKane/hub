@@ -21,17 +21,17 @@
 state="${XDG_STATE_HOME:-$HOME/.local/state}/hubctl"
 config_name=  # the settings folder's name, from the one file that holds it
 read -r config_name 2>/dev/null < "${0%/*}/config_name" || :
-[ -n "$config_name" ] || exec python3 -I "${0%/*}/dispatch.py" "$1"
+[ -n "$config_name" ] || exec python3 -I -S "${0%/*}/dispatch.py" "$1"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/$config_name"
 old_config="${XDG_CONFIG_HOME:-$HOME/.config}/hubctl"
 event=$1
 piped=
 dispatch() {
   if [ -n "$piped" ]; then  # this check read the hook input, so it passes it on
-    printf '%s\n' "$input" | python3 -I "${0%/*}/dispatch.py" "$event"
+    printf '%s\n' "$input" | python3 -I -S "${0%/*}/dispatch.py" "$event"
     exit $?
   fi
-  exec python3 -I "${0%/*}/dispatch.py" "$event"
+  exec python3 -I -S "${0%/*}/dispatch.py" "$event"
 }
 
 named_tool() {  # starts the dispatcher unless the call's tool surely has no marker

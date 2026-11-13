@@ -31,7 +31,6 @@ import re
 import shutil
 
 from . import files, keys, links, resolve, slots, tree as tree_module, uninstall
-from .adapters import jobs
 
 APPLIES = "applies.jsonl"
 COST = "cost.json"
@@ -78,6 +77,7 @@ def run(tree=None):
         cost[tool] = {"parts": parts, "total": {"start_text": len(slots.start_text(texts))}}
     files.write_json(files.state_path(COST), cost)
     remove(files.state_path(MARKERS_DONE))
+    from .adapters import jobs  # only an apply needs the job code
     lines += jobs.sync(wanted_jobs(tree, data))
     files.append_line(files.state_path(APPLIES), {"time": resolve.now(), "lines": len(lines)})
     files.write_json(files.state_path(resolve.RESOLVED), data)
@@ -162,6 +162,7 @@ def wanted_jobs(tree, data):
                 return found
         return None
 
+    from .adapters import jobs
     wanted = []
     for part in tree.parts:
         for spec in part.data.get("jobs", []):

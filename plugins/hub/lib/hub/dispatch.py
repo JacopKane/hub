@@ -36,7 +36,7 @@ LIB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
 
-from hub import chat_notices, files, links, resolve, signals, uninstall  # noqa: E402
+from hub import chat_notices, files, resolve, signals, uninstall  # noqa: E402
 
 CALLS = "calls"
 CALL_AGE = 24 * 3600  # stored answers older than this are removed
@@ -218,6 +218,7 @@ def session_start(tool, session=None):
     """
     if tool != "claude_code":
         return {}
+    from hub import links  # apply loads links anyway; this only keeps dispatch itself light
     note = files.read_json(files.state_path(links.AGENTS_FOLDER_MADE))
     if note is not None and (not session or note.get("session") != session):
         with contextlib.suppress(FileNotFoundError):
