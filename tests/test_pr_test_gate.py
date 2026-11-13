@@ -503,8 +503,15 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
     update = graphql_call('mutation { edited: updatePullRequest(input: {pullRequestId: "PR_kw1", '
                           'body: "All tests pass."}) { clientMutationId } }')
     feature_steps = ["g''it push", "'gi't push origin feature"]
-    new_pr_steps = [f"gh pr new --title T --body-file {good}", f"g''h pr new --title T --body-file {good}"]
+    new_pr_steps = [f"gh pr new --title T --body-file {good}", f"g''h pr new --title T --body-file {good}",
+                    f"gh pr -R acme/demo create --title T --body-file {good}",
+                    f"gh -R acme/demo pr create --title T --body-file {good}",
+                    f"gh --help=false pr create --title T --body-file {good}",
+                    f"gh pr --repo=acme/demo new --title T --body-file {good}",
+                    f"gh pr -Racme/demo new --title T --body-file {good}",
+                    f"gh --help=0 pr --title T new --body-file {good}"]
     side_steps = [f"gh api repos/acme/demo/pulls --input {side_request}", create,
+                  f"gh --help=false api repos/acme/demo/pulls --input {side_request}",
                   f"gh api https://api.github.com/repos/acme/demo/pulls --input {side_request}",
                   graphql_call('mutation { createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", '
                                'headRefName: "side", title: "T", body: $body}) { pullRequest { number } } }',
@@ -559,11 +566,14 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         home.hubctl_from_mod("off", "public_text_gate.unreadable")
         wrapped = bash(home, "bash -c 'g\"\"it push origin feature'")
         unknown_option = bash(home, f"gh api repos/acme/demo/pulls --head-ref side -F body=@{good}")
+        hidden_action = bash(home, f"gh pr $ACTION --title T --body-file {good}")
     with then("this gate refuses it as a push inside another command, even with a report, and refuses a gh api "
               "option it does not know"):
         assert says(home, wrapped, "unreadable_push.md", why="it runs inside another command"), wrapped.reason
         assert says(home, unknown_option, "unreadable_push.md", why="gh api has an option the gate does not know"), \
             unknown_option.reason
+        assert says(home, hidden_action, "unreadable_push.md",
+                    why="a variable or a substitution fills in a word gh may read as its command"), hidden_action.reason
 
 
 def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):
@@ -782,8 +792,12 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
     with when("Claude marks PR 12 and PR 13 ready by number"):
         twelve = bash(home, "gh pr ready 12")
         thirteen = bash(home, "gh pr ready 13")
-    with then("the gate reads each head from gh: PR 12's head has no report, PR 13's has"):
+        spelled = [bash(home, step) for step in ("gh --help=false pr ready 12", "gh pr --help=0 ready 12")]
+    with then("the gate reads each head from gh: PR 12's head has no report, PR 13's has, however gh's own "
+              "options are placed"):
         assert says(home, twelve, "no_report.md", short=side[:7]), twelve.reason
+        for result in spelled:
+            assert says(home, result, "no_report.md", short=side[:7]), result.reason
         assert quiet(thirteen)
         assert ["pr", "view", "12", "--json", "headRefOid,baseRefName"] in gh_calls(home)
     with when("gh fails"):

@@ -94,6 +94,7 @@ WHY = {
     "api_option": "gh api has an option the gate does not know",
     "folder": "the folder it runs in is missing or not known",
     "body": "a variable or a substitution fills in the PR body",
+    "gh_command": "a variable or a substitution fills in a word gh may read as its command",
 }
 
 
@@ -244,7 +245,7 @@ def read_steps(line, cwd):
             if program not in ("git", "gh"):
                 continue
             command.cwd = here or cwd
-            step_words = words[index:] if program == "git" else without_gh_alias(words[index:])
+            step_words = words[index:] if program == "git" else without_gh_alias(gh_words(parser, words[index:]))
             target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
             api = program == "gh" and step_words[1:2] == ["api"]
             if not target or (target[0] not in RELEVANT and not api):
@@ -279,6 +280,14 @@ def may_push_or_open_a_pr(line, cwd):
     words = [word for segment in segments or [] for word in segment]
     return (segments is None or any(GIT_OR_GH.search(text) for text in [line, *words])
             or any(target != "wrapped" for target, _text in parser.public_steps(line, cwd, log=False)))
+
+
+def gh_words(parser, words):
+    """gh's words in the order gh reads them, from the text gate's reader, refusing a command the shell fills in."""
+    ordered = parser.gh_command(words)
+    if ordered is None:
+        raise unreadable("gh_command")
+    return ordered
 
 
 def without_gh_alias(words):

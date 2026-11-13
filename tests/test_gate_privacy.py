@@ -150,3 +150,37 @@ def test_a_review_body_is_read_whatever_the_review_type(home, tool):
     with and_("a close with a comment is still read, and an approval with no body runs"):
         assert home.hook(tool, "PreToolUse", "gh pr close 3 --comment 'See /home/sam/e.md'").findings == ["private_paths"]
         assert home.hook(tool, "PreToolUse", "gh pr review 3 --approve").ran
+
+
+def test_gh_options_before_the_command_and_action_are_read_the_way_gh_reads_them(home, tool):
+    with given("hub is installed with the gate at warn"):
+        home.install()
+    with when("Claude puts gh's own options, or an option of the action, before the command or the action"):
+        commands = [
+            "gh pr -R acme/demo edit 7 --body 'See /home/sam/a.md'",
+            "gh -R acme/demo pr create --title T --body 'See /home/sam/b.md'",
+            "gh --help=false pr create --title T --body 'See /home/sam/c.md'",
+            "gh pr --repo=acme/demo comment 7 --body 'See /home/sam/d.md'",
+            "gh issue -Racme/demo comment 4 --body 'See /home/sam/e.md'",
+            "gh pr --body 'See /home/sam/f.md' create --title T",
+            "gh '' pr create --title T --body 'See /home/sam/g.md'",
+            "gh pr --help create --title T --body 'See /home/sam/k.md'",
+            "gh --help=false api -X PATCH repos/o/r/pulls/1 -f body='See /home/sam/h.md'",
+        ]
+        results = [home.hook(tool, "PreToolUse", command) for command in commands]
+    with then("each is read as the action gh runs and refused for the home path"):
+        assert [result.findings for result in results] == [["private_paths"]] * len(commands)
+    with when("the shell fills in a word gh may read as its command or action"):
+        hidden = [home.hook(tool, "PreToolUse", command) for command in
+                  ("gh pr $ACTION 7 --body 'See /home/sam/i.md'", "gh $GROUP create --body x", "gh -$FLAG pr create")]
+    with then("each is refused, since the gate can not tell what gh runs"):
+        assert [result.findings for result in hidden] == [["unreadable"]] * len(hidden)
+    with when("an option takes the next word as its value, a value the shell fills in, and reads"):
+        taken = home.hook(tool, "PreToolUse", "gh -X pr create --body 'See /home/sam/j.md'")
+        filled = home.hook(tool, "PreToolUse", "gh pr --repo=$REPO view 7")
+        reads = [home.hook(tool, "PreToolUse", command) for command in
+                 ("gh -R acme/demo pr view 7", "gh --help=false pr list", "brew upgrade gh --verbose", "gh --version")]
+    with then("they run, as gh takes pr as the value of -X and finds no command named create"):
+        assert taken.ran and taken.output == {}, taken.findings
+        assert filled.ran and filled.output == {}, filled.findings
+        assert all(result.ran and result.output == {} for result in reads), [result.findings for result in reads]

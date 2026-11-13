@@ -211,6 +211,13 @@ GH_API_SHORT_SWITCHES = {"i": "--include", "h": "--help"}
 GH_API_LONG_VALUES = {"--field", "--raw-field", "--method", "--header", "--preview", "--template", "--jq",
                       "--hostname", "--input", "--cache"}
 GH_API_LONG_SWITCHES = {"--include", "--slurp", "--paginate", "--silent", "--verbose", "--help"}
+# While gh looks for its command and action, help is the one option every command has that takes no value. Any
+# other option, known or not, takes the next word as its value unless it holds "=" or is a cluster of short
+# letters, as in gh. gh's own --version takes no value either, but gh stops with an error when it comes before a
+# command, so reading it as taking a value changes nothing.
+GH_COMMAND_SWITCHES = {"-h", "--help"}
+# The gh commands whose next command word is the action the gate reads.
+GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 
 
 # Finding the text a command makes public
@@ -751,7 +758,58 @@ def gh_api_target(items, texts):
     return "api"
 
 
+def gh_command(words):
+    """gh's words in the order gh reads them: the program, its command, the action, then every other word.
+
+    gh finds its command and action by skipping its options, so gh -R o/r pr create and gh pr --help=false
+    create both run pr create. Options that came before the command or the action follow the action, where gh
+    reads them too. Without a command the result is the program alone. Returns None when the shell fills in a
+    word that gh may read as its command, its action or an option before them.
+    """
+    program, rest = words[0], list(words[1:])
+    group_at = next_gh_command_word(rest)
+    if group_at is None:
+        return None
+    if group_at == len(rest):
+        return [program]
+    group, others = rest[group_at], rest[:group_at] + rest[group_at + 1:]
+    if group not in GH_GROUPS_WITH_ACTIONS:
+        return [program, group, *others]
+    action_at = next_gh_command_word(others)
+    if action_at is None:
+        return None
+    if action_at == len(others):
+        return [program, group, *others]
+    return [program, group, others[action_at], *others[:action_at], *others[action_at + 1:]]
+
+
+def next_gh_command_word(words):
+    """Where gh finds its next command word in words, len(words) when there is none, or None when the shell fills in
+    a word gh may read as that command or as an option before it. "--" ends the search, as in gh."""
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            return len(words)
+        before_mark = word.split(UNREADABLE, 1)[0]
+        if UNREADABLE in word and not (before_mark.startswith("-") and "=" in before_mark):
+            return None
+        if word and not word.startswith("-"):
+            return index
+        index += 2 if gh_option_takes_next_word(word) else 1
+    return len(words)
+
+
+def gh_option_takes_next_word(word):
+    """Whether gh takes the next word as the value of this option while it looks for a command."""
+    lone = word.startswith("--") or (word.startswith("-") and len(word) == 2)
+    return lone and "=" not in word and word not in GH_COMMAND_SWITCHES
+
+
 def gh_target(words, command):
+    words = gh_command(words)
+    if words is None:
+        return WRAPPED, UNREADABLE  # the shell fills in which gh command runs
     if len(words) < 2:
         return None
     group, rest = words[1], words[2:]
