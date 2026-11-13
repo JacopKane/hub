@@ -436,6 +436,48 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
             assert quiet(bash(home, form)), form
 
 
+def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub_logs_no_error(home):
+    with given("branch feature with open PR 7, its pushed commit as PR 7's head, a new commit, no report, a body "
+               "file with a tested part, and a folder that is not there"):
+        with_github(home)
+        feature = pushed_branch(home)
+        home.git("push", "-q")
+        fake_gh(home, open={"feature": 7}, heads={"7": feature, "feature": feature})
+        feature = change(home)
+        good = body_file(home, CANONICAL)
+        missing = os.path.join(home.root, "gone")
+    steps = [f"gh pr create --title T --body-file {good}", f"gh pr new --title T --body-file {good}",
+             f"gh pr edit 7 --body-file {good}", "gh pr ready", "git push origin feature"]
+    lines = [place + step for place in (f"cd {missing}; ", "cd -; ", f"cd {missing} && ", "cd -; cd .; ")
+             for step in steps]
+    lines.append(f"git -C {missing} push origin feature")
+    with when("Claude sends a new PR, gh's pr new, a body edit, a ready step and a push after a cd to a folder "
+              "that is not there or back to the last folder, also with a cd from there, and a push into a folder "
+              "that is not there"):
+        results = {line: bash(home, line) for line in lines}
+    with then("each is refused as a step whose folder the gate can not find, and hub logs no error"):
+        for line, result in results.items():
+            assert says(home, result, "unreadable_push.md", why="the folder it runs in is missing or not known"), \
+                (line, result.reason)
+        assert home.errors() == ""
+    with when("the text gate's unreadable check is off and a PR body comes from a variable or a substitution"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        hidden = {"new": bash(home, 'gh pr create --title T --body "$BODY"'),
+                  "edit": bash(home, 'gh pr edit 7 --body "$(git log -1 --format=%b)"'),
+                  "api": bash(home, 'gh api -X PATCH repos/acme/demo/pulls/7 -f body="$BODY"')}
+    with then("each is refused, since the gate can not check a body it can not read"):
+        for name, result in hidden.items():
+            assert says(home, result, "unreadable_push.md", why="a variable or a substitution fills in the PR body"), \
+                (name, result.reason)
+    with when("feature gets a passing report and Claude sends the steps from the repo's own folder"):
+        record(home)
+        fake_gh(home, open={"feature": 7}, heads={"7": feature, "feature": feature})
+        here = [f"cd {home.work}; " + step for step in steps] + [f"git -C {home.work} push origin feature"]
+    with then("each runs"):
+        for line in here:
+            assert quiet(bash(home, line)), line
+
+
 def graphql_call(query, *fields):
     return " ".join(["gh api graphql -f", shlex.quote("query=" + query), *fields])
 
@@ -680,8 +722,10 @@ def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_w
     with when("the body comes from a heredoc, once whole and once without its part"):
         heredoc = bash(home, f"gh pr create --title T -F - <<'EOF'\n{CANONICAL}EOF")
         bare_heredoc = bash(home, f"gh pr create --title T --body-file - <<'EOF'\n{NO_PART}EOF")
-    with then("the gate reads it: the whole body runs and the other is refused"):
+        cat_heredoc = bash(home, f"gh pr create --title T --body \"$(cat <<'EOF'\n{CANONICAL}EOF\n)\"")
+    with then("the gate reads it: the whole body runs, also through $(cat <<'EOF' ...), and the other is refused"):
         assert quiet(heredoc), heredoc.reason
+        assert quiet(cat_heredoc), cat_heredoc.reason
         assert bare_heredoc.refused and bare_heredoc.reason == missing_part(home)
     with when("Claude lets gh fill the body from the commits"):
         filled = bash(home, "gh pr create --fill")

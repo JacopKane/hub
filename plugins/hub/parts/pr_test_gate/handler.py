@@ -15,10 +15,11 @@ another host and pushes with nothing new stay quiet. A branch named alone in
 a push counts at the remote branch git sends it to, by the remote's push
 settings or the branch's upstream.
 
-A step the gate can not read, such as one inside a wrapper, a substitution
-or after another command, is refused and asked to be written out. Its git
-and gh lookups share one deadline, so the answer comes well inside the
-hook's time.
+A step the gate can not read is refused and asked to be written out. That
+covers a step inside a wrapper or a substitution, after another command, in
+a folder that is missing or not known, or with a body the shell fills in.
+Its git and gh lookups share one deadline, so the answer comes well inside
+the hook's time.
 
 Errors are not caught here, because hub's dispatcher refuses PR steps on any error.
 """
@@ -91,6 +92,8 @@ WHY = {
     "node": "a node id names the PR, not its number",
     "head": "the PR's head branch is not named",
     "api_option": "gh api has an option the gate does not know",
+    "folder": "the folder it runs in is missing or not known",
+    "body": "a variable or a substitution fills in the PR body",
 }
 
 
@@ -181,7 +184,12 @@ class Lookups:
         """git's output with its ends trimmed, or None when it fails. A git call that is too slow stops the gate."""
         key = (cwd, words)
         if key not in self.cache:
-            done = self.run(["git", *words], cwd, GIT_SECONDS)
+            try:
+                done = self.run(["git", *words], cwd, GIT_SECONDS)
+            except OSError:
+                if os.path.isdir(cwd):
+                    raise
+                raise unreadable("folder") from None  # such as git -C with a folder that is not there
             if done is None:
                 raise Stop("slow.md")
             self.cache[key] = done[1].strip() if done[0] == 0 else None
@@ -229,13 +237,13 @@ def read_steps(line, cwd):
     found, here = [], cwd
     for position, words in enumerate(segments):
         if len(words) == 2 and words[0] == "cd" and unreadable_mark() not in words[1]:
-            here = os.path.join(here, os.path.expanduser(words[1]))
+            here = folder_after_cd(here, words[1])
             continue
         for index, word in enumerate(words):
             program = os.path.basename(word)
             if program not in ("git", "gh"):
                 continue
-            command.cwd = here
+            command.cwd = here or cwd
             step_words = words[index:] if program == "git" else without_gh_alias(words[index:])
             target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
             api = program == "gh" and step_words[1:2] == ["api"]
@@ -243,10 +251,23 @@ def read_steps(line, cwd):
                 continue
             if any(os.path.basename(before) in parser.FEEDERS for before in words[:index]):
                 raise unreadable("feeder")
+            if here is None or not os.path.isdir(here):
+                raise unreadable("folder")
             found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
     if len(named) > len([step for step in found if step.target in RELEVANT]):
         raise unreadable("inside")
     return command, found
+
+
+def folder_after_cd(here, target):
+    """The folder a cd on the line moves to, or None when the gate can not know it: cd - goes back to a folder the
+    line does not show, and a relative cd from an unknown folder stays unknown."""
+    if target == "-":
+        return None
+    folder = os.path.expanduser(target)
+    if os.path.isabs(folder):
+        return folder
+    return None if here is None else os.path.join(here, folder)
 
 
 def may_push_or_open_a_pr(line, cwd):
@@ -593,8 +614,10 @@ def body_of(command, step, rest, text_options=("--body", "-b"), file_options=("-
 
 def body_stop(body, cwd, flags, answer):
     """Refuse a body whose testing part is missing or says nothing about what was left out."""
-    if body is None or gate().UNREADABLE in body or not flags.runs(f"{PART}.body"):
+    if body is None or not flags.runs(f"{PART}.body"):
         return
+    if gate().UNREADABLE in body:
+        raise unreadable("body")
     checker = check_body()
     found = checker.tested_part(body, cwd, expected=True)
     if found["findings"]:
