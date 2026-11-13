@@ -1,0 +1,1 @@
+hub stopped this step, because the test report for {short} has no smoke run and no reason why there is none. Run {{step}} pr-tested run again with --smoke '<command>', or with --no-smoke '<why>' when the repo has no smoke run.
