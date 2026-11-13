@@ -743,6 +743,33 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
         texts_report(home, base={"branch": "release", "sha": head(home, "origin/main")})
     with then("the push runs"):
         assert quiet(bash(home, "git push"))
+    with when("Claude opens a new PR for docs into release, spelling the base each way gh reads it"):
+        good = body_file(home, CANONICAL)
+        into_release = {spelling: bash(home, f"gh pr create {spelling} --title Guide --body-file {good}")
+                        for spelling in ("--base release", "--base=release", "-B release", "-Brelease")}
+    with then("each one runs"):
+        assert all(quiet(result) for result in into_release.values()), \
+            {spelling: result.reason for spelling, result in into_release.items()}
+    with when("Claude opens it into main, or names no base so it goes into the remote's default branch"):
+        into_main = bash(home, f"gh pr create --base main --title Guide --body-file {good}")
+        no_base = bash(home, f"gh pr create --title Guide --body-file {good}")
+        last_wins = bash(home, f"gh pr create --base release --base main --title Guide --body-file {good}")
+    with then("each is refused, since the report lists the changes since release, not since main"):
+        for result in (into_main, no_base, last_wins):
+            assert says(home, result, "texts_base.md", base="release", into="main"), result.reason
+    with when("Claude marks PR 9 ready, by number and as the current branch's PR, while gh says it goes into release"):
+        docs_head = head(home, "HEAD")
+        fake_gh(home, open={"docs": 9}, heads={"9": docs_head, "docs": docs_head},
+                bases={"9": "release", "docs": "release"})
+        ready_by_number, ready_here = bash(home, "gh pr ready 9"), bash(home, "gh pr ready")
+    with then("both run"):
+        assert quiet(ready_by_number), ready_by_number.reason
+        assert quiet(ready_here), ready_here.reason
+    with when("gh says PR 9 goes into main"):
+        fake_gh(home, open={"docs": 9}, heads={"9": docs_head, "docs": docs_head})
+        ready_into_main = bash(home, "gh pr ready 9")
+    with then("the ready step is refused for main, the base gh gave"):
+        assert says(home, ready_into_main, "texts_base.md", base="release", into="main"), ready_into_main.reason
 
 
 def test_every_refusal_teaches_the_rule_and_a_subagent_gets_the_same_answer(home):
