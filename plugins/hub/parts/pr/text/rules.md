@@ -1,0 +1,1 @@
+When you work on a pull request, three rules hold in every repo, and no repo guide changes them. Steps other people can see, such as a push, a new PR, a comment or a review, wait for the user's order. Nobody is @-mentioned unless the user asks. Work and questions never go to a colleague. Bring them to the user instead. Follow these defaults too:

@@ -136,6 +136,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | link_check | Sends a reply back once when it names a PR, issue or ticket without a link | off | Claude Code, Cursor | "turn on the link check" |
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |
+| pr | Planned, not in this version yet. Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
 | scout | A small, cheap agent for one mechanical job (Haiku) | on | Claude Code, Cursor | "turn off scout" |
 | researcher | A read-only agent for reading docs, pages and code (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on researcher" |
 | worker | An agent that carries out an exact plan (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on worker" |

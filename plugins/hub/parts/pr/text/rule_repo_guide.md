@@ -1,0 +1,1 @@
+- Before your first PR in a repo, read its contributing guide, PR template and CLAUDE.md or AGENTS.md, and follow them. The repo's rules win over these defaults, and the user's newest instruction wins over both.

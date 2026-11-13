@@ -1,0 +1,1 @@
+- Slice PRs by feature, not by layer. A PR that adds an endpoint or another contract also shows its first real use. If a PR would grow too large to review, propose a split before you open anything.

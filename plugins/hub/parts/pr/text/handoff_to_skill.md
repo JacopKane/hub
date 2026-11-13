@@ -1,0 +1,1 @@
+The {skill} skill is on and does {job}, so load it for that step. hub's three PR rules still hold while it runs. Steps other people can see wait for the user's order, and for the morning while the night hold is on. Nobody is @-mentioned unless the user asks. Work and questions never go to a colleague.
