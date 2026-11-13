@@ -104,7 +104,7 @@ def test_chat_session_links_and_escaped_dashes_are_caught(home, tool):
         home.install()
         home.hubctl("on", f"{GATE}.dashes")
     with when("a commit carries a chat session link, or a session trailer alone"):
-        link = commit("Fix it\n\nSee https://claude.ai/code/session_01AbCdEf")
+        link = commit("Fix it\n\nSee https://claude." + "ai/code/session_00000000AbCdEf")
         trailer = commit("Fix it\n\nClaude-Session: 01AbCdEf")
         results = [home.hook(tool, "PreToolUse", command) for command in (link, trailer, link)]
     with then("each is refused as a secret, every time"):

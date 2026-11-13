@@ -351,6 +351,71 @@ def test_the_scrub_scan_fails_on_planted_values_and_names_the_class(tmp_path):
             assert value not in scan.stdout + scan.stderr
 
 
+def test_the_scrub_scan_finds_links_into_private_pages_but_not_made_up_ones(tmp_path):
+    links = ["https://claude." + "ai/artifact/" + "Q7f3kLmN2pXz",
+             "see www.notion." + "so/" + "Team-notes-4f1c9a7e2b",
+             "https://drive.google." + "com/file/d/" + "1aB2cD3eF4gH/view",
+             "team.notion." + "site/" + "Plan-9e8d7c",
+             "https://docs.google." + "com/document/d/" + "1xYz9WvU/edit"]
+    made_up = ["https://claude." + "ai/artifact/" + "00000000",
+               "https://docs.google." + "com/document/d/" + "00000000/edit",
+               "signed in to claude." + "ai, no link here"]
+    with given("a doc with five links into private pages, and one with made-up ids and a bare host name"):
+        (tmp_path / "links.md").write_text("\n".join(["clean line", *links]) + "\n")
+        (tmp_path / "made_up.md").write_text("\n".join(made_up) + "\n")
+    with when("scrub_scan.py runs on both"):
+        scan = subprocess.run([sys.executable, "-I", os.path.join(REPO, "tests", "scrub_scan.py"), str(tmp_path)],
+                              capture_output=True, text=True)
+    with then("it names each private link by line and class, passes the made-up ones and prints no link"):
+        assert scan.returncode == 1
+        assert scan.stdout.splitlines() == [f"{tmp_path / 'links.md'}:{number}: private_link" for number in range(2, 7)]
+        for link in links:
+            assert link.split("/")[-1] not in scan.stdout + scan.stderr
+
+
+def scan_lines(folder, name, lines):
+    (folder / name).write_text("\n".join(lines) + "\n")
+    scan = subprocess.run([sys.executable, "-I", os.path.join(REPO, "tests", "scrub_scan.py"), str(folder / name)],
+                          capture_output=True, text=True)
+    return scan, [int(line.split(":")[1]) for line in scan.stdout.splitlines()]
+
+
+def test_a_page_link_passes_as_made_up_only_when_its_id_is_zeros(tmp_path):
+    claude, notion, docs = "claude." + "ai", "notion." + "so", "docs.google." + "com"
+    with given("links that hold eight zeros next to a real-looking id, a query, a fragment or a workspace name"):
+        wide = [f"https://{claude}/share/Q7f3kLmN2pXz?from=" + "00000000",
+                f"https://{claude}/chat/4f1c9a7e2b/" + "00000000",
+                f"https://{claude}/artifact/" + "00000000#Q7f3kLmN",
+                f"https://{claude}/artifact/" + "00000000Q7f3kLmN",
+                "https://zorblat.notion." + "site/Page-" + "00000000"]
+    with and_("links whose only id is zeros, inside markdown and quotes, and a bare host name"):
+        made_up = [f"`https://{claude}/artifact/" + "00000000`",
+                   f"[a page](https://{docs}/document/d/" + "00000000/edit).",
+                   f"\"www.{notion}/Team-notes-" + "00000000\",",
+                   f"https://{claude}/code/session_" + "00000000",
+                   f"https://acme.notion." + "site/" + "00000000-0000-0000-0000-000000000000",
+                   f"signed in to {claude}, no link here"]
+    with when("scrub_scan.py runs on each file"):
+        wide_scan, wide_hits = scan_lines(tmp_path, "wide.md", wide)
+        made_up_scan, made_up_hits = scan_lines(tmp_path, "made_up.md", made_up)
+    with then("every wide link is a private_link hit, and every made-up one passes"):
+        assert wide_hits == list(range(1, len(wide) + 1)), wide_scan.stdout
+        assert all(line.endswith(": private_link") for line in wide_scan.stdout.splitlines())
+        assert made_up_scan.returncode == 0 and made_up_hits == [], made_up_scan.stdout
+
+
+def test_page_hosts_are_found_in_any_case(tmp_path):
+    with given("links into private pages with the host written in capitals or mixed case"):
+        links = ["https://Claude." + "AI/artifact/Q7f3kLmN2pXz",
+                 "DOCS.GOOGLE." + "COM/document/d/1xYz9WvU/edit",
+                 "https://www.Notion." + "So/Team-notes-4f1c9a7e2b"]
+    with when("scrub_scan.py runs"):
+        scan, hits = scan_lines(tmp_path, "links.md", links)
+    with then("each line is a private_link hit"):
+        assert scan.returncode == 1 and hits == [1, 2, 3], scan.stdout
+        assert all(line.endswith(": private_link") for line in scan.stdout.splitlines())
+
+
 def test_a_manifest_that_names_an_unknown_id_or_holds_code_fails_the_check(home):
     marker = os.path.join(home.root, "ran")
     with given("one manifest whose needs name an unknown id, and one whose relevant_if calls a function"):
