@@ -204,6 +204,13 @@ API_TARGETS = [
 ]
 GH_API_VALUE_OPTIONS = GH_FIELD_OPTIONS | {"-X", "--method", "--input", "-H", "--header", "-q", "--jq",
                                            "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
+# The options of gh api, by long name, as gh reads them: short letters that take a value or not, and long names.
+GH_API_SHORT_VALUES = {"F": "--field", "f": "--raw-field", "X": "--method", "H": "--header", "p": "--preview",
+                       "t": "--template", "q": "--jq"}
+GH_API_SHORT_SWITCHES = {"i": "--include", "h": "--help"}
+GH_API_LONG_VALUES = {"--field", "--raw-field", "--method", "--header", "--preview", "--template", "--jq",
+                      "--hostname", "--input", "--cache"}
+GH_API_LONG_SWITCHES = {"--include", "--slurp", "--paginate", "--silent", "--verbose", "--help"}
 
 
 # Finding the text a command makes public
@@ -681,23 +688,62 @@ def graphql_target(text):
     return "api"
 
 
-def gh_api_target(rest, texts):
-    endpoints, skip = [], False
-    for word in rest:
-        if skip:
-            skip = False
-        elif word in GH_API_VALUE_OPTIONS:
-            skip = True
-        elif not word.startswith("-"):
-            endpoints.append(word)
+def gh_api_items(words):
+    """The words of a gh api command, read the way gh reads them.
+
+    Each item is (long option name, value), (None, word) for a word that is not an option, or
+    ("unknown", word) for an option gh does not have. A short option that takes a value takes the
+    rest of its word, after an optional "=", or else the next word, so -fbody=x, -F=body=x and
+    -ifbody=x all hold a field. Long options are never shortened, and "--" ends the options.
+    """
+    items, index = [], 0
+    while index < len(words):
+        if words[index] == "--":
+            return items + [(None, word) for word in words[index + 1:]]
+        found, used = gh_api_item(words[index], words[index + 1:index + 2])
+        items, index = items + found, index + used
+    return items
+
+
+def gh_api_item(word, following):
+    """The items one word of gh api gives, with how many words it uses: 1, or 2 when its value is the next word."""
+    if word.startswith("--"):
+        name, equals, value = word.partition("=")
+        if name in GH_API_LONG_SWITCHES or (name in GH_API_LONG_VALUES and equals):
+            return [(name, value)], 1
+        if name in GH_API_LONG_VALUES and following:
+            return [(name, following[0])], 2
+        return [("unknown", word)], 1
+    if not word.startswith("-") or word == "-":
+        return [(None, word)], 1
+    letters = word[1:]
+    switches = len(letters) - len(letters.lstrip("".join(GH_API_SHORT_SWITCHES)))
+    found = [(GH_API_SHORT_SWITCHES[letter], "") for letter in letters[:switches]]
+    if switches == len(letters):
+        return found, 1
+    letter, attached = letters[switches], letters[switches + 1:]
+    if letter not in GH_API_SHORT_VALUES or not (attached or following):
+        return found + [("unknown", word)], 1
+    if attached:
+        return found + [(GH_API_SHORT_VALUES[letter], attached[1:] if attached.startswith("=") else attached)], 1
+    return found + [(GH_API_SHORT_VALUES[letter], following[0])], 2
+
+
+def gh_api_target(items, texts):
+    """What a gh api command writes to, or None for a read.
+
+    gh sends POST when the command has a field or --input and no --method. An option gh does not
+    have counts as a write, since the gate can not tell what it does.
+    """
+    endpoints = [value for name, value in items if name is None]
+    unknown = any(name == "unknown" for name, _ in items)
     if endpoints and endpoints[0] == "graphql":
-        return graphql_target("\n".join(texts))
-    writes = bool(texts) or any(word == "--input" or word.startswith("--input=") for word in rest)
-    method = option_values(rest, ["-X", "--method"])
-    if method:
-        writes = method[-1].upper() != "GET"
-    if not writes or not endpoints:
-        return None
+        return graphql_target("\n".join(texts)) or ("api" if unknown else None)
+    methods = [value for name, value in items if name == "--method"]
+    sends = any(name in ("--field", "--raw-field", "--input") for name, _ in items)
+    writes = methods[-1].upper() != "GET" if methods else sends
+    if not endpoints or not (writes or unknown):
+        return "api" if unknown else None
     endpoint = endpoints[0].split("?", 1)[0].strip("/")
     for pattern, target in API_TARGETS:
         if re.search(pattern, endpoint):
@@ -710,20 +756,23 @@ def gh_target(words, command):
         return None
     group, rest = words[1], words[2:]
     if group == "api":
+        items = gh_api_items(rest)
         texts = []
-        for name in sorted(GH_FIELD_OPTIONS):
-            for field in option_values(rest, [name]):
-                key, _, value = field.partition("=")
-                if name in ("-F", "--field") and value.startswith("@"):
-                    value = command.from_file(value[1:])
-                value = command.expand(value)
-                texts.append(value)
-                if key == "content":
-                    texts.append(decoded(value))
-        for path in option_values(rest, ["--input"]):
+        for name, field in items:
+            if name not in ("--field", "--raw-field"):
+                continue
+            key, _, value = field.partition("=")
+            if name == "--field" and value.startswith("@"):
+                value = command.from_file(value[1:])
+            value = command.expand(value)
+            texts.append(value)
+            if key == "content":
+                texts.append(decoded(value))
+        for path in [value for name, value in items if name == "--input"]:
             body = command.from_file(path)
             texts += [body, decoded(json_field(body, "content"))]
-        target = gh_api_target(rest, [text for text in texts if text])
+        texts += [UNREADABLE for name, _ in items if name == "unknown"]
+        target = gh_api_target(items, [text for text in texts if text])
         return (target, "\n".join(texts)) if target else None
     if group == "release" and rest and rest[0] == "upload":
         return "release", "\n".join(release_assets(rest[1:], command))

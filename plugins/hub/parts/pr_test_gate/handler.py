@@ -86,6 +86,7 @@ WHY = {
     "unknown": "the branch is not in this repo",
     "node": "a node id names the PR, not its number",
     "head": "the PR's head branch is not named",
+    "api_option": "gh api has an option the gate does not know",
 }
 
 
@@ -648,35 +649,32 @@ def ready_pr(step, named, lookups):
     return [(branch or "HEAD", commit, step.cwd, bases)]
 
 
-def api_fields(command, rest):
+def api_fields(command, items):
+    """The fields a gh api command sends, by key, with -F's @file read. As in gh, -f fields come first and -F
+    fields after them, and a later field with the same key wins."""
     fields = {}
-    for name in ("-f", "--raw-field", "-F", "--field"):
-        for field in gate().option_values(rest, [name]):
-            key, _equals, value = field.partition("=")
-            if name in ("-F", "--field") and value.startswith("@"):
-                value = command.from_file(value[1:])
-            fields[key] = command.expand(value)
+    ordered = [item for kind in ("--raw-field", "--field") for item in items if item[0] == kind]
+    for name, field in ordered:
+        key, _equals, value = field.partition("=")
+        if name == "--field" and value.startswith("@"):
+            value = command.from_file(value[1:])
+        fields[key] = command.expand(value)
     return fields
 
 
 def api_step(command, step, flags, answer, lookups):
     """New PRs and body edits sent through gh api, by REST or GraphQL."""
-    parser = gate()
-    rest = step.words[2:]
+    items = gate().gh_api_items(step.words[2:])
+    if any(name == "unknown" for name, _ in items):
+        raise unreadable("api_option")
     command.cwd = step.cwd
-    fields = api_fields(command, rest)
-    endpoints, skip = [], False
-    for word in rest:
-        if skip:
-            skip = False
-        elif word in parser.GH_API_VALUE_OPTIONS:
-            skip = True
-        elif not word.startswith("-"):
-            endpoints.append(word)
+    fields = api_fields(command, items)
+    endpoints = [value for name, value in items if name is None]
     endpoint = api_path(endpoints[0]) if endpoints else ""
-    methods = parser.option_values(rest, ["-X", "--method"])
-    inputs = parser.option_values(rest, ["--input"])
-    method = methods[-1].upper() if methods else ("POST" if fields or inputs else "GET")  # as gh picks it
+    methods = [value for name, value in items if name == "--method"]
+    inputs = [value for name, value in items if name == "--input"]
+    sends = any(name in ("--field", "--raw-field") for name, _ in items) or inputs
+    method = methods[-1].upper() if methods else ("POST" if sends else "GET")  # as gh picks it
     for path in inputs:
         try:
             sent = json.loads(command.from_file(path))

@@ -94,6 +94,7 @@ def test_a_public_command_whose_text_the_gate_can_not_read_is_refused_until_the_
             "missing gist file": "gh gist create missing.md",
             "open heredoc": "git commit -F - <<EOF\nFix $THING\nEOF",
             "tag in an editor": "git tag -a v1",
+            "unknown gh api option": "gh api repos/o/r/issues --frobnicate -f body=hello",
         }
         results = {name: [home.hook(tool, "PreToolUse", command) for _ in range(2)]
                    for name, command in commands.items()}
@@ -494,6 +495,10 @@ def test_glued_messages_repo_and_label_descriptions_and_text_release_assets_are_
             "release upload asset": "gh release upload v1 clean.txt notes.txt --clobber",
             "asset label": "gh release upload v1 'app.bin#See /home/sam/app'",
             "asset glob": "gh release upload v1 *.txt",
+            "api field glued": "gh api repos/o/r/issues -fbody='See /home/sam/i.md'",
+            "api field with =": "gh api repos/o/r/issues -F=body='See /home/sam/i.md'",
+            "api field in a cluster": "gh api -ifbody='See /home/sam/i.md' repos/o/r/issues",
+            "api glued method": "gh api -XPATCH repos/o/r/labels/bug -fdescription='See /home/sam/l.md'",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused for the home path"):

@@ -402,13 +402,20 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
                   f"gh api https://api.github.com/repos/acme/demo/pulls --input {side_request}",
                   graphql_call('mutation { createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", '
                                'headRefName: "side", title: "T", body: $body}) { pullRequest { number } } }',
-                               f"-F body=@{good}").replace("gh api graphql", "gh api https://api.github.com/graphql")]
+                               f"-F body=@{good}").replace("gh api graphql", "gh api https://api.github.com/graphql"),
+                  f"gh api repos/acme/demo/pulls -fhead=side -fbase=main -ftitle=T -Fbody=@{good}",
+                  f"gh api repos/acme/demo/pulls -F=head=side -F=body=@{good}",
+                  f"gh api -ifhead=side repos/acme/demo/pulls -F body=@{good}",
+                  f"gh api -XPOST repos/acme/demo/pulls --raw-field=head=side --field body=@{good}"]
     with when("Claude pushes with a quoted program name, opens a PR with gh's pr new, sends a new PR through "
               "gh api --input or an aliased GraphQL mutation, by path or by full URL, and pushes every matching "
               "branch"):
         results = {step: bash(home, step) for step in feature_steps + new_pr_steps + side_steps}
         matching = {spec: bash(home, f"git push origin {spec}") for spec in (":", "+:")}
         bare = bash(home, f"gh api repos/acme/demo/pulls --input {bare_request}")
+        glued_bare = bash(home, "gh api repos/acme/demo/pulls -fhead=feature -fbody=x")
+        listing = bash(home, "gh api -X=GET repos/acme/demo/pulls -f head=side")
+        patched = bash(home, f"gh api -X PATCH repos/acme/demo/pulls -f head=side -F body=@{good}")
         aliased = {"ready": bash(home, ready), "update": bash(home, update)}
     with then("each is refused as its plain form would be: for the missing report of feature or side, for a "
               "body with no tested part, for a ready step by node id, and for pushing every branch"):
@@ -421,6 +428,9 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         for spec, result in matching.items():
             assert says(home, result, "unreadable_push.md", why="it pushes every branch"), (spec, result.reason)
         assert bare.refused and bare.reason == missing_part(home)
+        assert glued_bare.refused and glued_bare.reason == missing_part(home), glued_bare.reason
+        assert quiet(listing), listing.reason
+        assert quiet(patched), patched.reason
         assert says(home, aliased["ready"], "unreadable_push.md", why="a node id names the PR, not its number")
         assert aliased["update"].refused and aliased["update"].reason == missing_part(home)
     with when("feature and side get passing reports"):
@@ -442,8 +452,12 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
     with when("the text gate's unreadable check is off and Claude pushes with a quoted program name inside bash -c"):
         home.hubctl_from_mod("off", "public_text_gate.unreadable")
         wrapped = bash(home, "bash -c 'g\"\"it push origin feature'")
-    with then("this gate refuses it as a push inside another command, even with a report"):
+        unknown_option = bash(home, f"gh api repos/acme/demo/pulls --head-ref side -F body=@{good}")
+    with then("this gate refuses it as a push inside another command, even with a report, and refuses a gh api "
+              "option it does not know"):
         assert says(home, wrapped, "unreadable_push.md", why="it runs inside another command"), wrapped.reason
+        assert says(home, unknown_option, "unreadable_push.md", why="gh api has an option the gate does not know"), \
+            unknown_option.reason
 
 
 def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):
