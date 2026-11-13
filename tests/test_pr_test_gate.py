@@ -372,6 +372,70 @@ def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_o
             assert quiet(bash(home, form)), form
 
 
+def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(home):
+    with given("branch feature with open PR 7, a remote branch heads/x with open PR 8, and branch fix-a with a "
+               "new commit and no report"):
+        with_github(home)
+        pushed_branch(home)
+        home.git("push", "-q", "origin", "main:refs/heads/heads/x")
+        home.git("checkout", "-q", "-b", "fix-a", "main")
+        local = change(home)
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9})
+    named = ["git push origin fix-a", "git push origin heads/fix-a", "git push origin refs/heads/fix-a",
+             "git push -u origin fix-a"]
+    with when("the repo has no push settings and Claude pushes fix-a by name"):
+        plain = bash(home, "git push origin fix-a")
+    with then("it runs, since fix-a has no PR"):
+        assert quiet(plain), plain.reason
+    with when("push.default is upstream, fix-a's upstream is feature, and Claude names fix-a in each way"):
+        home.git("config", "push.default", "upstream")
+        home.git("config", "branch.fix-a.merge", "refs/heads/feature")
+        upstream = {form: bash(home, form) for form in named}
+    with then("each is refused for fix-a's commit on feature, the branch git updates"):
+        for form, result in upstream.items():
+            assert says(home, result, "no_report.md", short=local[:7], branch="feature"), (form, result.reason)
+    with when("fix-a has a second upstream, so git sends it under its own name"):
+        home.git("config", "--add", "branch.fix-a.merge", "refs/heads/other")
+        two_upstreams = bash(home, "git push origin fix-a")
+        home.git("config", "--unset-all", "branch.fix-a.merge")
+    with then("it runs, since fix-a has no PR"):
+        assert quiet(two_upstreams), two_upstreams.reason
+    mapped = [(["refs/heads/fix-a:refs/heads/feature"], "feature"), (["+refs/heads/fix-a:feature"], "feature"),
+              (["refs/heads/*:refs/heads/review/*"], "review/fix-a"),
+              (["refs/heads/fix-a:refs/heads/feature", "refs/heads/*:refs/heads/review/*"], "feature"),
+              (["^refs/heads/fix-a", "refs/heads/main:refs/heads/z", "refs/heads/*:refs/heads/review/*"],
+               "review/fix-a")]
+    for values, branch in mapped:
+        with when(f"the remote's push settings are {values} and Claude pushes fix-a by name"):
+            for value in values:
+                home.git("config", "--add", "remote.origin.push", value)
+            result = bash(home, "git push origin fix-a")
+            home.git("config", "--unset-all", "remote.origin.push")
+        with then(f"it is refused for fix-a's commit on {branch}, where the first setting that matches sends it"):
+            assert says(home, result, "no_report.md", short=local[:7], branch=branch), (values, result.reason)
+    with when("the remote's push setting names fix-a without refs/heads/, which git does not match"):
+        home.git("config", "remote.origin.push", "fix-a:refs/heads/feature")
+        short_source = bash(home, "git push origin fix-a")
+        home.git("config", "--unset-all", "remote.origin.push")
+        home.git("config", "--unset", "push.default")
+    with then("it runs, since git sends fix-a under its own name"):
+        assert quiet(short_source), short_source.reason
+    with when("Claude pushes fix-a's commit to heads/x by its short name and by its full name"):
+        short_name = bash(home, "git push origin HEAD:heads/x")
+        full_name = bash(home, "git push origin HEAD:refs/heads/heads/x")
+    with then("both are refused for fix-a's commit: the short name updates x or heads/x, by what the remote has, "
+              "so both count, and the full name is heads/x, where gh finds PR 8"):
+        assert says(home, short_name, "no_report.md", short=local[:7]), short_name.reason
+        assert says(home, full_name, "no_report.md", short=local[:7], branch="heads/x"), full_name.reason
+    with when("fix-a's commit gets a passing report, and push.default is upstream again"):
+        record(home, branch="fix-a")
+        home.git("config", "push.default", "upstream")
+        home.git("config", "branch.fix-a.merge", "refs/heads/feature")
+    with then("every one of those pushes runs"):
+        for form in named + ["git push origin HEAD:heads/x", "git push origin HEAD:refs/heads/heads/x"]:
+            assert quiet(bash(home, form)), form
+
+
 def graphql_call(query, *fields):
     return " ".join(["gh api graphql -f", shlex.quote("query=" + query), *fields])
 

@@ -11,10 +11,14 @@ report from hub's pr-tested step:
 A new PR and a body edit also need a body whose testing part says what was
 not tested, checked by the pr part's own body check, so pr-check and the gate
 agree. Pushes to the default branch, tags, deletes, dry runs, pushes to
-another host and pushes with nothing new stay quiet. A step the gate can not
-read, such as one inside a wrapper, a substitution or after another command,
-is refused and asked to be written out. Its git and gh lookups share one
-deadline, so the answer comes well inside the hook's time.
+another host and pushes with nothing new stay quiet. A branch named alone in
+a push counts at the remote branch git sends it to, by the remote's push
+settings or the branch's upstream.
+
+A step the gate can not read, such as one inside a wrapper, a substitution
+or after another command, is refused and asked to be written out. Its git
+and gh lookups share one deadline, so the answer comes well inside the
+hook's time.
 
 Errors are not caught here, because hub's dispatcher refuses PR steps on any error.
 """
@@ -406,33 +410,74 @@ def pushed(step, lookups):
     if not GITHUB.search(lookups.git(cwd, "ls-remote", "--get-url", remote) or ""):
         return []
     defaults = default_branches(cwd, remote, lookups)
-    sent = [sent_by(spec, cwd, branch, lookups)
-            for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch)]
-    return [(target, commit, cwd, defaults) for target, commit in filter(None, sent)
+    sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch)
+            for pair in sent_by(spec, cwd, branch, remote, lookups)]
+    return [(target, commit, cwd, defaults) for target, commit in sent
             if not target.startswith("refs/") and target not in defaults
             and lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") != commit]
 
 
-def sent_by(spec, cwd, branch, lookups):
-    """(the branch a refspec updates, the commit it sends), or None when it updates a tag or deletes. A tag sent to
-    a branch counts as the commit it points to."""
+def sent_by(spec, cwd, branch, remote, lookups):
+    """[(a branch the refspec may update, the commit it sends)], or [] when it updates a tag or deletes. A tag sent
+    to a branch counts as the commit it points to. A local branch named alone goes where git's push settings
+    send it."""
     source, _colon, target = spec.partition(":")
     if not source or target.startswith("refs/tags/"):
-        return None
-    source, target = branch_name(source), branch_name(target)
+        return []
+    source = branch_name(source)
     if source == "HEAD":
         commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
         if not (target or branch) or not commit:
             raise unreadable("detached")
-        return target or branch, commit
+        return [(name, commit) for name in remote_branch_names(target or branch)]
     commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{source}")
     if commit is None:
         if not target and is_a_tag(cwd, source, lookups):
-            return None  # a tag sent under its own name
+            return []  # a tag sent under its own name
         commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"{source}^{{commit}}")
         if commit is None or not target:
             raise unreadable("unknown")
-    return target or source, commit
+    if not target:
+        target = mapped_destination(f"refs/heads/{source}", push_settings(cwd, lookups), remote)
+    return [(name, commit) for name in remote_branch_names(target)]
+
+
+def remote_branch_names(target):
+    """The remote branches a push target may update. A short heads/x updates heads/x when the remote has it and x
+    otherwise, so it counts as both; refs/heads/x is exactly x."""
+    if target.startswith("refs/heads/"):
+        return [target[len("refs/heads/"):]]
+    if target.startswith("heads/"):
+        return [target[len("heads/"):], target]
+    return [target]
+
+
+def mapped_destination(source_ref, settings, remote):
+    """Where git sends a local branch named with no destination: the first of the remote's push settings whose
+    source matches it, else its one upstream branch when push.default is upstream, else its own name."""
+    mapped = [destination for key, value in settings if key == f"remote.{remote}.push"
+              for destination in [refspec_destination(value, source_ref)] if destination is not None]
+    if mapped:
+        return mapped[0] or source_ref  # an empty destination keeps the branch's own name
+    branch = source_ref[len("refs/heads/"):]
+    merges = [value for key, value in settings if key == f"branch.{branch}.merge"]
+    if last_value(settings, "push.default") in ("upstream", "tracking") and len(merges) == 1:
+        return merges[0]
+    return source_ref
+
+
+def refspec_destination(refspec, source_ref):
+    """Where one push setting sends the full source ref, or None when it does not match. A ^ entry only takes refs
+    out of a pattern, and git matches the source only by its full name, with at most one *."""
+    if refspec.startswith("^") or ":" not in refspec:
+        return None
+    source, destination = refspec[1:].split(":", 1) if refspec.startswith("+") else refspec.split(":", 1)
+    if "*" not in source:
+        return destination if source == source_ref else None
+    prefix, suffix = source.split("*", 1)
+    fits = (len(source_ref) >= len(prefix) + len(suffix) and source_ref.startswith(prefix)
+            and source_ref.endswith(suffix))
+    return destination.replace("*", source_ref[len(prefix):len(source_ref) - len(suffix)], 1) if fits else None
 
 
 def is_a_tag(cwd, ref, lookups):
