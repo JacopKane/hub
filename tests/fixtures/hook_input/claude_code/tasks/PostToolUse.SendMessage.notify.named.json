@@ -1,0 +1,27 @@
+{
+  "_source": "Captured from Claude Code 2.1.322 with the lab's mock API (no model), paths, ids and chat names made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000c3",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000c3.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-000000000015",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "SendMessage",
+  "tool_input": {
+    "to": "WEB",
+    "summary": "NAMED please check the docs",
+    "message": "NAMED please check the docs",
+    "notify_when_idle": true
+  },
+  "tool_response": {
+    "success": true,
+    "message": "“NAMED please check the docs” → WEB (another Claude session on this machine; in that session's inbox, not yet read by its Claude - a [Cross-session delivery notice] follows if that session holds it (usually a different permission mode) or refuses it)\nSubscribed - you will get one notice here when \"WEB\" is next idle (or exits), provided that session runs in the same permission class as this one (or is one this session spawned) or asserts none; otherwise it is only logged here. Do not poll or wait for it; carry on.",
+    "display": "“NAMED please check the docs” → sent to WEB - another Claude session on this machine\nYou will be told here when WEB is next idle.",
+    "msg_id": "00000000-0000-4000-8000-000000000017"
+  },
+  "tool_use_id": "toolu_lab0004",
+  "duration_ms": 317
+}

@@ -431,6 +431,20 @@ for (const origin of [TYPED, { kind: 'peer' } as PromptOrigin, { kind: 'plugin',
   })
 }
 
+const TASKS = 'RUNNING  1\n▶ Run the tests  API  job  2m\n'
+
+for (const origin of [TYPED, { kind: 'peer' } as PromptOrigin]) {
+  test(`/hub tasks from ${origin.kind} prints the task list, since it only reads`, async ($, on) => {
+    const calls = await start($, on, args => (args[0] === 'tasks' ? ok(TASKS) : json(DAY9)))
+
+    for (const args of ['tasks', 'tasks --brief', 'tasks show Run the tests', 'tasks done']) {
+      expect((await $.command.run({ command: 'hub', args, origin })).text).toBe(TASKS.trimEnd())
+    }
+    expect(hubctlArgs(calls).filter(args => args.startsWith('tasks'))).toEqual(
+      ['tasks', 'tasks --brief', 'tasks show Run the tests', 'tasks done'])
+  })
+}
+
 test('/hub-flags refuses a change that did not come from the user too', async ($, on) => {
   const calls = await start($, on, () => json(DAY9), { hub: USERS_HUB })
 

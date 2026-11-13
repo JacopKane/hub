@@ -1,0 +1,10 @@
+{
+  "_source": "Captured from Claude Code 2.1.319 with the lab's mock API (no model), paths and session id made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000b1",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000b1.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-00000000000a",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "<task-notification>\n<task-id>a2a7db315f2641a17</task-id>\n<tool-use-id>toolu_lab0007</tool-use-id>\n<output-file>/tmp/cc-1000/-home-sam-work-demo/00000000-0000-4000-8000-0000000000b1/tasks/a2a7db315f2641a17.output</output-file>\n<status>completed</status>\n<summary>Agent \"Background helper\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>done</result>\n<usage><subagent_tokens>21</subagent_tokens><tool_uses>1</tool_uses><duration_ms>4184</duration_ms></usage>\n</task-notification>"
+}

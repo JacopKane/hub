@@ -1,12 +1,13 @@
 #!/bin/sh
 # Starts the dispatcher only when a part of this hook group may run. The
-# three PreToolUse groups, the two PostToolUse groups, UserPromptSubmit, Stop
-# and SubagentStop use it.
+# three PreToolUse groups, the two PostToolUse groups, PostToolUseFailure,
+# UserPromptSubmit, Stop and SubagentStop use it.
 # Apply leaves a marker in the state folder while a part runs:
 # tool_parts/<tool> for a PreToolUse part that names the tool,
 # every_tool_parts for a PreToolUse part that handles every tool,
+# post_tool_parts/<tool> for a PostToolUse part that names the tool,
 # post_tool_use_every_parts for a PostToolUse part that handles every tool
-# (the group called with "every"), and post_tool_use_parts,
+# (both PostToolUse groups check it), and post_tool_use_failure_parts,
 # user_prompt_parts, stop_parts and subagent_stop_parts for the others.
 # It writes markers_done after every marker and after resolved.json. While
 # that mark is missing, unreadable or older than resolved.json, no marker is
@@ -34,8 +35,8 @@ dispatch() {
   exec python3 -I -S "${0%/*}/dispatch.py" "$event"
 }
 
-named_tool() {  # starts the dispatcher unless the call's tool surely has no marker
-  tools="$state/tool_parts"
+named_tool() {  # starts the dispatcher unless the call's tool surely has no marker in the folder $1
+  tools="$state/$1"
   { [ -d "$tools" ] && [ -r "$tools" ] && [ -x "$tools" ]; } || dispatch
   input=$(cat)
   piped=1
@@ -59,8 +60,14 @@ case "$1" in
   PreToolUse)
     marker=every_tool_parts
     [ -e "$state/$marker" ] && dispatch
-    named_tool ;;
-  PostToolUse) marker=post_tool_use_parts; [ "$2" = every ] && marker=post_tool_use_every_parts ;;
+    named_tool tool_parts ;;
+  PostToolUse)
+    marker=post_tool_use_every_parts
+    if [ "$2" != every ]; then
+      [ -e "$state/$marker" ] && dispatch
+      named_tool post_tool_parts
+    fi ;;
+  PostToolUseFailure) marker=post_tool_use_failure_parts ;;
   UserPromptSubmit)
     marker=user_prompt_parts
     for notice in "$state"/chat_notices/*.jsonl; do

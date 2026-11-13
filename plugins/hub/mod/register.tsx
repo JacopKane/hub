@@ -39,7 +39,7 @@ const HOUR = 60 * 60 * 1000
 // How often the band checks the age of its lines, so an old line leaves without a turn.
 const TICK = 10 * 60 * 1000
 const SEPARATOR = ' │ '
-const READ_VERBS = new Set(['show', 'screen', 'doctor', 'offers', 'board', '-h', '--help'])
+const READ_VERBS = new Set(['show', 'screen', 'doctor', 'offers', 'board', 'tasks', '-h', '--help'])
 // The user types at the prompt or writes through the Remote Control bridge. Any other origin,
 // such as a peer chat, a schedule or another plugin, can read a switch but not change it.
 const USER_ORIGINS = new Set<PromptOrigin['kind']>(['composer', 'bridge'])

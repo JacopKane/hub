@@ -13,7 +13,7 @@ export const DAY9: HubScreen = /* json */ {
     "machine": "laptop",
     "use": "",
     "parts_on": 7,
-    "parts_total": 33,
+    "parts_total": 34,
     "start_text": 1210
   },
   "strip": [
@@ -309,7 +309,7 @@ export const DAY9: HubScreen = /* json */ {
     {
       "family": "chats",
       "parts_on": 0,
-      "parts_total": 6,
+      "parts_total": 7,
       "parts": [
         {
           "id": "chat_board",
@@ -415,6 +415,24 @@ export const DAY9: HubScreen = /* json */ {
           "hidden_because": null,
           "cost": "",
           "next_session": true,
+          "claude_code_only": true,
+          "stage": null,
+          "children": []
+        },
+        {
+          "id": "task_list",
+          "name": "task_list",
+          "depth": 0,
+          "does": "Lists each chat's agents, background jobs, questions, waits on other chats and timers, with their state and cost so far.",
+          "value": "off",
+          "effective": "off",
+          "runs": false,
+          "by": "default",
+          "scope": "shipped",
+          "relevant": true,
+          "hidden_because": null,
+          "cost": "",
+          "next_session": false,
           "claude_code_only": true,
           "stage": null,
           "children": []

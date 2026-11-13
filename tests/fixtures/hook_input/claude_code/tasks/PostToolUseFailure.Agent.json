@@ -1,0 +1,24 @@
+{
+  "_source": "Captured from Claude Code 2.1.319 with the lab's mock API (no model), paths and session id made neutral.",
+  "session_id": "00000000-0000-4000-8000-0000000000b3",
+  "transcript_path": "/home/sam/.claude/projects/-home-sam-work-demo/00000000-0000-4000-8000-0000000000b3.jsonl",
+  "cwd": "/home/sam/work/demo",
+  "prompt_id": "00000000-0000-4000-8000-000000000009",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Failing foreground",
+    "prompt": "SUB-FAIL fg",
+    "subagent_type": "general-purpose",
+    "model": "haiku",
+    "run_in_background": false
+  },
+  "tool_use_id": "toolu_lab0006",
+  "error": "Agent terminated early due to an API error: API Error: 400 lab error (error type unknown, HTTP 400, model sent to the API: claude-haiku-5-5)",
+  "is_interrupt": false,
+  "duration_ms": 48
+}

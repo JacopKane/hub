@@ -1,5 +1,5 @@
 {
-  "description": "Each event a part handles gets one dispatcher entry. PreToolUse has three groups, and each tool call reaches the dispatcher once. Bash has its own group. The other tools a part names share the second. Every other tool except Monitor goes to the third. The first two start Python only when a part that names the tool may run, and the third only when a part that handles every tool may run. The dispatcher picks the parts that run. PostToolUse has two groups in the same way: one for the tools a part names, and one for every other tool except Monitor, which starts Python only when a part that handles every tool may run. UserPromptSubmit, Stop and SubagentStop each have one group, which starts Python only when one of its parts may run. All these groups share the shell check in lib/hub/pre_check.sh. At SessionStart the eight slot hooks print the start text, one slot each. SessionEnd, Notification, PermissionRequest and PermissionDenied start the dispatcher for the chat parts. The module draws the band and answers /hub where mods run.",
+  "description": "Each event a part handles gets one dispatcher entry. PreToolUse has three groups, and each tool call reaches the dispatcher once. Bash has its own group. The other tools a part names share the second. Every other tool except Monitor goes to the third. The first two start Python only when a part that names the tool may run, and the third only when a part that handles every tool may run. The dispatcher picks the parts that run. PostToolUse has two groups. The one for the tools a part names starts Python only when a part that names the tool, or a part that handles every tool, may run. The one for every other tool starts it only when a part that handles every tool may run. PostToolUseFailure, UserPromptSubmit, Stop and SubagentStop each have one group, which starts Python only when one of its parts may run. All these groups share the shell check in lib/hub/pre_check.sh. At SessionStart the eight slot hooks print the start text, one slot each. SessionEnd, Notification, PermissionRequest and PermissionDenied start the dispatcher for the chat parts. The module draws the band and answers /hub where mods run.",
   "modules": [
     "../mod/register.tsx"
   ],
@@ -38,7 +38,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "AskUserQuestion|Edit|ListAgents|Read|SendMessage|Skill|Write",
+        "matcher": "Agent|AskUserQuestion|Bash|Edit|ListAgents|Monitor|Read|SendMessage|Skill|TaskStop|Write",
         "hooks": [
           {
             "type": "command",
@@ -48,11 +48,23 @@
         ]
       },
       {
-        "matcher": "^(?!(?:Monitor|AskUserQuestion|Edit|ListAgents|Read|SendMessage|Skill|Write)$)",
+        "matcher": "^(?!(?:Agent|AskUserQuestion|Bash|Edit|ListAgents|Monitor|Read|SendMessage|Skill|TaskStop|Write)$)",
         "hooks": [
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PostToolUse every",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/lib/hub/pre_check.sh\" PostToolUseFailure",
             "timeout": 15
           }
         ]
