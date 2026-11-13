@@ -1,0 +1,48 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "pr",
+  "family": "rules",
+  "kind": "skill",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "commands": {
+    "pr-check": {"script": "check_body.py", "does": "Check a PR body file, or - for stdin, for its shape, mentions, bare references and em dashes, with pr-check <file> [--json]."},
+    "pr-night": {"script": "night.py", "does": "Say as JSON whether steps that notify people wait for the morning."}
+  },
+  "does": "Opens and updates pull requests the way each repo's guide asks. Steps that notify people wait for the user's order.",
+  "children": [
+    {"id": "open_as", "kind": "option", "type": "choice", "values": ["draft", "ready"], "default": "draft",
+     "does": "How new PRs open when the repo's guide and the user say nothing: as drafts or ready for review."},
+    {"id": "quiet_hours", "kind": "option", "type": "text", "default": "22:00-07:00",
+     "does": "Hours in which steps that notify people wait for the morning, such as 22:00-07:00, in away_guard's time zone or the system's. Empty means none."},
+    {
+      "id": "instructions",
+      "kind": "group",
+      "does": "The sections of the hub-pr skill.",
+      "children": [
+        {"id": "repo_guide", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Read the repo's contributing guide, PR template and agent instructions first, and follow them."},
+        {"id": "texts_first", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "New or changed words users read go in their own small PR, which merges before the logic."},
+        {"id": "slice_by_feature", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "One feature per PR, with its first real use, and a split proposed before a PR grows too large."},
+        {"id": "body", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "A fixed body shape, written whole again on each update and checked with pr-check."},
+        {"id": "test_gate", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Before each push, a few fat behaviour scenarios and the repo's smoke run pass, and the body says how it was tested and what was not."},
+        {"id": "writing_pass", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "The user's writing skill runs on the title, the body and each commit message."},
+        {"id": "drafts", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "New PRs open the way pr.open_as says, unless the repo's guide or the user asks otherwise."},
+        {"id": "env_changes", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "A change to env keys, secrets or settings is named first, before the merge and again when it lands."},
+        {"id": "night_hold", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Steps that notify people wait during pr.quiet_hours, unless the user says to send them now."},
+        {"id": "handoff", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Another PR skill that is on does its own step, and the three PR rules still hold."},
+        {"id": "retire", "kind": "instruction", "default": "on", "cost": "per use",
+         "does": "Replaced work is closed with a link to the new work, and its branch is kept."}
+      ]
+    }
+  ]
+}

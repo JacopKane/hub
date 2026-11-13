@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: follows_the_repo_guide
+tags: [pr]
+context:
+  scaffold_script: scaffold.sh

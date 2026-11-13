@@ -149,7 +149,10 @@ def changed(args, line, notes, flag_id):
 
 
 def run_part_command(part, spec, words):
-    flags = resolve.current(os.getcwd())["tools"]["claude_code"]["flags"]
+    """Run a part's own command when the part is on. Checking that reads the flags and sets nothing up."""
+    if uninstall.is_out():
+        raise uninstall.Uninstalled(uninstall.OUT)
+    flags = resolve.in_memory(os.getcwd())["claude_code"]["flags"]
     if not flags[part.id]["runs"]:
         raise changes.ChangeError(f"{part.id} is off, so its command does not run. Switch it on by saying "
                                   f"\"turn on {part.id}\".")
