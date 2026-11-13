@@ -12,8 +12,8 @@ import threading
 import time
 
 from steps import and_, given, then, when
-from test_pr_test_gate import (bash, body_file, change, fake_gh, head, pushed_branch, quiet, reports_folder, says,
-                               with_github, worktree)
+from test_pr_test_gate import (CANONICAL, bash, body_file, change, fake_gh, head, pushed_branch, quiet,
+                               reports_folder, says, with_github, worktree)
 
 PASSING = "printf '3 passed\\n'"
 SMOKE = "printf 'smoke ok\\n'"
@@ -152,6 +152,20 @@ def test_a_texts_run_records_its_base_and_refuses_a_code_file(home):
         missing = pr_tested(home, "texts", "--base", "nowhere", "--not-tested", LEFT_OUT)
     with then("it is refused and names it"):
         assert missing.returncode == 1 and "origin/nowhere" in missing.stderr, missing.stderr
+    with when("the branch with its code file is pushed, and Claude records a texts run against that pushed branch"):
+        home.git("push", "-q", "origin", "words")
+        itself = pr_tested(home, "texts", "--base", "words", "--not-tested", LEFT_OUT)
+        fake_gh(home, open={"words": 9}, heads={"words": code, "9": code})
+        good = body_file(home, CANONICAL)
+        steps = {"new PR": bash(home, f"gh pr create --title T --body-file {good}"),
+                 "new PR into main": bash(home, f"gh pr create --base main --title T --body-file {good}"),
+                 "ready": bash(home, "gh pr ready"), "ready by number": bash(home, "gh pr ready 9")}
+    with then("the run finds nothing changed since that base, but a new PR and a ready step are refused, "
+              "since each PR goes into main"):
+        assert itself.returncode == 0, itself.stderr
+        for name, result in steps.items():
+            assert says(home, result, "texts_base.md", short=code[:7], base="words", into="main"), \
+                (name, result.reason)
 
 
 def test_a_scenario_that_changes_the_tree_or_commits_while_it_runs_is_caught(home):

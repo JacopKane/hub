@@ -5,7 +5,9 @@ It reads its answers from the JSON file in $FAKE_GH_CONFIG and adds each call's
 words to $FAKE_GH_LOG, one JSON list a line. The keys:
 
 - open: {branch: PR number} for `gh pr list --head <branch> --state open`
-- heads: {PR number or branch: head commit} for `gh pr view <it> --json headRefOid`
+- heads: {PR number or branch: head commit} for `gh pr view [<it>] --json headRefOid,baseRefName`; with no
+  number, gh's own way to find the current branch's PR, the branch checked out in the folder is the key
+- bases: {PR number or branch: the branch the PR goes into}, main when not named
 - sleep: seconds to wait before answering, for a slow network
 - fail: true makes every call exit 1, as when gh can not reach GitHub
 
@@ -13,6 +15,7 @@ Every other call exits 0 with no output.
 """
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -34,12 +37,23 @@ def value_of(name):
     return words[words.index(name) + 1] if name in words and words.index(name) + 1 < len(words) else None
 
 
+def current_branch():
+    done = subprocess.run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True)
+    return done.stdout.strip()
+
+
+def base_of(key):
+    return config.get("bases", {}).get(key, "main")
+
+
 if words[:2] == ["pr", "list"]:
-    number = config.get("open", {}).get(value_of("--head"))
-    print(json.dumps([{"number": number}] if number else []))
-elif words[:2] == ["pr", "view"] and len(words) > 2:
-    head = config.get("heads", {}).get(words[2])
+    branch = value_of("--head")
+    number = config.get("open", {}).get(branch)
+    print(json.dumps([{"number": number, "baseRefName": base_of(branch)}] if number else []))
+elif words[:2] == ["pr", "view"]:
+    key = words[2] if len(words) > 2 and not words[2].startswith("-") else current_branch()
+    head = config.get("heads", {}).get(key)
     if head is None:
-        print(f"no pull requests found for {words[2]}", file=sys.stderr)
+        print(f"no pull requests found for {key}", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps({"headRefOid": head}))
+    print(json.dumps({"headRefOid": head, "baseRefName": base_of(key)}))

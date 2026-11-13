@@ -20,12 +20,13 @@ import tempfile
 import time
 
 FOLDER = "pr-test-reports"
-TEXT_SUFFIXES = {".md", ".mdx", ".txt", ".rst", ".adoc", ".po", ".pot"}
+TEXT_SUFFIXES = {".md", ".mdx", ".rst", ".adoc", ".po", ".pot"}
 LOCALE_FOLDERS = {"locales", "locale", "translations", "i18n"}
 LOCALE_SUFFIXES = {".json", ".yaml", ".yml", ".xliff", ".xlf", ".strings", ".stringsdict", ".arb", ".properties",
                    ".ftl"}
 DOC_FOLDERS = {"docs", "doc"}
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+# Images and plain .txt files count as text only in a docs folder, since requirements.txt and the like are code.
+DOC_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".txt"}
 
 
 def is_text_file(path):
@@ -36,7 +37,7 @@ def is_text_file(path):
         return True
     if suffix in LOCALE_SUFFIXES and LOCALE_FOLDERS.intersection(folders):
         return True
-    return suffix in IMAGE_SUFFIXES and bool(DOC_FOLDERS.intersection(folders))
+    return suffix in DOC_SUFFIXES and bool(DOC_FOLDERS.intersection(folders))
 
 
 def reports_folder(cwd, run_git):
@@ -90,12 +91,13 @@ def failing(runs):
     return None
 
 
-def problem(report, cwd, sha, run_git):
-    """(the gate's message name, its values) for what the report lacks, or None when it passes."""
+def problem(report, cwd, sha, run_git, bases=None):
+    """(the gate's message name, its values) for what the report lacks, or None when it passes. bases, when given,
+    are the branches the PR may go into, and a texts report must list its changes since one of them."""
     if report.get("version") != 1 or report.get("kind") not in ("code", "texts"):
         return "report_unreadable.md", {}
     if report["kind"] == "texts":
-        return texts_problem(report, cwd, sha, run_git)
+        return texts_problem(report, cwd, sha, run_git, bases)
     if report.get("clean") is not True:
         return "dirty.md", {}
     scenarios = report.get("scenarios") or []
@@ -114,12 +116,16 @@ def problem(report, cwd, sha, run_git):
     return None
 
 
-def texts_problem(report, cwd, sha, run_git):
+def texts_problem(report, cwd, sha, run_git, bases=None):
     which = failing(report.get("checks") or [])
     if which is not None:
         return "failed.md", {"which": which}
     if not report.get("not_tested"):
         return "no_not_tested.md", {}
+    base_branch = report["base"].get("branch") if isinstance(report.get("base"), dict) else None
+    if bases is not None and base_branch not in bases:
+        return "texts_base.md", {"base": base_branch, "into": " or ".join(sorted(bases)) or "a branch the gate "
+                                                                                             "can not read"}
     base = (report.get("base") or {}).get("sha") if isinstance(report.get("base"), dict) else None
     start = run_git(cwd, "merge-base", base, sha) if base else None
     if not start:

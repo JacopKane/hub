@@ -43,8 +43,18 @@ PARTS_SECONDS = 10.0
 GIT_SECONDS = 2.0
 GH_SECONDS = 3.0
 RELEVANT = {"push", "pr", "wrapped"}
-PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
-EVERY_BRANCH = {"--all", "--mirror", "--branches"}
+# git push's long options, so a shortened one such as --mirr or --no-dry reads as the option git takes it for
+PUSH_LONG_OPTIONS = ("all", "atomic", "branches", "delete", "dry-run", "exec", "follow-tags", "force",
+                     "force-if-includes", "force-with-lease", "ipv4", "ipv6", "mirror", "no-verify", "porcelain",
+                     "progress", "prune", "push-option", "quiet", "receive-pack", "recurse-submodules", "repo",
+                     "set-upstream", "signed", "tags", "thin", "verbose")
+NEVER_NEGATED = {"ipv4", "ipv6"}
+PUSH_ALIASES = {"--branches": "--all"}
+PUSH_SHORT_OPTIONS = {"d": "--delete", "n": "--dry-run", "o": "--push-option", "u": "--set-upstream", "f": "--force",
+                      "q": "--quiet", "v": "--verbose", "4": "--ipv4", "6": "--ipv6"}
+PUSH_VALUE_OPTIONS = {"--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
+EVERY_BRANCH = ("--all", "--mirror")
+BRANCH_PREFIXES = ("refs/heads/", "heads/")
 FILL_OPTIONS = {"--fill", "-f", "--fill-first", "--fill-verbose", "--web", "-w"}
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
@@ -71,6 +81,7 @@ WHY = {
     "before": "another command runs before it on the same line",
     "word": "a variable or a pattern names the branch",
     "every": "it pushes every branch",
+    "option": "a shortened option matches more than one option",
     "detached": "HEAD is not on a branch",
     "unknown": "the branch is not in this repo",
     "node": "a node id names the PR, not its number",
@@ -305,36 +316,73 @@ def without_redirects(words):
 # Pushes
 
 
+def option_spellings(option):
+    """(spelling, option, whether it turns the option on) for each way git writes a long option out in full."""
+    if option.startswith("no-"):
+        return [(option, option, True), (option[3:], option, False)]
+    return [(option, option, True)] + ([] if option in NEVER_NEGATED else [("no-" + option, option, False)])
+
+
+PUSH_SPELLINGS = [spelling for option in PUSH_LONG_OPTIONS for spelling in option_spellings(option)]
+
+
+def full_push_option(name):
+    """(the long option git reads for a word such as --mirr or --no-dry, whether the word turns it on). A word
+    that starts only one option is that option, as in git, and a word that starts more than one is refused."""
+    word = name[2:]
+    exact = [(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling == word]
+    shortened = {(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling.startswith(word)}
+    if not exact and len(shortened) > 1:
+        raise unreadable("option")
+    option, on = (exact or sorted(shortened) or [(name, True)])[0]
+    return PUSH_ALIASES.get(option, option), on
+
+
+def push_items(words):
+    """(the option in full, its value) for each of git push's words in order, or (None, word) for a positional
+    word. A switch's value is whether it is on. A value option takes its value the way git does."""
+    remaining = iter(words)
+    for word in remaining:
+        if word == "--":
+            yield from ((None, positional) for positional in remaining)
+        elif word.startswith("--"):
+            name, equals, attached = word.partition("=")
+            option, on = full_push_option(name)
+            takes_next_word = option in PUSH_VALUE_OPTIONS and on and not equals
+            yield option, next(remaining, "") if takes_next_word else attached if equals else on
+        elif word.startswith("-") and len(word) > 1:
+            yield from short_push_items(word[1:], remaining)
+        else:
+            yield None, word
+
+
+def short_push_items(letters, remaining):
+    """The options in a cluster such as -uo, where -o takes the rest of the word, or else the next word."""
+    for position, letter in enumerate(letters):
+        option = PUSH_SHORT_OPTIONS.get(letter, "-" + letter)
+        if option in PUSH_VALUE_OPTIONS:
+            yield option, letters[position + 1:] or next(remaining, "")
+            return
+        yield option, True
+
+
+def last_switch(items, option):
+    """Whether a switch is on after every word that names it, so -n --no-dry-run is not a dry run."""
+    return next((value is not False for name, value in reversed(items) if name == option), False)
+
+
 def push_words(rest):
     """(positional words, whether a reason that needs no state keeps it quiet, whether --tags is on)."""
-    positional, quiet, tags = [], False, False
-    index = 0
-    rest = without_redirects(rest)
-    while index < len(rest):
-        word = rest[index]
-        if word in PUSH_VALUE_OPTIONS:
-            index += 2
-            continue
-        if word == "--":
-            positional += rest[index + 1:]
-            break
-        name = word.split("=", 1)[0]
-        if name in EVERY_BRANCH:
-            raise unreadable("every")
-        if name == "--tags":
-            tags = True
-        elif name in ("--delete", "--dry-run"):
-            quiet = True
-        elif word.startswith("-") and not word.startswith("--") and len(word) > 1:
-            quiet = quiet or bool(set(word[1:]) & {"d", "n"})
-        elif not word.startswith("-"):
-            positional.append(word)
-        index += 1
-    return positional, quiet, tags
+    items = list(push_items(without_redirects(rest)))
+    if any(last_switch(items, option) for option in EVERY_BRANCH):
+        raise unreadable("every")
+    positional = [value for option, value in items if option is None]
+    return positional, last_switch(items, "--delete") or last_switch(items, "--dry-run"), last_switch(items, "--tags")
 
 
 def pushed(step, lookups):
-    """[(branch, commit, cwd)] the push sends to a GitHub branch that is not the default, with something new."""
+    """[(branch, commit, cwd, the remote's default branches)] for each GitHub branch other than the default that
+    the push sends something new to."""
     cwd, words = git_place(step)
     if sets_push_settings_for_one_command(step, words):
         raise push_settings_stop("option")
@@ -353,37 +401,49 @@ def pushed(step, lookups):
     if remote is None:
         if branch is None:
             raise unreadable("detached")
-        remote = (lookups.git(cwd, "config", f"branch.{branch}.pushRemote")
-                  or lookups.git(cwd, "config", "remote.pushDefault")
-                  or lookups.git(cwd, "config", f"branch.{branch}.remote") or "origin")
+        remote = push_remote(cwd, branch, lookups)
     if not GITHUB.search(lookups.git(cwd, "ls-remote", "--get-url", remote) or ""):
         return []
-    found = []
-    for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch):
-        source, _colon, target = spec.partition(":")
-        if not source or "refs/tags/" in (source[:10], target[:10]):
-            continue
-        source, target = short(source), short(target)
-        if source == "HEAD":
-            commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-            target = target or branch
-            if not target or not commit:
-                raise unreadable("detached")
-        else:
-            commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{source}")
-            if commit is None:
-                if lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/tags/{source}"):
-                    continue
-                commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"{source}^{{commit}}")
-                if commit is None or not target:
-                    raise unreadable("unknown")
-            target = target or source
-        if target.startswith("refs/") or target in default_branches(cwd, remote, lookups):
-            continue
-        if lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") == commit:
-            continue
-        found.append((target, commit, cwd))
-    return found
+    defaults = default_branches(cwd, remote, lookups)
+    sent = [sent_by(spec, cwd, branch, lookups)
+            for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch)]
+    return [(target, commit, cwd, defaults) for target, commit in filter(None, sent)
+            if not target.startswith("refs/") and target not in defaults
+            and lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") != commit]
+
+
+def sent_by(spec, cwd, branch, lookups):
+    """(the branch a refspec updates, the commit it sends), or None when it updates a tag or deletes. A tag sent to
+    a branch counts as the commit it points to."""
+    source, _colon, target = spec.partition(":")
+    if not source or target.startswith("refs/tags/"):
+        return None
+    source, target = branch_name(source), branch_name(target)
+    if source == "HEAD":
+        commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+        if not (target or branch) or not commit:
+            raise unreadable("detached")
+        return target or branch, commit
+    commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{source}")
+    if commit is None:
+        if not target and is_a_tag(cwd, source, lookups):
+            return None  # a tag sent under its own name
+        commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"{source}^{{commit}}")
+        if commit is None or not target:
+            raise unreadable("unknown")
+    return target or source, commit
+
+
+def is_a_tag(cwd, ref, lookups):
+    return ref.startswith("refs/tags/") or lookups.git(cwd, "rev-parse", "--verify", "--quiet",
+                                                       f"refs/tags/{ref}") is not None
+
+
+def push_remote(cwd, branch, lookups):
+    """The remote a push with no remote named sends the branch to, as git picks it."""
+    return (lookups.git(cwd, "config", f"branch.{branch}.pushRemote")
+            or lookups.git(cwd, "config", "remote.pushDefault")
+            or lookups.git(cwd, "config", f"branch.{branch}.remote") or "origin")
 
 
 def settings_set_by_options(options):
@@ -429,11 +489,12 @@ def specs_of_a_bare_push(settings, remote, branch):
     if mode == "matching":
         raise push_settings_stop("matching")
     upstream = last_value(settings, f"branch.{branch}.merge") if mode in ("upstream", "tracking") else None
-    return [f"HEAD:{short(upstream)}"] if upstream else ["HEAD"]
+    return [f"HEAD:{branch_name(upstream)}"] if upstream else ["HEAD"]
 
 
-def short(ref):
-    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+def branch_name(ref):
+    """A branch as the remote names it, so refs/heads/feature and heads/feature both read as feature."""
+    return next((ref[len(prefix):] for prefix in BRANCH_PREFIXES if ref.startswith(prefix)), ref)
 
 
 def default_branches(cwd, remote, lookups):
@@ -444,17 +505,26 @@ def default_branches(cwd, remote, lookups):
 
 
 def with_open_pr(candidates, lookups):
-    """The pushed branches that have an open PR. More than one branch, or a failed lookup, counts as open."""
-    if len({branch for branch, _commit, _cwd in candidates}) != 1:
+    """The pushed branches that have an open PR, each with the branch its PR goes into. More than one branch, or a
+    failed lookup, counts as open, with the remote's default branch as its base."""
+    if len({branch for branch, _commit, _cwd, _bases in candidates}) != 1:
         return candidates
-    branch, _commit, cwd = candidates[0]
-    output, _why = lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json", "number",
-                              "--limit", "1")
+    branch, _commit, cwd, _bases = candidates[0]
+    output, _why = lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
+                              "number,baseRefName", "--limit", "1")
+    listed = parsed_json(output)
+    if not isinstance(listed, list):
+        return candidates
+    base = next((found.get("baseRefName") for found in listed if isinstance(found, dict)), None)
+    return [(name, commit, here, {base} if base else bases) for name, commit, here, bases in candidates] \
+        if listed else []
+
+
+def parsed_json(output):
     try:
-        listed = json.loads(output) if output is not None else None
+        return json.loads(output) if output is not None else None
     except ValueError:
-        listed = None
-    return candidates if not isinstance(listed, list) or listed else []
+        return None
 
 
 # PR steps
@@ -488,6 +558,30 @@ def body_stop(body, cwd, flags, answer):
         answer.add_context(message("near_miss.md", heading=found["heading"]))
 
 
+def pr_head(cwd, branch, named, lookups):
+    """The commit a new PR for the branch opens at. With --head, gh pushes nothing, so the PR opens at what was
+    pushed, read from the remote-tracking branch when there is one. Without it, gh opens the PR only once HEAD
+    matches a pushed branch, pushing HEAD first or stopping, so the local head is the PR's head."""
+    if unreadable_mark() in branch:
+        raise unreadable("word")
+    pushed_commit = named and lookups.git(cwd, "rev-parse", "--verify", "--quiet",
+                                          f"refs/remotes/{push_remote(cwd, branch, lookups)}/{branch}")
+    return pushed_commit or head_of_branch(cwd, branch, lookups)
+
+
+def pr_bases(named_base, cwd, branch, lookups):
+    """The branches a new PR may go into: the one named, or else the remote's default. A base the shell fills in
+    matches none, so no texts report counts for it."""
+    if named_base is None:
+        return default_branches(cwd, push_remote(cwd, branch, lookups), lookups)
+    return set() if unreadable_mark() in named_base else {named_base}
+
+
+def new_pr(step, branch, named_head, named_base, lookups):
+    return [(branch, pr_head(step.cwd, branch, named_head, lookups), step.cwd,
+             pr_bases(named_base, step.cwd, branch, lookups))]
+
+
 def head_of_branch(cwd, name, lookups):
     if unreadable_mark() in name:
         raise unreadable("word")
@@ -505,7 +599,8 @@ def current_branch(cwd, lookups):
 
 
 def pr_step(command, step, flags, answer, lookups):
-    """[(branch or PR name, commit, cwd)] a gh step needs a report for, after its body check."""
+    """[(branch or PR name, commit, cwd, the branches it may go into)] a gh step needs a report for, after its body
+    check."""
     action, rest = step.words[1:3], step.words[3:]
     if step.words[1] == "api":
         return api_step(command, step, flags, answer, lookups)
@@ -516,8 +611,9 @@ def pr_step(command, step, flags, answer, lookups):
         if not flags.runs(f"{PART}.report"):
             return []
         heads = gate().option_values(rest, ["--head", "-H"], attached=True)
+        bases = gate().option_values(rest, ["--base", "-B"], attached=True)
         branch = heads[-1].split(":", 1)[-1] if heads else current_branch(step.cwd, lookups)
-        return [(branch, head_of_branch(step.cwd, branch, lookups), step.cwd)]
+        return new_pr(step, branch, bool(heads), bases[-1] if bases else None, lookups)
     if action == ["pr", "edit"]:
         body = body_of(command, step, rest)
         if body is not None:
@@ -526,24 +622,30 @@ def pr_step(command, step, flags, answer, lookups):
         return []
     if action == ["pr", "ready"] and "--undo" not in rest and flags.runs(f"{PART}.report"):
         written_out(step)
-        named = [word for word in without_redirects(rest) if not word.startswith("-")]
-        if not named:
-            branch = lookups.git(step.cwd, "symbolic-ref", "--quiet", "--short", "HEAD") or "HEAD"
-            commit = lookups.git(step.cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-            if commit is None:
-                raise unreadable("detached")
-            return [(branch, commit, step.cwd)]
-        if unreadable_mark() in named[0]:
-            raise unreadable("word")
-        output, why = lookups.gh(step.cwd, "pr", "view", named[0], "--json", "headRefOid")
-        try:
-            commit = json.loads(output).get("headRefOid") if output is not None else None
-        except (ValueError, AttributeError):
-            commit, why = None, "gh gave no head commit"
+        return ready_pr(step, [word for word in without_redirects(rest) if not word.startswith("-")][:1], lookups)
+    return []
+
+
+def ready_pr(step, named, lookups):
+    """The PR a ready step marks, read from gh: its head commit and the branch it goes into. With no number, gh
+    finds the current branch's PR, and the local head stands in when gh can not say."""
+    if named and unreadable_mark() in named[0]:
+        raise unreadable("word")
+    output, why = lookups.gh(step.cwd, "pr", "view", *named, "--json", "headRefOid,baseRefName")
+    viewed = parsed_json(output)
+    viewed = viewed if isinstance(viewed, dict) else {}
+    commit, base = viewed.get("headRefOid"), viewed.get("baseRefName")
+    branch = None if named else lookups.git(step.cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
+    bases = {base} if base else default_branches(step.cwd, push_remote(step.cwd, branch, lookups) if branch
+                                                 else "origin", lookups)
+    if named:
         if not commit:
             raise Stop("pr_head_unknown.md", number=named[0], why=why or "gh gave no head commit")
-        return [(f"PR {named[0]}", commit, step.cwd)]
-    return []
+        return [(f"PR {named[0]}", commit, step.cwd, bases)]
+    commit = commit or lookups.git(step.cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if commit is None:
+        raise unreadable("detached")
+    return [(branch or "HEAD", commit, step.cwd, bases)]
 
 
 def api_fields(command, rest):
@@ -571,7 +673,7 @@ def api_step(command, step, flags, answer, lookups):
             skip = True
         elif not word.startswith("-"):
             endpoints.append(word)
-    endpoint = endpoints[0].split("?", 1)[0].strip("/") if endpoints else ""
+    endpoint = api_path(endpoints[0]) if endpoints else ""
     methods = parser.option_values(rest, ["-X", "--method"])
     inputs = parser.option_values(rest, ["--input"])
     method = methods[-1].upper() if methods else ("POST" if fields or inputs else "GET")  # as gh picks it
@@ -592,12 +694,16 @@ def api_step(command, step, flags, answer, lookups):
             return []
         if not fields.get("head"):
             raise unreadable("head")
-        branch = fields["head"].split(":", 1)[-1]
-        return [(branch, head_of_branch(step.cwd, branch, lookups), step.cwd)]
+        return new_pr(step, fields["head"].split(":", 1)[-1], True, fields.get("base"), lookups)
     if re.fullmatch(r"repos/[^/]+/[^/]+/pulls/\d+", endpoint) and method != "GET" and "body" in fields:
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
     return []
+
+
+def api_path(endpoint):
+    """gh api's endpoint as a path, so a full URL such as https://api.github.com/repos/... reads as repos/..."""
+    return re.sub(r"^[a-z]+://[^/]+/(?:api/v3/)?", "", endpoint.split("?", 1)[0], flags=re.I).strip("/")
 
 
 def pr_mutations(query):
@@ -625,7 +731,7 @@ def graphql_step(fields, step, flags, answer, lookups):
     branch = graphql_value(query, "headRefName", fields)
     if not branch:
         raise unreadable("head")
-    return [(branch, head_of_branch(step.cwd, branch, lookups), step.cwd)]
+    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), lookups)
 
 
 def graphql_value(query, key, fields):
@@ -643,7 +749,7 @@ def graphql_value(query, key, fields):
 # The report check
 
 
-def report_stop(branch, commit, cwd, lookups):
+def report_stop(branch, commit, cwd, bases, lookups):
     store = reports()
     short_sha = commit[:7]
     report, broken = store.find(cwd, commit, lookups.git)
@@ -651,7 +757,7 @@ def report_stop(branch, commit, cwd, lookups):
         raise Stop("report_unreadable.md", short=short_sha)
     if report is None:
         raise Stop("no_report.md", short=short_sha, branch=branch)
-    found = store.problem(report, cwd, commit, lookups.git)
+    found = store.problem(report, cwd, commit, lookups.git, bases)
     if found:
         name, values = found
         raise Stop(name, short=short_sha, **values)
@@ -671,8 +777,8 @@ def check(command_line, cwd, flags, answer):
     if candidates:
         needed += with_open_pr(candidates, lookups)
     if report_on:
-        for branch, commit, here in needed:
-            report_stop(branch, commit, here, lookups)
+        for branch, commit, here, bases in needed:
+            report_stop(branch, commit, here, bases, lookups)
 
 
 def handle(event, hook_input, flags, answer):

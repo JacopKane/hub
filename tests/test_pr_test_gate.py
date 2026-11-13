@@ -206,9 +206,10 @@ def test_a_push_to_a_branch_with_an_open_pr_needs_a_passing_report_for_that_exac
 
 def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read_is_refused(home):
     with given("branch feature with open PR 7, a worktree on branch side with open PR 8, both with new "
-               "commits, and a worktree on a detached HEAD"):
+               "commits, a tag on feature's new commit, and a worktree on a detached HEAD"):
         with_github(home)
         feature = pushed_branch(home)
+        home.git("tag", "t1")
         old = head(home, "origin/feature")
         side_folder = worktree(home, "side", "-b", "side", "main")
         change(home, message="Start side", cwd=side_folder)
@@ -220,9 +221,16 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
              "git push origin refs/heads/feature", "git push --force-with-lease",
              "git push --force-with-lease=feature origin feature",
              f"git push --force-with-lease=feature:{old} origin feature", "git push -f origin feature",
-             "git push --no-verify origin feature", "git push -o ci.skip origin feature", "git push origin",
+             "git push --force origin feature", "git push --no-verify origin feature",
+             "git push --recurse-submodules no origin feature", "git push -o ci.skip origin feature", "git push origin",
              f"cd {home.work} && git push", "GIT_TRACE=0 git push", "git push 2>&1 | tail -3",
-             "git push origin feature 2>/dev/null"]
+             "git push origin feature 2>/dev/null", "git push origin HEAD:heads/feature",
+             "git push origin heads/feature", "git push origin t1:feature",
+             "git push origin refs/tags/t1:refs/heads/feature", "git push -onotify origin feature",
+             "git push -odeploy origin feature", "git push -uo ci.skip origin feature",
+             "git push --push-opt ci.skip origin feature", "git push --set-up origin feature",
+             "git push -n --no-dry-run origin feature", "git push --dry --no-dry origin feature",
+             "git push --del --no-del origin feature", "git push --mirror --no-mirror origin feature"]
     side_forms = [f"git -C {side_folder} push", f"cd {side_folder} && git push",
                   f"git -C {side_folder} push origin side"]
     with when("Claude names feature's new commit in each way git allows, with no report"):
@@ -241,6 +249,10 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                   f"git -C {loose} push": "HEAD is not on a branch",
                   "git push --all": "it pushes every branch",
                   "git push --mirror origin": "it pushes every branch",
+                  "git push --al": "it pushes every branch",
+                  "git push --mirr origin": "it pushes every branch",
+                  "git push --branch origin": "it pushes every branch",
+                  "git push --d origin feature": "a shortened option matches more than one option",
                   "git push origin 'feature": "the line does not parse",
                   "git status && git push": "another command runs before it on the same line",
                   "git fetch -q; git push origin feature": "another command runs before it on the same line",
@@ -250,8 +262,9 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                   "printf feature | xargs git push origin": "xargs or parallel fills in its words",
                   "git -C $(pwd) push origin feature": "a variable or a pattern names the branch",
                   "git --git-dir=$(pwd)/.git push origin feature": "a variable or a pattern names the branch"}
-    with when("Claude sends pushes whose commit the gate can not read: a variable, a detached HEAD, every branch, "
-              "a broken quote, a step after another command or program, a substitution, a wrapper and xargs"):
+    with when("Claude sends pushes whose commit the gate can not read: a variable, a detached HEAD, every branch "
+              "in full or shortened, a shortened option git could read two ways, a broken quote, a step after "
+              "another command or program, a substitution, a wrapper and xargs"):
         results = {form: bash(home, form) for form in unreadable}
     text_gate_first = ["git push origin $BRANCH", "bash -c 'git push origin feature'",
                        "printf feature | xargs git push origin", "git -C $(pwd) push origin feature",
@@ -383,18 +396,25 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
                          '{ clientMutationId } }')
     update = graphql_call('mutation { edited: updatePullRequest(input: {pullRequestId: "PR_kw1", '
                           'body: "All tests pass."}) { clientMutationId } }')
-    feature_steps = ["g''it push", "'gi't push origin feature", f"gh pr new --title T --body-file {good}",
-                     f"g''h pr new --title T --body-file {good}"]
-    side_steps = [f"gh api repos/acme/demo/pulls --input {side_request}", create]
+    feature_steps = ["g''it push", "'gi't push origin feature"]
+    new_pr_steps = [f"gh pr new --title T --body-file {good}", f"g''h pr new --title T --body-file {good}"]
+    side_steps = [f"gh api repos/acme/demo/pulls --input {side_request}", create,
+                  f"gh api https://api.github.com/repos/acme/demo/pulls --input {side_request}",
+                  graphql_call('mutation { createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", '
+                               'headRefName: "side", title: "T", body: $body}) { pullRequest { number } } }',
+                               f"-F body=@{good}").replace("gh api graphql", "gh api https://api.github.com/graphql")]
     with when("Claude pushes with a quoted program name, opens a PR with gh's pr new, sends a new PR through "
-              "gh api --input or an aliased GraphQL mutation, and pushes every matching branch"):
-        results = {step: bash(home, step) for step in feature_steps + side_steps}
+              "gh api --input or an aliased GraphQL mutation, by path or by full URL, and pushes every matching "
+              "branch"):
+        results = {step: bash(home, step) for step in feature_steps + new_pr_steps + side_steps}
         matching = {spec: bash(home, f"git push origin {spec}") for spec in (":", "+:")}
         bare = bash(home, f"gh api repos/acme/demo/pulls --input {bare_request}")
         aliased = {"ready": bash(home, ready), "update": bash(home, update)}
     with then("each is refused as its plain form would be: for the missing report of feature or side, for a "
               "body with no tested part, for a ready step by node id, and for pushing every branch"):
         for step in feature_steps:
+            assert says(home, results[step], "no_report.md", short=feature[:7], branch="feature"), step
+        for step in new_pr_steps:
             assert says(home, results[step], "no_report.md", short=feature[:7], branch="feature"), step
         for step in side_steps:
             assert says(home, results[step], "no_report.md", short=side[:7], branch="side"), step
@@ -407,7 +427,7 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         record(home)
         record(home, sha=side, branch="side")
     with then("the same steps run with no answer"):
-        for step in feature_steps + side_steps:
+        for step in feature_steps + new_pr_steps + side_steps:
             assert quiet(bash(home, step)), step
     other = os.path.join(home.root, "other")
     elsewhere = [f"git --git-dir={other}/.git push origin feature", f"git --git-dir {other}/.git push",
@@ -511,9 +531,12 @@ def test_steps_outside_the_gate_run_quietly(home):
              "git push origin refs/tags/v1", "git push --tags", "git push origin --tags",
              "git push --delete origin feature", "git push -d origin feature", "git push origin :feature",
              "git push --dry-run", "git push -n origin feature", "git push mirror feature", "git log --oneline -3",
+             "git push --dry origin feature", "git push --del origin feature", "git push -onotify -n origin feature",
+             "git push origin v1:refs/tags/v2", "git push origin refs/tags/v1:refs/tags/v1",
              "git status", "gh pr view 7", "gh pr list", "gh pr comment 7 --body 'Looks good'",
              "gh pr review 7 --approve", "gh pr merge 7 --squash", "gh pr close 7", "gh pr edit 7 --add-label bug",
-             "gh pr edit 7 --title 'Keep the draft'", "gh api repos/acme/demo/pulls/7", 'echo "git push"',
+             "gh pr edit 7 --title 'Keep the draft'", "gh api repos/acme/demo/pulls/7",
+             "gh api https://api.github.com/repos/acme/demo/pulls/7", 'echo "git push"',
              commit("Explain git push in the docs")]
     with when("Claude sends pushes to the default branch, tags, deletes, dry runs, another host, reads and "
               "PR steps that change no commit"):
@@ -532,8 +555,8 @@ def test_steps_outside_the_gate_run_quietly(home):
         result = bash(home, "git push")
     with then("the push runs after one lookup for feature, since the later new PR needs the report"):
         assert quiet(result)
-        assert gh_calls(home) == [["pr", "list", "--head", "feature", "--state", "open", "--json", "number",
-                                   "--limit", "1"]]
+        assert gh_calls(home) == [["pr", "list", "--head", "feature", "--state", "open", "--json",
+                                   "number,baseRefName", "--limit", "1"]]
     with when("feature is pushed, and the same push comes again with nothing new"):
         home.git("push", "-q")
         fake_gh(home, fail=True)
@@ -586,6 +609,22 @@ def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_w
         filled = bash(home, "gh pr create --fill")
     with then("it is refused, because a filled body has no tested part"):
         assert filled.refused and filled.reason == missing_part(home)
+    with when("feature gets a new commit that is pushed with no report, then a local commit on top with a report"):
+        pushed_only = change(home)
+        home.git("push", "-q")
+        change(home)
+        record(home)
+        good = body_file(home, CANONICAL, "canonical.md")
+        named = bash(home, f"gh pr create --head feature --title T --body-file {good}")
+        current = bash(home, f"gh pr create --title T --body-file {good}")
+    with then("a new PR that names its head is refused for the pushed commit, since gh pushes nothing then; "
+              "without --head gh pushes HEAD first or stops, so the local commit's report lets it run"):
+        assert says(home, named, "no_report.md", short=pushed_only[:7], branch="feature"), named.reason
+        assert quiet(current)
+    with when("the tested commit is pushed too"):
+        home.git("push", "-q")
+    with then("the step that names its head runs"):
+        assert quiet(bash(home, f"gh pr create --head feature --title T --body-file {good}"))
     with when("the repo's PR template heads its part Test plan, and the new head has a report"):
         os.makedirs(os.path.join(home.work, ".github"))
         with open(os.path.join(home.work, ".github", "pull_request_template.md"), "w") as handle:
@@ -602,17 +641,21 @@ def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_w
 
 
 def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_only(home):
-    with given("branch feature with open PR 7 and a new commit, and side, whose head is PR 12's"):
+    with given("branch feature with open PR 7, whose head on GitHub is its pushed commit while a newer commit "
+               "is only local, and side, whose head is PR 12's"):
         with_github(home)
         feature = pushed_branch(home)
+        on_github = head(home, "origin/feature")
         home.git("branch", "side", "main")
         side = change(home, cwd=worktree(home, "side", "side"))
-        fake_gh(home, open={"feature": 7}, heads={"12": side, "13": feature})
-    with when("Claude marks the current branch's PR ready with no report"):
-        result = bash(home, "gh pr ready")
-    with then("it is refused, and it runs once feature has a report"):
-        assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), result.reason
+        fake_gh(home, open={"feature": 7}, heads={"12": side, "13": feature, "feature": on_github})
+    with when("Claude marks the current branch's PR ready while only the local commit has a report"):
         record(home)
+        result = bash(home, "gh pr ready")
+    with then("gh names the PR's head, and the step is refused for that commit until it has a report too"):
+        assert says(home, result, "no_report.md", short=on_github[:7], branch="feature"), result.reason
+        assert ["pr", "view", "--json", "headRefOid,baseRefName"] in gh_calls(home)
+        record(home, on_github)
         assert quiet(bash(home, "gh pr ready"))
     with when("Claude marks PR 12 and PR 13 ready by number"):
         twelve = bash(home, "gh pr ready 12")
@@ -620,7 +663,7 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
     with then("the gate reads each head from gh: PR 12's head has no report, PR 13's has"):
         assert says(home, twelve, "no_report.md", short=side[:7]), twelve.reason
         assert quiet(thirteen)
-        assert ["pr", "view", "12", "--json", "headRefOid"] in gh_calls(home)
+        assert ["pr", "view", "12", "--json", "headRefOid,baseRefName"] in gh_calls(home)
     with when("gh fails"):
         fake_gh(home, fail=True)
         failed = bash(home, "gh pr ready 12")
@@ -647,6 +690,8 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
         assert quiet(fine)
     with when("Claude edits the body or opens a PR through gh api"):
         patch = bash(home, "gh api -X PATCH repos/acme/demo/pulls/12 -f body='All tests pass.'")
+        full_url = bash(home, "gh api -X PATCH https://api.github.com/repos/acme/demo/pulls/12 "
+                              "-f body='All tests pass.'")
         post = bash(home, f"gh api repos/acme/demo/pulls -f head=side -f base=main -f title=T "
                           f"-F body=@{body_file(home, CANONICAL)}")
         graphql = bash(home, "gh api graphql -f query='mutation { markPullRequestReadyForReview("
@@ -654,6 +699,7 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
     with then("the body edit is checked, the new PR needs side's report, and a ready step by node id is "
               "asked for its number"):
         assert patch.refused and patch.reason == missing_part(home)
+        assert full_url.refused and full_url.reason == missing_part(home)
         assert says(home, post, "no_report.md", short=side[:7], branch="side"), post.reason
         assert says(home, graphql, "unreadable_push.md"), graphql.reason
 
@@ -666,13 +712,14 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
         change(home, "docs/guide.md")
         change(home, "locales/de.json")
         change(home, "docs/shot.png")
+        change(home, "docs/notes.txt")
         fake_gh(home, open={"docs": 9})
         texts_report(home)
     with when("Claude pushes it"):
         result = bash(home, "git push")
     with then("it runs"):
         assert quiet(result), result.reason
-    for name in ("app.py", "text/notes.py", "docs/site.js"):
+    for name in ("app.py", "text/notes.py", "docs/site.js", "requirements.txt"):
         with when(f"the branch gains {name} and a texts report is made for that head anyway"):
             home.git("reset", "-q", "--hard", "origin/docs" if name == "app.py" else "HEAD~1")
             if name == "app.py":
@@ -686,6 +733,16 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
         texts_report(home, checks=[{"command": "make texts", "exit": 2, "seconds": 1.0, "tail": "bad"}])
     with then("the push is refused and names the check"):
         assert says(home, bash(home, "git push"), "failed.md", which="make texts")
+    with when("the texts report passes, but PR 9 goes into release, not main"):
+        texts_report(home)
+        fake_gh(home, open={"docs": 9}, bases={"docs": "release"})
+        other_base = bash(home, "git push")
+    with then("the push is refused, since the report lists the changes since main, not since release"):
+        assert says(home, other_base, "texts_base.md", base="main", into="release"), other_base.reason
+    with when("the texts report lists the changes since release"):
+        texts_report(home, base={"branch": "release", "sha": head(home, "origin/main")})
+    with then("the push runs"):
+        assert quiet(bash(home, "git push"))
 
 
 def test_every_refusal_teaches_the_rule_and_a_subagent_gets_the_same_answer(home):
