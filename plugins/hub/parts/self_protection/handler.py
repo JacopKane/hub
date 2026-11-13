@@ -92,6 +92,8 @@ RELAYED = re.compile(HUBCTL_IN_CODE.pattern + r"|(?<![\w.-])claude(?:-code)?\b[^
 CLAUDE_PROGRAM = re.compile(r"claude(?:-code)?(?:@.*)?")
 # Programs that read the commands they run, or the keys they type, from their input.
 STDIN_RUNNERS = {"ssh", "mosh", "crontab", "at", "batch", "expect", "script", "tclsh"}
+# A shell function, as in name() { ... } or function name { ... }. Its body may print a script that the line runs.
+FUNCTION_DEFINITION = re.compile(r"(?:^|[\s;&|(){}])(?:function[ \t]+[^\s;&|()<>]|[\w.:@+-]+[ \t]*\([ \t]*\))")
 PLUGIN_VERBS = {"disable", "uninstall", "remove", "rm"}
 PLUGIN_VALUE_OPTIONS = {"--scope", "-s"}
 # tmux key names and what they type. A word that is not a key name is typed as it is. Keys that end the line
@@ -191,7 +193,7 @@ def gate():
 
 def plain(word):
     """A word with the gate's marks taken out."""
-    return word.replace(gate().SUBSTITUTED, "").replace(gate().UNREADABLE, "")
+    return word.replace(gate().SUBSTITUTED, "").replace(gate().UNREADABLE, "").replace(gate().SPLIT, "")
 
 
 def hidden(word):
@@ -1190,8 +1192,8 @@ def runner_scripts(words, flags, cwd):
 def stdin_scripts(command, segments):
     """The command lines a shell, ssh or crontab reads from a pipe, a here-string or a heredoc in this line."""
     parser = gate()
-    scripts, fed = [], piped(command)
-    for words, from_pipe in zip(segments, fed):
+    scripts = []
+    for words in segments:
         index = program_index(words)
         if index is None:
             continue
@@ -1206,10 +1208,30 @@ def stdin_scripts(command, segments):
                 scripts.append(plain(word)[3:])
             elif command.heredoc_script(word) is not None:
                 scripts.append(command.heredoc_script(word))
-        if from_pipe:
+        if getattr(words, "fed", False):  # the gate's reading of the line, so both guards split it alike
             for other in segments:
                 scripts += printed(other, command)
+    if runs_printed_text(command, segments):
+        for other in segments:
+            scripts += printed(other, command)
     return list(dict.fromkeys(scripts))
+
+
+def runs_printed_text(command, segments):
+    """Whether the line may run what its echo or printf prints, other than through a pipe.
+
+    eval, a shell or source with a word the shell fills in, such as
+    eval "$(name)", runs whatever that word holds. A function the line defines
+    can print a script for it, so a line that defines one counts too.
+    """
+    if FUNCTION_DEFINITION.search(command.flat):
+        return True
+    for words in segments:
+        for spot, word in enumerate(words):
+            if (base(word) == "eval" or base(word) in gate().SHELLS or base(word) in gate().SOURCES) and any(
+                    hidden(other) for other in words[spot + 1:]):
+                return True
+    return False
 
 
 def printed(words, command):
@@ -1226,51 +1248,6 @@ def printed(words, command):
         words[spot + 1] for spot, word in enumerate(words[:-1]) if plain(word) == "<<<"]
 
 
-def piped(command):
-    """For each segment of the line, whether a pipe feeds it."""
-    lexer = shlex.shlex(command.flat, posix=True, punctuation_chars=";&|()")
-    lexer.whitespace_split = True
-    try:
-        words = list(lexer)
-    except ValueError:
-        return []
-    fed, current, from_pipe = [], [], False
-    for word in words:
-        if word in gate().SEPARATORS:
-            if current:
-                fed.append(from_pipe)
-            from_pipe, current = word in ("|", "|&"), []
-        else:
-            current.append(word)
-    if current:
-        fed.append(from_pipe)
-    return fed
-
-
-def folded_substitutions(flat):
-    """The parser's text, with each substitution it could read turned into one hidden word.
-
-    The parser keeps the text of a substitution such as $(printf hub), and its
-    lexer splits that text at the brackets. So $(printf hub)ctl would read as
-    three commands. Here it stays one word with a hidden part.
-    """
-    parser = gate()
-    out, index = [], 0
-    while (at := flat.find(parser.SUBSTITUTED, index)) >= 0:
-        out.append(flat[index:at])
-        start = at + len(parser.SUBSTITUTED)
-        if flat.startswith("$(", start):
-            end = parser.closing(flat, start + 1)
-        elif flat.startswith("`", start):
-            end = flat.find("`", start + 1)
-        else:
-            end = -1
-        out.append(parser.UNREADABLE)
-        index = end + 1 if end > 0 else start
-    out.append(flat[index:])
-    return "".join(out)
-
-
 def check_relayed_programs(command):
     """Refuse a hidden program name in a command line that another program runs.
 
@@ -1279,21 +1256,10 @@ def check_relayed_programs(command):
     hub can not read such a name. The other program runs it without the
     tool-call marker, so hubctl itself would not refuse it either.
     """
-    lexer = shlex.shlex(folded_substitutions(command.flat), posix=True, punctuation_chars=";&|()")
-    lexer.whitespace_split = True
-    try:
-        words = list(lexer)
-    except ValueError:
-        words = []
     risky = CHANGE_VERBS | {"uninstall", "screen"}
-    program_hidden = None
-    for word in words + [";"]:
-        if word in gate().SEPARATORS:
-            program_hidden = None
-        elif program_hidden is None:
-            if not re.match(r"[A-Za-z_]\w*\+?=", word) and word not in gate().KEYWORDS:
-                program_hidden = gate().UNREADABLE in word
-        elif program_hidden and plain(word) in risky:
+    for words in command.segments() or []:
+        index = program_index(words)
+        if index is not None and hidden(words[index]) and any(plain(word) in risky for word in words[index + 1:]):
             raise Stop("lowering", "a variable names the program another program runs")
 
 
