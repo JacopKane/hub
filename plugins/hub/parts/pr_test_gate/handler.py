@@ -10,8 +10,10 @@ report from hub's pr-tested step:
 
 A new PR and a body edit also need a body whose testing part says what was
 not tested, checked by the pr part's own body check, so pr-check and the gate
-agree. Pushes to the default branch, tags, deletes, dry runs, pushes to
-another host and pushes with nothing new stay quiet. A branch named alone in
+agree. Tags, deletes, dry runs and pushes to another host stay quiet, and so
+does a push that GitHub says sends nothing new to an open PR. GitHub, not the
+local copy of its refs, also gives a PR's base and a named head's commit. A
+branch named alone in
 a push counts at the remote branch git sends it to, by the remote's push
 settings or the branch's upstream.
 
@@ -33,6 +35,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 
 from hub import files
 
@@ -373,8 +376,8 @@ def push_words(rest):
 
 
 def pushed(step, lookups):
-    """[(branch, commit, cwd, the remote's default branches)] for each GitHub branch other than the default that
-    the push sends something new to."""
+    """[(branch, commit, cwd, no known base)] for each GitHub branch the push may update. Local refs do not show
+    what GitHub has, so with_open_pr asks GitHub which of them bring an open PR something new."""
     cwd, words = git_place(step)
     if sets_push_settings_for_one_command(step, words):
         raise push_settings_stop("option")
@@ -397,12 +400,9 @@ def pushed(step, lookups):
         remote = push_remote(cwd, branch, lookups)
     if not reaches_github(cwd, remote, lookups):
         return []
-    defaults = default_branches(cwd, remote, lookups)
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
-    return [(target, commit, cwd, defaults) for target, commit in sent
-            if not target.startswith("refs/") and target not in defaults
-            and lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") != commit]
+    return [(target, commit, cwd, set()) for target, commit in sent if not target.startswith("refs/")]
 
 
 def reaches_github(cwd, remote, lookups):
@@ -595,27 +595,24 @@ def branch_name(ref):
     return next((ref[len(prefix):] for prefix in BRANCH_PREFIXES if ref.startswith(prefix)), ref)
 
 
-def default_branches(cwd, remote, lookups):
-    named = lookups.git(cwd, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD")
-    if named and named.startswith(remote + "/"):
-        return {named[len(remote) + 1:]}
-    return {"main", "master"}
-
-
 def with_open_pr(candidates, lookups):
-    """The pushed branches that have an open PR, each with the branch its PR goes into. More than one branch, or a
-    failed lookup, counts as open, with the remote's default branch as its base."""
+    """The pushed branches that send something new to an open PR, each with the branch its PR goes into, as GitHub
+    says. A branch with no open PR, or whose PR's head is already the commit sent, drops out. More than one
+    branch, or a failed lookup, keeps them all, with no known base."""
     if len({branch for branch, _commit, _cwd, _bases in candidates}) != 1:
         return candidates
     branch, _commit, cwd, _bases = candidates[0]
     output, _why = lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
-                              "number,baseRefName", "--limit", "1")
+                              "number,baseRefName,headRefOid", "--limit", "1")
     listed = parsed_json(output)
     if not isinstance(listed, list):
         return candidates
-    base = next((found.get("baseRefName") for found in listed if isinstance(found, dict)), None)
-    return [(name, commit, here, {base} if base else bases) for name, commit, here, bases in candidates] \
-        if listed else []
+    if not listed:
+        return []
+    found = listed[0] if isinstance(listed[0], dict) else {}
+    base, pr_head_commit = found.get("baseRefName"), found.get("headRefOid")
+    bases = {base} if isinstance(base, str) and base else set()
+    return [(name, commit, here, bases) for name, commit, here, _bases in candidates if commit != pr_head_commit]
 
 
 def parsed_json(output):
@@ -712,28 +709,55 @@ def body_stop(body, cwd, flags, answer):
         answer.add_context(message("near_miss.md", heading=found["heading"]))
 
 
-def pr_head(cwd, branch, named, lookups):
-    """The commit a new PR for the branch opens at. With --head, gh pushes nothing, so the PR opens at what was
-    pushed, read from the remote-tracking branch when there is one. Without it, gh opens the PR only once HEAD
-    matches a pushed branch, pushing HEAD first or stopping, so the local head is the PR's head."""
-    if unreadable_mark() in branch:
+def gh_repo_place(step, repo_values=()):
+    """(owner, name, the variables gh runs with) for the repo a gh step works in. gh api fills {owner} and {repo}
+    from GH_REPO, or else from the current repo, as gh pr picks its repo, so -R or --repo becomes GH_REPO."""
+    variables = {"GH_REPO": repo_values[-1]} if repo_values else repo_variable(step)
+    if any(unreadable_mark() in value for value in variables.values()):
         raise unreadable("word")
-    pushed_commit = named and lookups.git(cwd, "rev-parse", "--verify", "--quiet",
-                                          f"refs/remotes/{push_remote(cwd, branch, lookups)}/{branch}")
-    return pushed_commit or head_of_branch(cwd, branch, lookups)
+    return "{owner}", "{repo}", variables
 
 
-def pr_bases(named_base, cwd, branch, lookups):
-    """The branches a new PR may go into: the one named, or else the remote's default. A base the shell fills in
-    matches none, so no texts report counts for it."""
-    if named_base is None:
-        return default_branches(cwd, push_remote(cwd, branch, lookups), lookups)
-    return set() if unreadable_mark() in named_base else {named_base}
+def new_pr(step, head, named_head, named_base, place, lookups):
+    """[(branch, the commit the PR opens at, cwd, the branches it may go into)] for a new PR at head in the repo at
+    place. A head that is named is read on GitHub, since gh then pushes nothing. With no head named, gh opens the PR
+    only once HEAD matches a pushed branch, pushing HEAD first or stopping, so the local head is the PR's head."""
+    branch = head.split(":", 1)[-1]
+    commit = github_head(step.cwd, head, place, lookups) if named_head else head_of_branch(step.cwd, branch, lookups)
+    return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, place, lookups))]
 
 
-def new_pr(step, branch, named_head, named_base, lookups):
-    return [(branch, pr_head(step.cwd, branch, named_head, lookups), step.cwd,
-             pr_bases(named_base, step.cwd, branch, lookups))]
+def github_head(cwd, head, place, lookups):
+    """The commit a branch is at on GitHub, or a stop when GitHub gives none. owner:branch names the branch in the
+    owner's repo of the same name."""
+    fork, colon, after_colon = head.partition(":")
+    owner, name, variables = place
+    owner, branch = (fork, after_colon) if colon else (owner, head)
+    if any(unreadable_mark() in word for word in (head, owner, name)):
+        raise unreadable("word")
+    if colon and not re.fullmatch(r"[A-Za-z0-9-]+", fork):
+        raise unreadable("head")
+    path = f"repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(branch, safe='/')}"
+    output, why = lookups.gh(cwd, "api", path, "--jq", ".object.sha", variables=variables)
+    commit = (output or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise Stop("branch_head_unknown.md", branch=head, why=why or "GitHub gave no commit")
+    return commit
+
+
+def pr_bases(named_base, cwd, branch, place, lookups):
+    """The branches a new PR may go into, as gh picks it: the one named, else the branch's gh-merge-base setting,
+    else the repo's default branch on GitHub. A base the shell fills in, or one GitHub does not give, matches none,
+    so no texts report counts for it."""
+    if named_base is not None:
+        return set() if unreadable_mark() in named_base else {named_base}
+    merge_base = lookups.git(cwd, "config", f"branch.{branch}.gh-merge-base")
+    if merge_base:
+        return {merge_base}
+    owner, name, variables = place
+    output, _why = lookups.gh(cwd, "api", f"repos/{owner}/{name}", "--jq", ".default_branch", variables=variables)
+    default = (output or "").strip()
+    return {default} if default else set()
 
 
 def head_of_branch(cwd, name, lookups):
@@ -766,8 +790,9 @@ def pr_step(command, step, flags, answer, lookups):
         if not flags.runs(f"{PART}.report"):
             return []
         heads, bases = values.get("head"), values.get("base")
-        branch = heads[-1].split(":", 1)[-1] if heads else current_branch(step.cwd, lookups)
-        return new_pr(step, branch, bool(heads), bases[-1] if bases else None, lookups)
+        head = heads[-1] if heads else current_branch(step.cwd, lookups)
+        place = gh_repo_place(step, values.get("repo", ()))
+        return new_pr(step, head, bool(heads), bases[-1] if bases else None, place, lookups)
     if action == ["pr", "edit"]:
         values, _positional = gh_pr_flags(gate().without_redirects(rest), "edit")
         bodies = bodies_of(command, step, values)
@@ -833,8 +858,7 @@ def ready_pr(step, named, repo, lookups):
     viewed = viewed if isinstance(viewed, dict) else {}
     commit, base = viewed.get("headRefOid"), viewed.get("baseRefName")
     branch = None if named else lookups.git(step.cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
-    bases = {base} if base else default_branches(step.cwd, push_remote(step.cwd, branch, lookups) if branch
-                                                 else "origin", lookups)
+    bases = {base} if isinstance(base, str) and base else set()
     if named:
         if not commit:
             raise Stop("pr_head_unknown.md", number=named[0], why=why or "gh gave no head commit")
@@ -888,7 +912,9 @@ def api_step(command, step, flags, answer, lookups):
             return []
         if not fields.get("head"):
             raise unreadable("head")
-        return new_pr(step, fields["head"].split(":", 1)[-1], True, fields.get("base"), lookups)
+        owner, name = endpoint.split("/")[1:3]
+        place = (owner, name, gh_repo_place(step)[2])
+        return new_pr(step, fields["head"], True, fields.get("base"), place, lookups)
     if re.fullmatch(r"repos/[^/]+/[^/]+/pulls/\d+", endpoint) and method != "GET" and "body" in fields:
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
@@ -925,7 +951,7 @@ def graphql_step(fields, step, flags, answer, lookups):
     branch = graphql_value(query, "headRefName", fields)
     if not branch:
         raise unreadable("head")
-    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), lookups)
+    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), gh_repo_place(step), lookups)
 
 
 def graphql_value(query, key, fields):

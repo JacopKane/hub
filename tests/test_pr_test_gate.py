@@ -684,12 +684,14 @@ def graphql_call(query, *fields):
 
 
 def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
-    with given("branch feature with open PR 7 and a new commit, branch side with a commit, no reports, "
+    with given("branch feature with open PR 7 and a new commit, branch side with a pushed commit, no reports, "
                "and new-PR requests for side and feature kept in JSON files"):
         with_github(home)
         feature = pushed_branch(home)
         home.git("branch", "side", "main")
-        side = change(home, cwd=worktree(home, "side", "side"))
+        side_folder = worktree(home, "side", "side")
+        side = change(home, cwd=side_folder)
+        home.git("push", "-q", "origin", "side", cwd=side_folder)
         fake_gh(home, open={"feature": 7})
         good = body_file(home, CANONICAL)
         side_request = body_file(home, json.dumps({"head": "side", "base": "main", "title": "T", "body": CANONICAL}),
@@ -873,8 +875,7 @@ def test_steps_outside_the_gate_run_quietly(home):
         home.git("tag", "v1")
         home.git("remote", "add", "mirror", bare)
         fake_gh(home, fail=True)
-    steps = ["git push origin feature:main", "git push origin HEAD:refs/heads/main", "git push origin v1",
-             "git push origin refs/tags/v1", "git push --tags", "git push origin --tags",
+    steps = ["git push origin v1", "git push origin refs/tags/v1", "git push --tags", "git push origin --tags",
              "git push --delete origin feature", "git push -d origin feature", "git push origin :feature",
              "git push --dry-run", "git push -n origin feature", "git push mirror feature", "git log --oneline -3",
              "git push --dry origin feature", "git push --del origin feature", "git push -onotify -n origin feature",
@@ -884,41 +885,31 @@ def test_steps_outside_the_gate_run_quietly(home):
              "gh pr edit 7 --title 'Keep the draft'", "gh api repos/acme/demo/pulls/7",
              "gh api https://api.github.com/repos/acme/demo/pulls/7", 'echo "git push"',
              commit("Explain git push in the docs")]
-    with when("Claude sends pushes to the default branch, tags, deletes, dry runs, another host, reads and "
-              "PR steps that change no commit"):
+    with when("Claude sends pushes of tags, deletes, dry runs, pushes to another host, reads and PR steps that "
+              "change no commit"):
         results = {step: bash(home, step) for step in steps}
     with then("each runs with no answer, and the gate never asked gh"):
         for step, result in results.items():
             assert quiet(result), (step, result.reason)
         assert gh_calls(home) == []
-    with when("origin names no default branch"):
-        home.git("remote", "set-head", "origin", "-d")
-    with then("main and master count as default branches"):
-        assert quiet(bash(home, "git push origin feature:master"))
-        assert quiet(bash(home, "git push origin feature:main"))
     with when("gh works and feature has no open PR"):
         fake_gh(home, open={})
         result = bash(home, "git push")
     with then("the push runs after one lookup for feature, since the later new PR needs the report"):
         assert quiet(result)
         assert gh_calls(home) == [["pr", "list", "--head", "feature", "--state", "open", "--json",
-                                   "number,baseRefName", "--limit", "1"]]
-    with when("feature is pushed, and the same push comes again with nothing new"):
-        home.git("push", "-q")
-        fake_gh(home, fail=True)
-        again = bash(home, "git push")
-    with then("it runs with no lookup"):
-        assert quiet(again) and len(gh_calls(home)) == 1
+                                   "number,baseRefName,headRefOid", "--limit", "1"]]
 
 
 def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_was_not_tested(home):
-    with given("branch feature pushed with no PR yet, and branch side with a commit and no report"):
+    with given("branch feature pushed with no PR yet, and branch side with a pushed commit and no report"):
         with_github(home)
         feature = pushed_branch(home)
         home.git("push", "-q")
         home.git("branch", "side", "main")
         side_folder = worktree(home, "side", "side")
         side = change(home, cwd=side_folder)
+        home.git("push", "-q", "origin", "side", cwd=side_folder)
         good = body_file(home, CANONICAL)
     with when("Claude opens a PR with a canonical body and no report"):
         result = bash(home, f"gh pr create --draft --title 'Keep the draft' --body-file {good}")
@@ -1000,7 +991,9 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
         feature = pushed_branch(home)
         on_github = head(home, "origin/feature")
         home.git("branch", "side", "main")
-        side = change(home, cwd=worktree(home, "side", "side"))
+        side_folder = worktree(home, "side", "side")
+        side = change(home, cwd=side_folder)
+        home.git("push", "-q", "origin", "side", cwd=side_folder)
         fake_gh(home, open={"feature": 7}, heads={"12": side, "13": feature, "feature": on_github})
     with when("Claude marks the current branch's PR ready while only the local commit has a report"):
         record(home)
@@ -1096,7 +1089,8 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
     with then("only the body is checked: the bad body is refused and the good one runs, though side has no report"):
         assert bad.refused and bad.reason == missing_part(home)
         assert quiet(fine)
-    with when("Claude edits the body or opens a PR through gh api"):
+    with when("gh works again, and Claude edits the body or opens a PR through gh api"):
+        fake_gh(home, heads={"12": side})
         patch = bash(home, "gh api -X PATCH repos/acme/demo/pulls/12 -f body='All tests pass.'")
         full_url = bash(home, "gh api -X PATCH https://api.github.com/repos/acme/demo/pulls/12 "
                               "-f body='All tests pass.'")
@@ -1170,13 +1164,19 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
     with then("each one runs"):
         assert all(quiet(result) for result in into_release.values()), \
             {spelling: result.reason for spelling, result in into_release.items()}
-    with when("Claude opens it into main, or names no base so it goes into the remote's default branch"):
+    with when("Claude opens it into main, or names no base so it goes into GitHub's default branch, main, while the "
+              "local copy of origin's default branch says release"):
+        home.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release")
         into_main = bash(home, f"gh pr create --base main --title Guide --body-file {good}")
         no_base = bash(home, f"gh pr create --title Guide --body-file {good}")
         last_wins = bash(home, f"gh pr create --base release --base main --title Guide --body-file {good}")
     with then("each is refused, since the report lists the changes since release, not since main"):
         for result in (into_main, no_base, last_wins):
             assert says(home, result, "texts_base.md", base="release", into="main"), result.reason
+    with when("branch docs's gh-merge-base setting names release, which gh reads for a new PR with no base"):
+        home.git("config", "branch.docs.gh-merge-base", "release")
+    with then("the new PR with no base runs"):
+        assert quiet(bash(home, f"gh pr create --title Guide --body-file {good}"))
     with when("Claude marks PR 9 ready, by number and as the current branch's PR, while gh says it goes into release"):
         docs_head = head(home, "HEAD")
         fake_gh(home, open={"docs": 9}, heads={"9": docs_head, "docs": docs_head},
@@ -1509,3 +1509,54 @@ def test_the_push_urls_decide_whether_a_push_reaches_github(home):
     with then("each runs with no answer"):
         for case, result in results.items():
             assert quiet(result), (case, result.reason)
+
+
+def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
+    with given("branch feature with open PR 7, pushed, and a new commit with no report"):
+        with_github(home)
+        feature = pushed_branch(home)
+        on_github = head(home, "origin/feature")
+        fake_gh(home, open={"feature": 7})
+    with when("the local copy of origin's feature is moved to the new commit, and Claude pushes"):
+        home.git("update-ref", "refs/remotes/origin/feature", "HEAD")
+        moved = bash(home, "git push")
+    with then("the push is refused for the new commit, since GitHub's feature is still the old one"):
+        assert says(home, moved, "no_report.md", short=feature[:7], branch="feature"), moved.reason
+    with when("the local copy of origin's default branch is pointed at feature, and Claude pushes feature"):
+        home.git("update-ref", "refs/remotes/origin/feature", on_github)
+        home.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature")
+        as_default = bash(home, "git push origin feature")
+    with then("the push is refused too, since feature has an open PR whatever the local copy says"):
+        assert says(home, as_default, "no_report.md", short=feature[:7], branch="feature"), as_default.reason
+    with when("gh can not reach GitHub and Claude pushes the new commit to main"):
+        home.git("remote", "set-head", "origin", "main")
+        fake_gh(home, fail=True)
+        to_main = {step: bash(home, step) for step in ("git push origin feature:main",
+                                                       "git push origin HEAD:refs/heads/main")}
+    with then("each is refused, since without GitHub's answer main may have an open PR"):
+        for step, result in to_main.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="main"), (step, result.reason)
+    with when("feature is pushed, gh works again, and the same push comes with nothing new for PR 7"):
+        home.git("push", "-q")
+        fake_gh(home, open={"feature": 7})
+        again = bash(home, "git push")
+    with then("it runs after one lookup, which reads the head of PR 7 from GitHub"):
+        assert quiet(again), again.reason
+        assert gh_calls(home)[-1] == ["pr", "list", "--head", "feature", "--state", "open", "--json",
+                                      "number,baseRefName,headRefOid", "--limit", "1"]
+    with when("branch side is pushed with no report, its next commit gets a report, and the local copy of "
+              "origin's side is moved to that commit"):
+        home.git("checkout", "-q", "-b", "side", "main")
+        side = change(home, message="Start side")
+        home.git("push", "-q", "-u", "origin", "side")
+        tested = change(home)
+        record(home)
+        home.git("update-ref", "refs/remotes/origin/side", tested)
+        good = body_file(home, CANONICAL)
+        forged = bash(home, f"gh pr create --head side --title Side --body-file {good}")
+    with then("a new PR that names side is refused for the commit GitHub has, since gh pushes nothing then"):
+        assert says(home, forged, "no_report.md", short=side[:7], branch="side"), forged.reason
+    with when("Claude opens a PR for a branch GitHub does not have"):
+        missing = bash(home, f"gh pr create --head nowhere --title T --body-file {good}")
+    with then("it is refused, since the gate can not read the commit the PR would open at"):
+        assert says(home, missing, "branch_head_unknown.md", branch="nowhere"), missing.reason
