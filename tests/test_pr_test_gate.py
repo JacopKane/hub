@@ -911,9 +911,21 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
         assert took < 6, took
     with when("Claude turns a PR back into a draft"):
         fake_gh(home, fail=True)
-        undo = bash(home, "gh pr ready 12 --undo")
-    with then("it runs"):
-        assert quiet(undo)
+        undos = [bash(home, step) for step in ("gh pr ready 12 --undo", "gh pr ready 12 --undo=false --undo",
+                                               "gh pr ready --undo=0 12 --undo=1", "gh pr ready 12 --undo=T")]
+    with then("it runs, whenever the last --undo turns it on"):
+        for result in undos:
+            assert quiet(result), result.reason
+    with when("the last --undo turns it off again, as gh reads its flags, or holds a value gh does not read as "
+              "true, or a -- ends gh's flags before it"):
+        fake_gh(home, heads={"12": side})
+        marked = [bash(home, step) for step in ("gh pr ready 12 --undo --undo=false", "gh pr ready --undo 12 --undo=0",
+                                                "gh pr ready 12 --undo=F", "gh pr ready 12 --undo=yes",
+                                                "gh pr ready 12 -- --undo")]
+        fake_gh(home, fail=True)
+    with then("each one may mark PR 12 ready, so each needs its head's report"):
+        for result in marked:
+            assert says(home, result, "no_report.md", short=side[:7]), result.reason
     with when("Claude edits PR 12's body, once without a tested part and once with one"):
         bad = bash(home, f"gh pr edit 12 --body-file {body_file(home, NO_PART)}")
         fine = bash(home, f"gh pr edit 12 --body-file {body_file(home, CANONICAL)}")

@@ -64,6 +64,8 @@ CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
 PUSH_SETTING_SECTIONS = {"push", "remote", "url", "branch", "include", "includeif"}
 PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
 FALSE_WORDS = {"false", "no", "off", "0"}
+# The words Go's strconv.ParseBool reads as true, which gh uses for a value such as --undo=true
+TRUE_WORDS = {"1", "t", "T", "TRUE", "true", "True"}
 PUSH_CONFIG_WHY = {
     "matching": "the repo's push.default sends every branch that has a match on the remote",
     "refspec": "the remote has its own setting for what a push sends",
@@ -650,10 +652,26 @@ def pr_step(command, step, flags, answer, lookups):
             written_out(step)
             body_stop(body, step.cwd, flags, answer)
         return []
-    if action == ["pr", "ready"] and "--undo" not in rest and flags.runs(f"{PART}.report"):
+    if action == ["pr", "ready"] and flags.runs(f"{PART}.report"):
+        words = gate().without_redirects(rest)
+        if undoes_ready(words):
+            return []
         written_out(step)
-        return ready_pr(step, *ready_words(gate().without_redirects(rest)), lookups)
+        return ready_pr(step, *ready_words(words), lookups)
     return []
+
+
+def undoes_ready(words):
+    """Whether gh pr ready turns the PR back into a draft. gh keeps the last --undo before a lone --, where the
+    word after a lone -R or --repo is the repo. A bare --undo is true, and --undo=value is true only for the words
+    Go's strconv.ParseBool reads as true."""
+    undos, index = [], 0
+    while index < len(words) and words[index] != "--":
+        word = words[index]
+        if word == "--undo" or word.startswith("--undo="):
+            undos.append(word.partition("=")[2] if "=" in word else "true")
+        index += 2 if word in PR_REPO_OPTIONS else 1
+    return bool(undos) and undos[-1] in TRUE_WORDS
 
 
 def ready_words(words):
