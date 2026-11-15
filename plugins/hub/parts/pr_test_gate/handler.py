@@ -125,6 +125,7 @@ WHY = {
     "head_repo": "it names the head's repo in a way the gate does not read",
     "draft": "gh api may change the PR's draft state, which the gate reads only from gh pr ready",
     "remote_url": "git could not say which URL the remote names",
+    "copies": "git could not list its copies of the remote's branches",
 }
 
 
@@ -420,7 +421,11 @@ def pushed(step, lookups):
 
 def reaches_github(cwd, remote, lookups):
     """Whether a push to the remote word may reach GitHub: any URL git pushes to names github.com."""
-    return any(GITHUB.search(url) for url in push_urls(cwd, remote, lookups))
+    return any(map(is_a_github_url, push_urls(cwd, remote, lookups)))
+
+
+def is_a_github_url(url):
+    return GITHUB.search(url) is not None
 
 
 def push_urls(cwd, remote, lookups):
@@ -749,13 +754,51 @@ def node_place(node, step):
 def new_pr(step, head, named_head, named_base, places, lookups):
     """[(branch, the commit the PR opens at, cwd, the branches it may go into)] for a new PR at head. places is
     (the head's repo, the base's repo). A head that is named is read on GitHub, since gh then pushes nothing. With
-    no head named, gh opens the PR only once HEAD matches a pushed branch, pushing HEAD first or stopping, so the
-    local head is the PR's head."""
+    no head named, gh pushes nothing when its local copy of a GitHub branch is at HEAD, and opens the PR at the
+    commit GitHub has for that branch, so each such copy must match GitHub. Otherwise gh pushes HEAD first or
+    stops, and the local head is the PR's head."""
     head_place, base_place = places
     branch = head.split(":", 1)[-1]
     commit = (github_head(step.cwd, head, head_place, lookups) if named_head
               else head_of_branch(step.cwd, branch, lookups))
+    if not named_head:
+        check_github_copies(step.cwd, commit, lookups)
     return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, base_place, lookups), base_place)]
+
+
+def check_github_copies(cwd, commit, lookups):
+    """Refuse a new PR whose head gh would take from a local copy of a GitHub branch at the commit, when GitHub has
+    that branch at another commit or gives none. gh looks such a copy up as refs/remotes/<remote>/<branch>, and
+    only for a remote on GitHub."""
+    for remote, branch in remote_copies_at(cwd, commit, lookups):
+        url = lookups.git(cwd, "remote", "get-url", "--", remote)
+        if url is None:
+            raise unreadable("remote_url")
+        if not is_a_github_url(url):
+            continue
+        on_github = github_head(cwd, branch, ("rest", repo_path_of(url), {}), lookups)
+        if on_github != commit:
+            raise Stop("github_head_differs.md", branch=branch, short=commit[:7], commit=on_github[:7])
+
+
+def remote_copies_at(cwd, commit, lookups):
+    """[(remote, branch)] for each refs/remotes/<remote>/<branch> at the commit. A remote's name may hold a /, so
+    a ref counts for every remote whose name it can start with."""
+    listed = lookups.git(cwd, "for-each-ref", "--points-at", commit, "--format=%(refname)", "refs/remotes/")
+    remotes = lookups.git(cwd, "remote")
+    if listed is None or remotes is None:
+        raise unreadable("copies")
+    return [(remote, ref[len(prefix):]) for ref in listed.splitlines() for remote in remotes.splitlines()
+            for prefix in [f"refs/remotes/{remote}/"] if ref.startswith(prefix) and ref[len(prefix):] != "HEAD"]
+
+
+def repo_path_of(url):
+    """The REST path of the GitHub repo a remote URL names, from its last two path parts, as in
+    user@host:owner/name.git or https://github.com/owner/name."""
+    parts = re.split(r"[/:]", re.sub(r"(?:\.git)?/*$", "", url))[-2:]
+    if len(parts) != 2 or not (re.fullmatch(r"[A-Za-z0-9-]+", parts[0]) and re.fullmatch(r"[\w.-]+", parts[1])):
+        raise unreadable("remote_url")
+    return f"repos/{parts[0]}/{parts[1]}"
 
 
 def github_head(cwd, head, place, lookups):

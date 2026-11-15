@@ -1570,6 +1570,46 @@ def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_send
         assert says(home, missing, "branch_head_unknown.md", branch="nowhere"), missing.reason
 
 
+def test_a_new_pr_with_no_head_named_is_judged_at_the_commit_github_has_when_gh_pushes_nothing(home):
+    with given("branch feature pushed to GitHub at a commit with no report, and a new commit with a report"):
+        elsewhere = with_github(home)
+        tested = pushed_branch(home)
+        on_github = head(home, "origin/feature")
+        record(home)
+        good = body_file(home, CANONICAL)
+        step = f"gh pr create --title T --body-file {good}"
+    with when("the local copy of origin's feature is moved to the tested commit, and Claude opens a PR"):
+        home.git("update-ref", "refs/remotes/origin/feature", tested)
+        moved = bash(home, step)
+    with then("it is refused, since gh then pushes nothing and opens the PR at the commit GitHub has"):
+        assert says(home, moved, "github_head_differs.md", branch="feature", short=tested[:7],
+                    commit=on_github[:7]), moved.reason
+        assert ["api", "repos/acme/demo/git/ref/heads/feature", "--jq", ".object.sha"] in gh_calls(home)
+    with when("a local copy of a branch GitHub does not have is at the tested commit too"):
+        home.git("update-ref", "refs/remotes/origin/feature", on_github)
+        home.git("update-ref", "refs/remotes/origin/side", tested)
+        unknown = bash(home, step)
+    with then("it is refused, since the gate can not read the commit gh may open the PR at"):
+        assert says(home, unknown, "branch_head_unknown.md", branch="side"), unknown.reason
+    with when("that copy is gone, a remote off GitHub has a copy at the tested commit, and gh can not reach GitHub"):
+        home.git("update-ref", "-d", "refs/remotes/origin/side")
+        home.git("remote", "add", "backup", elsewhere)
+        home.git("push", "-q", "backup", "feature")
+        fake_gh(home, fail=True)
+        calls_before = len(gh_calls(home))
+        ahead = bash(home, step)
+    with then("it runs, since gh would push the tested commit before it opens the PR, and no branch is looked up"):
+        assert quiet(ahead), ahead.reason
+        assert not [call for call in gh_calls(home)[calls_before:] if "/git/ref/heads/" in " ".join(call)]
+    with when("feature is pushed, so GitHub has the tested commit, and Claude opens the PR"):
+        fake_gh(home)
+        home.git("push", "-q", "origin", "feature")
+        pushed = bash(home, step)
+    with then("it runs after GitHub says feature is at the tested commit"):
+        assert quiet(pushed), pushed.reason
+        assert ["api", "repos/acme/demo/git/ref/heads/feature", "--jq", ".object.sha"] in gh_calls(home)
+
+
 HEAD_REPO_WHY = "it names the head's repo in a way the gate does not read"
 DRAFT_WHY = "gh api may change the PR's draft state, which the gate reads only from gh pr ready"
 REMOTE_URL_WHY = "git could not say which URL the remote names"
