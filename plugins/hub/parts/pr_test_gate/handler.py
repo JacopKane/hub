@@ -66,6 +66,7 @@ OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
 OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
 GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
 GH_ALIASES = {("pr", "new"): ("pr", "create")}
+PR_REPO_OPTIONS = {"-R", "--repo"}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
 CONFIG_OPTIONS = {"-c", "--config-env"}
@@ -167,15 +168,16 @@ class Lookups:
         """Lookups whose deadline is the gate's own, or what the hook has left after the parts before it."""
         return cls(seconds_for_lookups(time.monotonic() - parts_started))
 
-    def run(self, words, cwd, cap):
-        """(exit code, output, error), or None when the call took longer than it may."""
+    def run(self, words, cwd, cap, variables=None):
+        """(exit code, output, error), or None when the call took longer than it may. variables are set for this
+        call on top of the hook's own."""
         left = self.deadline - time.monotonic()
         if left <= 0:
             raise Stop("slow.md")
         process = subprocess.Popen(words, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    errors="replace", start_new_session=True,
-                                   env=dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
-                                            GH_PROMPT_DISABLED="1"))
+                                   env={**os.environ, **(variables or {}), "GIT_OPTIONAL_LOCKS": "0",
+                                        "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
         try:
             output, error = process.communicate(timeout=min(cap, left))
         except subprocess.TimeoutExpired:
@@ -199,10 +201,10 @@ class Lookups:
             self.cache[key] = done[1].strip() if done[0] == 0 else None
         return self.cache[key]
 
-    def gh(self, cwd, *words):
+    def gh(self, cwd, *words, variables=None):
         """(gh's output or None, why it failed). A gh that can not start is a failed lookup like any other."""
         try:
-            done = self.run(["gh", *words], cwd, GH_SECONDS)
+            done = self.run(["gh", *words], cwd, GH_SECONDS, variables)
         except OSError:
             return None, "gh could not start"
         if done is None:
@@ -722,16 +724,41 @@ def pr_step(command, step, flags, answer, lookups):
         return []
     if action == ["pr", "ready"] and "--undo" not in rest and flags.runs(f"{PART}.report"):
         written_out(step)
-        return ready_pr(step, [word for word in without_redirects(rest) if not word.startswith("-")][:1], lookups)
+        return ready_pr(step, *ready_words(without_redirects(rest)), lookups)
     return []
 
 
-def ready_pr(step, named, lookups):
-    """The PR a ready step marks, read from gh: its head commit and the branch it goes into. With no number, gh
-    finds the current branch's PR, and the local head stands in when gh can not say."""
-    if named and unreadable_mark() in named[0]:
+def ready_words(words):
+    """(the PR a gh pr ready step names, as a list of at most one word, and its repo options as written). gh reads
+    the word after a lone -R or --repo as the repo, so that word never names the PR."""
+    named, repo, index = [], [], 0
+    while index < len(words):
+        word = words[index]
+        width = 2 if word in PR_REPO_OPTIONS else 1
+        if width == 2 or word.startswith("--repo=") or (word.startswith("-R") and len(word) > 2):
+            repo.extend(words[index:index + width])
+        elif not word.startswith("-"):
+            named.append(word)
+        index += width
+    return named[:1], repo
+
+
+def repo_variable(step):
+    """{"GH_REPO": value} for the last GH_REPO set in front of gh, the one the shell passes on, else {}. gh reads
+    it as the repo when no -R or --repo names one."""
+    values = [word.split("=", 1)[1] for word in step.before if word.startswith("GH_REPO=")]
+    return {"GH_REPO": values[-1]} if values else {}
+
+
+def ready_pr(step, named, repo, lookups):
+    """The PR a ready step marks, read from gh in the repo the step names with its options or GH_REPO: its head
+    commit and the branch it goes into. With no number, gh finds the current branch's PR, and the local head stands
+    in when gh can not say."""
+    variables = repo_variable(step)
+    if any(unreadable_mark() in word for word in named + repo + list(variables.values())):
         raise unreadable("word")
-    output, why = lookups.gh(step.cwd, "pr", "view", *named, "--json", "headRefOid,baseRefName")
+    output, why = lookups.gh(step.cwd, "pr", "view", *named, *repo, "--json", "headRefOid,baseRefName",
+                             variables=variables)
     viewed = parsed_json(output)
     viewed = viewed if isinstance(viewed, dict) else {}
     commit, base = viewed.get("headRefOid"), viewed.get("baseRefName")

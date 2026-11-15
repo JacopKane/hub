@@ -6,7 +6,8 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
 
 - open: {branch: PR number} for `gh pr list --head <branch> --state open`
 - heads: {PR number or branch: head commit} for `gh pr view [<it>] --json headRefOid,baseRefName`; with no
-  number, gh's own way to find the current branch's PR, the branch checked out in the folder is the key
+  number, gh's own way to find the current branch's PR, the branch checked out in the folder is the key; with
+  -R or --repo, or else a GH_REPO that is not empty, the key is <repo>#<number>
 - bases: {PR number or branch: the branch the PR goes into}, main when not named
 - sleep: seconds to wait before answering, for a slow network
 - fail: true makes every call exit 1, as when gh can not reach GitHub
@@ -42,6 +43,14 @@ def current_branch():
     return done.stdout.strip()
 
 
+def repo_named():
+    """The repo picked with -R or --repo, in any spelling gh reads, else GH_REPO when it is not empty, or None."""
+    attached = [word[len("--repo="):] if word.startswith("--repo=") else word[2:].lstrip("=") for word in words
+                if word.startswith("--repo=") or (word.startswith("-R") and len(word) > 2)]
+    separate = [value for option, value in zip(words, words[1:]) if option in ("-R", "--repo")]
+    return (separate + attached or [None])[-1] or os.environ.get("GH_REPO") or None
+
+
 def base_of(key):
     return config.get("bases", {}).get(key, "main")
 
@@ -52,6 +61,7 @@ if words[:2] == ["pr", "list"]:
     print(json.dumps([{"number": number, "baseRefName": base_of(branch)}] if number else []))
 elif words[:2] == ["pr", "view"]:
     key = words[2] if len(words) > 2 and not words[2].startswith("-") else current_branch()
+    key = f"{repo_named()}#{key}" if repo_named() else key
     head = config.get("heads", {}).get(key)
     if head is None:
         print(f"no pull requests found for {key}", file=sys.stderr)

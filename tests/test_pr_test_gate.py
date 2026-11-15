@@ -856,6 +856,38 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
             assert says(home, result, "no_report.md", short=side[:7]), result.reason
         assert quiet(thirteen)
         assert ["pr", "view", "12", "--json", "headRefOid,baseRefName"] in gh_calls(home)
+    with when("Claude marks PR 13 and PR 12 of another repo ready, naming the repo with -R or --repo, where "
+              "PR 13's head is side's commit and PR 12's is feature's"):
+        fake_gh(home, open={"feature": 7}, heads={"12": side, "13": feature, "acme/other#13": side,
+                                                   "acme/other#12": feature})
+        other_thirteen = {step: bash(home, step) for step in (
+            "gh pr -R acme/other ready 13", "gh -R acme/other pr ready 13", "gh pr ready 13 --repo=acme/other",
+            "gh pr ready -Racme/other 13", "gh pr ready --repo acme/other 13")}
+        other_twelve = bash(home, "gh pr ready 12 -R acme/other")
+    with then("the gate reads the number, not the repo, as the PR, asks gh for that PR in that repo, and judges "
+              "its head: PR 13's has no report, PR 12's has"):
+        for step, result in other_thirteen.items():
+            assert says(home, result, "no_report.md", short=side[:7]), (step, result.reason)
+        assert quiet(other_twelve), other_twelve.reason
+        assert ["pr", "view", "12", "-R", "acme/other", "--json", "headRefOid,baseRefName"] in gh_calls(home)
+    with when("Claude names the other repo with GH_REPO in front of gh instead, last one set, quoted, or under a "
+              "-R that names it too, and also sets GH_REPO empty, which gh reads as no repo"):
+        variable_thirteen = {step: bash(home, step) for step in (
+            "GH_REPO=acme/other gh pr ready 13", "GH_REPO='acme/other' gh pr ready 13",
+            "GH_REPO=acme/demo GH_REPO=acme/other gh pr ready 13", "GH_REPO= gh pr ready 13 -R acme/other",
+            "GH_REPO=acme/demo gh pr ready 13 -R acme/other")}
+        variable_twelve = bash(home, "GH_REPO=acme/other gh pr ready 12")
+        empty_thirteen = bash(home, "GH_REPO= gh pr ready 13")
+        set_before = {step: bash(home, step) for step in (
+            "env GH_REPO=acme/other gh pr ready 13", "export GH_REPO=acme/other; gh pr ready 13")}
+    with then("the gate asks gh in the repo gh itself picks: -R when it names one, else a GH_REPO that is not "
+              "empty, else the current repo, and a GH_REPO set any other way is refused"):
+        for step, result in variable_thirteen.items():
+            assert says(home, result, "no_report.md", short=side[:7]), (step, result.reason)
+        assert quiet(variable_twelve), variable_twelve.reason
+        assert quiet(empty_thirteen), empty_thirteen.reason
+        for step, result in set_before.items():
+            assert result.refused, (step, result.reason)
     with when("gh fails"):
         fake_gh(home, fail=True)
         failed = bash(home, "gh pr ready 12")
@@ -894,6 +926,18 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
         assert full_url.refused and full_url.reason == missing_part(home)
         assert says(home, post, "no_report.md", short=side[:7], branch="side"), post.reason
         assert says(home, graphql, "unreadable_push.md"), graphql.reason
+    with when("Claude marks PR 12 ready in a repo the shell fills in, first as is and then with the text gate's "
+              "unreadable check off"):
+        fake_gh(home, open={"feature": 7}, heads={"12": side, "13": feature})
+        hidden_repo = bash(home, 'gh pr ready 12 -R "$REPO"')
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        hidden_repo_alone = bash(home, 'gh pr ready 12 -R "$REPO"')
+        hidden_variable = bash(home, 'GH_REPO="$REPO" gh pr ready 13')
+    with then("all are refused, and this gate asks for the repo to be written out"):
+        assert hidden_repo.refused, hidden_repo.reason
+        for result in (hidden_repo_alone, hidden_variable):
+            assert says(home, result, "unreadable_push.md", why="a variable or a pattern names the branch"), \
+                result.reason
 
 
 def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_files(home):
