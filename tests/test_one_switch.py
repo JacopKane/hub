@@ -706,6 +706,33 @@ def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, t
         assert escaped.refused and escaped.findings == ["dashes"], escaped.reason
 
 
+def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joins_them(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    joined = ["gi\\\nt push origin main", "git pu\\\nsh origin main", f"git commit -\\\nm 'Late {DASH} change'",
+              "git push \"orig\\\nin\" main"]
+    with when("Claude splits a program, an action, an option or a double-quoted remote over two lines with a "
+              "backslash"):
+        results = hooks(home, tool, joined, "joined")
+    with then("the gate joins the lines without a space, as the shell does, reads the step and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    kept = ["cat <<'EOF'\na\\\nEOF\ngit push origin main", "# a note \\\ngit push origin main",
+            "echo 'a\\\n' ; git push origin main"]
+    with when("Claude ends a line with a backslash in a heredoc whose end word is quoted, in a comment or in single "
+              "quotes, and pushes main after it"):
+        results = hooks(home, tool, kept, "kept")
+    with then("the shell keeps that backslash and the line end as they are, so the gate reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pushes to a remote whose name comes from a variable split over two lines"):
+        split_variable = home.hook(tool, "PreToolUse", "git push $\\\nREMOTE main", session="split-variable")
+    with then("the shell fills in the variable, so the push is unreadable"):
+        assert split_variable.refused and split_variable.findings == ["unreadable"], split_variable.reason
+
+
 def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)

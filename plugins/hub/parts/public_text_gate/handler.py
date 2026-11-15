@@ -303,7 +303,7 @@ class Command:
             return PLACEHOLDER.format(len(self.heredocs) - 1) + match.group(3)
 
         self.fed = getattr(line, "fed", False)  # a process substitution's command reads the pipe that >(...) gets
-        self.flat = end_lines(mark_expansions(HEREDOC.sub(stash, line), self.sources))
+        self.flat = end_lines(mark_expansions(joined_lines(HEREDOC.sub(stash, line)), self.sources))
 
     def heredoc_script(self, word):
         """The script a heredoc holds, when the word is where the heredoc stood, or None."""
@@ -582,17 +582,53 @@ def hidden(text):
     return UNREADABLE in text.replace(SUBSTITUTED, "")
 
 
+def joined_lines(text):
+    """The text with each backslash at a line end taken out together with that line end, as the shell joins the
+    two lines into one word. Single quotes, a $'...' string and a comment keep both, as in the shell."""
+    out, index, quote = [], 0, None
+    while index < len(text):
+        char, pair = text[index], text[index:index + 2]
+        if quote in ("'", "$'"):
+            step = 2 if quote == "$'" and char == "\\" else 1
+            quote = None if char == "'" and step == 1 else quote
+            out.append(text[index:index + step])
+            index += step
+            continue
+        if pair == "\\\n":
+            index += 2
+            continue
+        if char == "\\" or (pair == "$'" and quote is None):
+            quote = "$'" if char == "$" else quote
+            out.append(pair)
+            index += 2
+            continue
+        if quote == '"':
+            quote = None if char == '"' else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and starts_a_word(out):
+            end = text.find("\n", index)
+            end = len(text) if end < 0 else end
+            out.append(text[index:end])
+            index = end
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def end_lines(text):
     """A script with each line end outside quotes made a separator, so every line is its own command.
 
-    A backslash, a pipe, && or || at the end of a line joins it to the next
-    one, as in the shell. A comment runs to the end of its line, as shlex reads it.
+    A pipe, && or || at the end of a line joins it to the next one, as in
+    the shell, and so does a backslash, which goes with the line end. A
+    comment runs to the end of its line, as shlex reads it.
     """
     out, index, quote = [], 0, None
     while index < len(text):
         char = text[index]
         if char == "\\" and quote != "'" and index + 1 < len(text):
-            out.append(" " if text[index + 1] == "\n" else text[index:index + 2])
+            out.append("" if text[index + 1] == "\n" else text[index:index + 2])
             index += 2
             continue
         if quote:
