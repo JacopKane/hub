@@ -1298,14 +1298,14 @@ def refuse_too_deep(flags):
         raise Stop(running[0], TOO_DEEP)
 
 
-def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=False):
+def check_line(line, cwd, flags, depth=0, parent=None, relayed=False):
     """Raise Stop for the first step in the line that a running check refuses."""
     if depth > MAX_DEPTH:
         # hub does not read a script relayed past the limit, so the script could do anything
         refuse_too_deep(flags)
         return
     parser = gate()
-    command = parser.Command(line, cwd, script, parent)
+    command = parser.Command(line, cwd, parent)
     segments = command.segments()
     if segments is None:
         rough_check(line, flags)
@@ -1334,27 +1334,27 @@ def check_line(line, cwd, flags, depth=0, script=False, parent=None, relayed=Fal
                 for typed in typed_lines(text):
                     if types_a_door(typed):
                         raise Stop("lowering", "a /hub command typed into a prompt")
-                    check_line(typed, cwd, flags, depth + 1, script=True, relayed=True)
+                    check_line(typed, cwd, flags, depth + 1, relayed=True)
         if flags.runs(f"{PART}.agent_marker"):
             check_marker(words, command)
         if flags.runs(f"{PART}.settings_files"):
             check_files(words, command, cwd)
         cwd = moved(words, cwd)
         for script_text in wrapped_scripts(words, command):
-            check_line(script_text, cwd, flags, depth + 1, script=True)
+            check_line(script_text, cwd, flags, depth + 1)
         if hubctl_check:
             for script_text in relayed_scripts(words):
-                check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
+                check_line(script_text, cwd, flags, depth + 1, relayed=True)
         if reads_runners:
             for script_text in runner_scripts(tmux_words, flags, cwd):
-                check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
+                check_line(script_text, cwd, flags, depth + 1, relayed=True)
     if hubctl_check:
         for script_text in stdin_scripts(command, segments):
             if types_a_door(plain(script_text)):
                 raise Stop("lowering", "a /hub command typed into a prompt")
-            check_line(script_text, cwd, flags, depth + 1, script=True, relayed=True)
+            check_line(script_text, cwd, flags, depth + 1, relayed=True)
     for source in command.sources:
-        check_line(source, cwd, flags, depth + 1, script=True, parent=command)
+        check_line(source, cwd, flags, depth + 1, parent=command)
 
 
 def rough_check(line, flags):
@@ -1411,9 +1411,9 @@ def find(hook_input, flags):
             command = tool_input.get("command") or ""
             if flags.runs(f"{PART}.agent_marker") and DOOR_VARIABLE.search(command):
                 raise Stop("agent_marker", "HUB_DOOR")
-            check_line(command, cwd, flags, script=True)
+            check_line(command, cwd, flags)
             if ZSH_DISOWN.search(command):
-                check_line(ZSH_DISOWN.sub("& ", command), cwd, flags, script=True)
+                check_line(ZSH_DISOWN.sub("& ", command), cwd, flags)
         elif flags.runs(f"{PART}.settings_files"):
             for path in file_paths(tool_input):
                 if is_hub_path(path, cwd):

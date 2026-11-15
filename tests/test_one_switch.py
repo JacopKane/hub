@@ -644,6 +644,33 @@ def hooks(home, tool, pushes, name):
     return {push: home.hook(tool, "PreToolUse", push, session=f"{name}-{index}") for index, push in enumerate(pushes)}
 
 
+def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_or_a_pipe_carry_it_on(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    two_lines = ["git push origin main\ngit branch --delete old", "git push origin main # send it\ngit branch -d old",
+                 "git push origin main\ngit push --dry-run origin main"]
+    with when("Claude pushes main, and the next line of the same call is another command with a delete or dry run "
+              "option, each in its own session"):
+        results = hooks(home, tool, two_lines, "two-lines")
+    with then("the gate reads the push up to the end of its line, lists main's new commit and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    one_push = ["git push origin main -o 'note=one\ntwo --delete'", "git push origin \\\nmain",
+                "git push origin \\\n  main # send it"]
+    with when("Claude pushes main with a new line inside quotes, or with a backslash that carries the push on to "
+              "the next line"):
+        results = hooks(home, tool, one_push, "one-push")
+    with then("the gate reads one push of main and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pipes a push into a shell whose name stands on the next line, after the pipe"):
+        piped = home.hook(tool, "PreToolUse", "printf 'git push origin main\\n' |\nbash", session="piped")
+    with then("the shell still reads its script from the pipe, which the gate can not see, so the call is "
+              "unreadable"):
+        assert piped.refused and piped.findings == ["unreadable"], piped.reason
+
+
 def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_tags_are_read(home, tool):
     with given("a repo whose main has a clean new commit, a branch draft and a tag v2 at a new commit whose "
                "message has a dash, and the PR test gate off"):
@@ -821,7 +848,7 @@ def test_a_push_gets_only_the_time_the_hook_has_left_after_earlier_parts_and_ear
         with when("Claude pushes main, then pushes it again in a script a shell reads from a heredoc"):
             started = time.monotonic()
             twice = home.hook("claude_code", "PreToolUse",
-                              "git push origin main && bash <<'EOF'\ngit push origin main\nEOF", session="twice")
+                              "git push origin main\nbash <<'EOF'\ngit push origin main\nEOF", session="twice")
             took = time.monotonic() - started
         with then("the second push gets only what the first left of the gate's 8 seconds, so it is refused as too "
                   "slow, inside the hook's time"):

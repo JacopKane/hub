@@ -207,6 +207,33 @@ def test_a_push_to_a_branch_with_an_open_pr_needs_a_passing_report_for_that_exac
         assert says(home, bash(home, "git push"), "failed.md", short=changed[:7], which="pytest -q tests")
 
 
+def test_a_new_line_ends_a_push_or_ready_step_as_the_shell_ends_it_unless_quotes_or_a_backslash_carry_it_on(home):
+    with given("a GitHub repo whose branch feature has open PR 7, whose head is feature's new commit, and no "
+               "test report"):
+        with_github(home)
+        first = pushed_branch(home)
+        fake_gh(home, open={"feature": 7}, heads={"7": first, "8": first})
+    two_lines = ["git push\ngit branch --delete old", "git push\ngit clean --dry-run",
+                 "git push # send it\ngit branch -d old"]
+    with when("Claude pushes feature, and the next line of the same call is another command with a delete or dry "
+              "run option"):
+        results = {push: bash(home, push) for push in two_lines}
+    with then("the gate reads the push up to the end of its line and refuses it for the commit with no report"):
+        for push, result in results.items():
+            assert says(home, result, "no_report.md", short=first[:7], branch="feature"), (push, result.reason)
+    one_push = ["git push -o 'note=one\ntwo --delete'", "git push origin \\\nfeature"]
+    with when("Claude pushes feature with a new line inside quotes, or with a backslash that carries the push on "
+              "to the next line"):
+        results = {push: bash(home, push) for push in one_push}
+    with then("the gate reads one push of feature and refuses it the same way"):
+        for push, result in results.items():
+            assert says(home, result, "no_report.md", short=first[:7], branch="feature"), (push, result.reason)
+    with when("Claude marks PR 7 ready, and the next line turns PR 8 back into a draft"):
+        ready = bash(home, "gh pr ready 7\ngh pr ready 8 --undo")
+    with then("the gate reads the ready step up to the end of its line and refuses it for PR 7's head"):
+        assert says(home, ready, "no_report.md", short=first[:7]), ready.reason
+
+
 def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read_is_refused(home):
     with given("branch feature with open PR 7, a worktree on branch side with open PR 8, both with new "
                "commits, a tag on feature's new commit, and a worktree on a detached HEAD"):

@@ -33,6 +33,7 @@ import binascii
 import functools
 import glob
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -275,8 +276,8 @@ GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, script=False, parent=None, read_log=True, deadline=None):
-        """With script, each line is its own command, as a shell runs a script.
+    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None):
+        """Each line is its own command, since the shell runs a tool call's command as a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
         because the parent set them aside, and reads the log when its parent does.
@@ -301,9 +302,7 @@ class Command:
             return PLACEHOLDER.format(len(self.heredocs) - 1) + match.group(3)
 
         self.fed = getattr(line, "fed", False)  # a process substitution's command reads the pipe that >(...) gets
-        self.flat = mark_expansions(HEREDOC.sub(stash, line), self.sources)
-        if script:
-            self.flat = end_lines(self.flat)
+        self.flat = end_lines(mark_expansions(HEREDOC.sub(stash, line), self.sources))
 
     def heredoc_script(self, word):
         """The script a heredoc holds, when the word is where the heredoc stood, or None."""
@@ -543,8 +542,8 @@ def hidden(text):
 def end_lines(text):
     """A script with each line end outside quotes made a separator, so every line is its own command.
 
-    A backslash at the end of a line joins it to the next one, and a comment
-    runs to the end of its line, as shlex reads it.
+    A backslash, a pipe, && or || at the end of a line joins it to the next
+    one, as in the shell. A comment runs to the end of its line, as shlex reads it.
     """
     out, index, quote = [], 0, None
     while index < len(text):
@@ -569,12 +568,20 @@ def end_lines(text):
             index = end
             continue
         elif char == "\n":
-            out.append("\n;")
+            out.append("\n" if ends_in_a_pipe_or_list(out) else "\n;")
             index += 1
             continue
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def ends_in_a_pipe_or_list(pieces):
+    """Whether the text so far ends with |, |&, && or ||, so the shell reads the next line as part of the same
+    command. A lone & ends its command, and an escaped \\| is plain text."""
+    marks = list(itertools.islice((piece for piece in reversed(pieces) if not piece.isspace()), 2))
+    last, before = (marks + ["", ""])[:2]
+    return last == "|" or (last == "&" and before in ("&", "|"))
 
 
 def read_file(path, cwd):
@@ -1404,7 +1411,7 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     named with no text, so a caller that needs only the steps runs no git.
     Every git call ends by deadline, as Command takes it.
     """
-    command = Command(line, cwd, script, parent, read_log=log, deadline=deadline)
+    command = Command(line, cwd, parent, read_log=log, deadline=deadline)
     segments = command.segments()
     if segments is None:
         return rough_steps(command) + substituted_steps(command, depth)
@@ -1416,7 +1423,7 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
             continue
         if spot is not None and reads_hidden_script(words, spot, command):
             steps.append((WRAPPED, UNREADABLE))  # the shell reads a script the gate can not see
-        # newlines are spaces to shlex, so look at every git or gh word in the segment
+        # a wrapper such as timeout or sudo can stand before git or gh, so look at every word in the segment
         for index, word in enumerate(words):
             program = os.path.basename(word).casefold()  # macOS runs BASH as bash and GIT as git
             if program in SHELLS or program in SOURCES or program == "eval":
