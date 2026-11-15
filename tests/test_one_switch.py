@@ -675,6 +675,37 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
             assert result.refused and result.findings == ["unreadable"], (push, result.reason)
 
 
+def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    touching = ["echo hi;# it's\ngit push origin main\necho ok;# that's",
+                "true &# it's\ngit push origin main\necho ok;# that's",
+                "true &&# it's\ngit push origin main\necho ok;# that's",
+                "(# it's\ngit push origin main\n)# that's",
+                "echo hi |# it's\ngit push origin main\necho ok;# that's",
+                "cat <# it's\ngit push origin main\necho ok ># that's"]
+    with when("Claude pushes main on the line after a comment that touches ;, &, &&, (, |, < or > and holds a quote "
+              "mark, each in its own session"):
+        results = hooks(home, tool, touching, "touching")
+    with then("the gate drops each comment at its line end, as the shell does, reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pipes a push into a shell whose name stands on the next line, after a pipe and a comment that "
+              "touches it"):
+        piped = home.hook(tool, "PreToolUse", "printf 'git push origin main\\n' |#c\nbash", session="piped")
+    with then("the shell still reads its script from the pipe, so the call is unreadable"):
+        assert piped.refused and piped.findings == ["unreadable"], piped.reason
+    with when("Claude commits with a message where a # stands inside a word, after a letter or a quote"):
+        inside = home.hook(tool, "PreToolUse", "git commit -m a#'Fix'#\"two\"#3 # it's", session="inside")
+    with then("the # is word text, as the shell reads it, and the commit runs"):
+        assert not inside.refused, inside.reason
+    with when("Claude commits with a message where a # follows an escaped ; and comes before a dash"):
+        escaped = home.hook(tool, "PreToolUse", f"git commit -m Fix\\;#'Late {DASH} change'", session="escaped")
+    with then("the escaped ; is word text, so the # is too, and the gate names the dash"):
+        assert escaped.refused and escaped.findings == ["dashes"], escaped.reason
+
+
 def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)

@@ -599,7 +599,7 @@ def end_lines(text):
             quote = None if char == quote else quote
         elif char in "'\"":
             quote = char
-        elif char == "#" and index and not text[index - 1].isspace():
+        elif char == "#" and not starts_a_word(out):
             # The shell reads a # inside a word, as in a#b or $#, as plain text, so shlex must not start a comment.
             out.append("\\#")
             index += 1
@@ -617,6 +617,16 @@ def end_lines(text):
         out.append(char)
         index += 1
     return "".join(out)
+
+
+def starts_a_word(pieces):
+    """Whether the shell starts a new word after the text so far, so a # there opens a comment.
+
+    It does at the start, after a blank and after each operator character, as
+    in ;# or |#, but not after an escaped character such as \\;.
+    """
+    last = pieces[-1] if pieces else " "
+    return not last.startswith("\\") and (last[-1].isspace() or last[-1] in ";&|()<>")
 
 
 def ends_in_a_pipe_or_list(pieces):
