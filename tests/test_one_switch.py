@@ -606,6 +606,156 @@ def test_a_push_is_read_by_gits_own_rules_for_its_words_and_one_whose_commits_gi
         assert delete.ran, delete.reason
 
 
+def pushed_repo(home):
+    """A repo whose main is pushed to a local bare remote, then gets a clean new commit, with the em dash check
+    on and the PR test gate off, since it answers first for some of the same pushes."""
+    home.install()
+    home.hubctl("on", f"{GATE}.dashes")
+    home.hubctl_from_mod("off", "pr_test_gate")
+    bare = os.path.join(home.root, "remote.git")
+    home.git("init", "-q", "--bare", bare)
+    home.git("remote", "add", "origin", bare)
+    home.git("push", "-q", "-u", "origin", "main")
+    home.git("commit", "-q", "--allow-empty", "-m", "Plain change")
+
+
+def hooks(home, tool, pushes, name):
+    return {push: home.hook(tool, "PreToolUse", push, session=f"{name}-{index}") for index, push in enumerate(pushes)}
+
+
+def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_tags_are_read(home, tool):
+    with given("a repo whose main has a clean new commit, a branch draft and a tag v2 at a new commit whose "
+               "message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("checkout", "-q", "-b", "draft")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Draft {DASH} change")
+        home.git("tag", "v2")
+        home.git("checkout", "-q", "main")
+    every = ["git push --all", "git push --all origin", "git push --branches origin", "git push --mirror origin",
+             "git push --mirr origin", "git push origin :", "git push origin +:", "git push origin main :"]
+    with when("Claude pushes every branch, mirrors the repo, or pushes the branches that match on the remote"):
+        results = hooks(home, tool, every, "every")
+    with then("the gate can not tell which commits go out and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+    settings = [("push.default", "matching"), ("remote.origin.push", "refs/heads/draft:refs/heads/draft"),
+                ("remote.origin.mirror", "true")]
+    with when("the repo's settings send more than the current branch, and Claude pushes with no branch named"):
+        results = {}
+        for index, (key, value) in enumerate(settings):
+            home.git("config", key, value)
+            results[key] = [home.hook(tool, "PreToolUse", push, session=f"setting-{index}-{position}")
+                            for position, push in enumerate(["git push", "git push origin"])]
+            named = home.hook(tool, "PreToolUse", "git push origin main", session=f"named-{index}")
+            home.git("config", "--unset", key)
+            assert named.ran, (key, named.reason)
+        results["-c"] = [home.hook(tool, "PreToolUse", "git -c push.default=matching push", session="one")]
+    with then("each push with no branch named is refused as unreadable, and a push that names main runs"):
+        for key, found in results.items():
+            for result in found:
+                assert result.refused and result.findings == ["unreadable"], (key, result.reason)
+    with when("an old-style remotes file names remote old, and Claude pushes to it with no branch named"):
+        os.makedirs(os.path.join(home.work, ".git", "remotes"))
+        with open(os.path.join(home.work, ".git", "remotes", "old"), "w") as handle:
+            handle.write(f"URL: {os.path.join(home.root, 'remote.git')}\nPush: refs/heads/draft:refs/heads/draft\n")
+        from_file = home.hook(tool, "PreToolUse", "git push old", session="file")
+        os.remove(os.path.join(home.work, ".git", "remotes", "old"))
+    with then("it is refused as unreadable"):
+        assert from_file.refused and from_file.findings == ["unreadable"], from_file.reason
+    with when("Claude pushes every tag, and pushes with settings that send only the current branch"):
+        tags = hooks(home, tool, ["git push --tags", "git push origin --tags"], "tags")
+        home.git("config", "remote.origin.mirror", "false")
+        plain = hooks(home, tool, ["git push", "git -c user.name=Ann push", "git push origin"], "plain")
+        home.git("config", "--unset", "remote.origin.mirror")
+    with then("the tag pushes are refused for v2's dash, and the others run, since main's new commit is clean"):
+        for push, result in tags.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+        for push, result in plain.items():
+            assert result.ran, (push, result.reason)
+
+
+def test_a_push_that_git_runs_on_another_repo_is_unreadable(home, tool):
+    with given("a repo whose main has a clean new commit, a second repo whose new commit has a dash, and the PR "
+               "test gate off"):
+        pushed_repo(home)
+        other = os.path.join(home.root, "other")
+        home.git("init", "-q", "-b", "main", other)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Other {DASH} change", cwd=other)
+    elsewhere = [f"git --git-dir={other}/.git push origin main", f"git --git-dir {other}/.git push",
+                 f"git --work-tree={other} push", f"git --work-tree {other} push origin main",
+                 "git --namespace=other push origin main", "git --namespace other push",
+                 f"git --bare push {other}/.git main",
+                 f"GIT_DIR={other}/.git git push origin main", f"GIT_WORK_TREE={other} git push",
+                 f"GIT_COMMON_DIR={other}/.git git push", "GIT_NAMESPACE=other git push origin main",
+                 f"GIT_OBJECT_DIRECTORY={other}/.git/objects git push",
+                 f"GIT_CONFIG_GLOBAL={other}/.gitconfig git push origin main",
+                 f"export GIT_DIR={other}/.git; git push origin main",
+                 f"env GIT_DIR={other}/.git git push origin main",
+                 f"GIT_DIR={other}/.git bash -c 'git push origin main'"]
+    with when("Claude pushes with a git option or a variable that points git at another repo or namespace"):
+        results = hooks(home, tool, elsewhere, "elsewhere")
+    with then("the gate can not read that repo's commits from this folder and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    with when("Claude pushes main plainly"):
+        plain = home.hook(tool, "PreToolUse", "git push origin main", session="plain")
+    with then("it runs, since main's new commit is clean"):
+        assert plain.ran, plain.reason
+
+
+def empty_commits(home, count):
+    """count empty commits on top of main, written at once by git fast-import, since one git commit each is slow."""
+    commits = [f"commit refs/heads/main\ncommitter Ann <ann@example.com> {1_700_000_000 + number} +0000\n"
+               f"data {len(f'Change {number}')}\nChange {number}\n" + ("from refs/heads/main^0\n" if number == 0 else "")
+               for number in range(count)]
+    subprocess.run(["git", "fast-import", "--quiet"], cwd=home.work, env=home.env, input="".join(commits), text=True,
+                   check=True)
+
+
+def test_a_push_too_long_to_read_in_full_is_refused_and_asked_to_go_in_smaller_parts(home, tool):
+    with given("a repo whose main has 1,000 clean new commits, and the PR test gate off"):
+        pushed_repo(home)
+        empty_commits(home, 999)
+    with when("Claude pushes main"):
+        most = home.hook(tool, "PreToolUse", "git push origin main", session="most")
+    with then("it runs, since the gate read every commit"):
+        assert most.ran, most.reason
+    with when("main gets one more commit, and Claude pushes it"):
+        home.git("commit", "-q", "--allow-empty", "-m", "One more")
+        many = home.hook(tool, "PreToolUse", "git push origin main", session="many")
+    with then("it is refused, since the gate reads at most 1,000 commits, and asked to push fewer commits at a time, "
+              "with a large commit left to the user's own switch"):
+        assert many.refused and many.findings == ["unreadable"], many.reason
+        assert "Push fewer commits at a time" in many.reason, many.reason
+        assert 'only the user can let it through, by saying "turn off public_text_gate.unreadable"' in many.reason
+        assert "do not change the setting yourself" in many.reason, many.reason
+        assert gate_text(home, "unreadable_hint.md") not in many.reason
+    with when("main's first 1,000 commits are pushed, and the next commit adds a file longer than the gate reads"):
+        home.git("push", "-q", "origin", "main~1:main")
+        with open(os.path.join(home.work, "long.txt"), "w") as handle:
+            handle.write("plain line\n" * 20_000)
+        home.git("add", "long.txt")
+        home.git("commit", "-q", "-m", "Add a long file")
+        long_change = home.hook(tool, "PreToolUse", "git push origin main", session="long")
+    with then("it is refused the same way"):
+        assert long_change.refused and long_change.findings == ["unreadable"], long_change.reason
+        assert "Push fewer commits at a time" in long_change.reason, long_change.reason
+    remote = os.path.join(home.root, "remote.git")
+    with when("Claude pushes main by the remote's folder and by its file URL, which have no remote-tracking "
+              "branches, and to origin after its remote-tracking branches are gone"):
+        by_place = hooks(home, tool, [f"git push {remote} main~1:main", f"git push file://{remote} main~1:main"],
+                         "place")
+        home.git("update-ref", "-d", "refs/remotes/origin/main")
+        unfetched = home.hook(tool, "PreToolUse", "git push origin main~1:main", session="unfetched")
+    with then("each is refused, since every commit of main counts as new, and asked to add the remote by name and "
+              "fetch it first"):
+        for push, result in [*by_place.items(), ("unfetched", unfetched)]:
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+            assert "Add the remote by name and fetch it first" in result.reason, (push, result.reason)
+            assert "Push fewer commits at a time" not in result.reason, (push, result.reason)
+            assert gate_text(home, "unreadable_hint.md") not in result.reason, (push, result.reason)
+
+
 def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
     with given("a repo with a message file in it"):
         home.install()
@@ -647,9 +797,10 @@ def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits(
             assert not os.path.exists(log)
         with when("it reads them with the log, as the gate itself does"):
             steps(True)
-        with then("git log runs for each push"):
+        with then("git runs for each push: it counts the commits of the named push, which fails here outside a repo, "
+                  "so no log follows, and reads the settings of the push with no branch named"):
             with open(log) as handle:
-                assert [line.split()[0] for line in handle] == ["log", "log"]
+                assert [line.split()[0] for line in handle] == ["rev-list", "config", "rev-parse"]
 
 
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):

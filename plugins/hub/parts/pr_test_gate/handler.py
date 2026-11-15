@@ -59,11 +59,8 @@ GH_ALIASES = {("pr", "new"): ("pr", "create")}
 PR_REPO_OPTIONS = {"-R", "--repo"}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
-CONFIG_OPTIONS = {"-c", "--config-env"}
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
-PUSH_SETTING_SECTIONS = {"push", "remote", "url", "branch", "include", "includeif"}
 PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
-FALSE_WORDS = {"false", "no", "off", "0"}
 # The words Go's strconv.ParseBool reads as true, which gh uses for a value such as --undo=true
 TRUE_WORDS = {"1", "t", "T", "TRUE", "true", "True"}
 PUSH_CONFIG_WHY = {
@@ -500,22 +497,10 @@ def push_remote(cwd, branch, lookups):
             or lookups.git(cwd, "config", f"branch.{branch}.remote") or "origin")
 
 
-def settings_set_by_options(options):
-    """The name=value settings that git's -c and --config-env options set, read from git's own options."""
-    separate = [value for option, value in zip(options, options[1:]) if option in CONFIG_OPTIONS]
-    attached = [option.split("=", 1)[1] for option in options if option.startswith("--config-env=")]
-    return separate + attached
-
-
-def names_a_push_setting(setting):
-    """Whether a setting such as push.default=matching may change where a push goes or what it sends."""
-    return setting.split("=", 1)[0].split(".", 1)[0].lower() in PUSH_SETTING_SECTIONS
-
-
 def sets_push_settings_for_one_command(step, words_after_options):
     """Whether git's own options or the step's VAR=value words change push settings that the lookups can not see."""
     options = step.words[1:len(step.words) - len(words_after_options)]
-    return (any(map(names_a_push_setting, settings_set_by_options(options)))
+    return (any(map(gate().names_a_push_setting, gate().settings_set_by_options(options)))
             or any(map(CONFIG_VARIABLE.match, step.before)))
 
 
@@ -530,15 +515,11 @@ def push_settings(cwd, remote, lookups):
 
 
 def remote_file_exists(cwd, remote, lookups):
-    """Whether the repo's remotes or branches folder holds a file for the remote. git reads such a file only for a
-    remote name, which never holds a slash, so a path or URL remote has none."""
-    if "/" in remote or remote in ("", ".", ".."):
-        return False
+    """Whether the repo's remotes or branches folder holds a file for the remote."""
     common = lookups.git(cwd, "rev-parse", "--git-common-dir")
     if common is None:
         raise unreadable("folder")
-    folder = os.path.join(cwd, common)
-    return any(os.path.isfile(os.path.join(folder, kind, remote)) for kind in ("remotes", "branches"))
+    return gate().has_remote_file(os.path.join(cwd, common), remote)
 
 
 def last_value(settings, name):
@@ -546,7 +527,7 @@ def last_value(settings, name):
 
 
 def is_true(value):
-    return value is not None and value.lower() not in FALSE_WORDS
+    return value is not None and value.lower() not in gate().FALSE_WORDS
 
 
 def specs_of_a_bare_push(settings, remote, branch):

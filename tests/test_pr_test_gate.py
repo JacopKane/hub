@@ -271,10 +271,12 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
         results = {form: bash(home, form) for form in unreadable}
     text_gate_first = ["git push origin $BRANCH", "bash -c 'git push origin feature'",
                        "printf feature | xargs git push origin", "git -C $(pwd) push origin feature",
-                       "git --git-dir=$(pwd)/.git push origin feature", "git push --d origin feature"]
-    with then("the text gate answers first for the variable, the wrapper, xargs and the option git could read "
-              "two ways, since it can not read their commits either, and every other form is asked to be written "
-              "out as its own command"):
+                       "git --git-dir=$(pwd)/.git push origin feature", "git push --d origin feature",
+                       "git push --all", "git push --mirror origin", "git push --al", "git push --mirr origin",
+                       "git push --branch origin"]
+    with then("the text gate answers first for the variable, the wrapper, xargs, the option git could read two "
+              "ways and every branch, since it can not read their commits either, and every other form is asked "
+              "to be written out as its own command"):
         for form, result in results.items():
             if form in text_gate_first:
                 assert result.refused and result.findings == ["unreadable"], (form, result.reason)
@@ -328,16 +330,30 @@ def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_o
                 "remote.origin.push": ("refs/heads/*:refs/heads/*", "the remote has its own setting for what a "
                                                                     "push sends"),
                 "remote.origin.mirror": ("true", "the remote is set to mirror every branch")}
-    for name, (value, why) in settings.items():
+    bare_forms = ["git push", "git push origin", "git push -u origin"]
+    for name, (value, _why) in settings.items():
         with when(f"the repo sets {name} to {value} and Claude pushes with no branch named, then names it"):
             home.git("config", name, value)
-            bare_pushes = {form: bash(home, form) for form in ["git push", "git push origin", "git push -u origin"]}
+            bare_pushes = {form: bash(home, form) for form in bare_forms}
             named = bash(home, "git push origin feature")
             home.git("config", "--unset", name)
-        with then("each push with no branch named is refused for that setting, and the named push runs"):
+        with then("the text gate refuses each push with no branch named first as unreadable, since it can not tell "
+                  "which commits go out either, and the named push runs"):
+            for form, result in bare_pushes.items():
+                assert result.refused and result.findings == ["unreadable"], (name, form, result.reason)
+            assert quiet(named), (name, named.reason)
+    with when("the text gate's unreadable check is off"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+    for name, (value, why) in settings.items():
+        with when(f"the repo sets {name} to {value} and Claude pushes with no branch named"):
+            home.git("config", name, value)
+            bare_pushes = {form: bash(home, form) for form in bare_forms}
+            home.git("config", "--unset", name)
+        with then("this gate refuses each one for that setting"):
             for form, result in bare_pushes.items():
                 assert says(home, result, "push_config.md", why=why, example=NAMED_EXAMPLE), (name, form, result.reason)
-            assert quiet(named), (name, named.reason)
+    with when("the text gate's unreadable check is on again"):
+        home.hubctl_from_mod("on", "public_text_gate.unreadable")
     with when("the repo sets remote.origin.mirror to off and Claude pushes with no branch named"):
         home.git("config", "remote.origin.mirror", "off")
         mirror_off = bash(home, "git push")
@@ -358,16 +374,23 @@ def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_o
     one_command_why = "git -c, --config-env or a GIT_CONFIG variable changes its push settings for this one command"
     with when("Claude changes push settings for one command with -c, --config-env or a GIT_CONFIG variable"):
         results = {form: bash(home, form) for form in one_command}
-    with then("each is refused, since the gate's own lookups can not see that setting, and self-protection "
-              "answers first for --config-env, since it reads a value hub can not see"):
+    text_gate_first = ["git -c push.default=matching push", "git -c branch.feature.pushRemote=local push",
+                       *[form for form in one_command if form.startswith("GIT_CONFIG")]]
+    with then("each is refused, since the gate's own lookups can not see that setting, self-protection answers "
+              "first for --config-env, since it reads a value hub can not see, and the text gate answers first "
+              "for a push with no branch named and for a GIT_CONFIG variable, since it can not tell which commits "
+              "go out either"):
         for form, result in results.items():
             if "--config-env" in form:
                 assert result.refused and "(self_protection.lowering)" in result.reason, (form, result.reason)
+            elif form in text_gate_first:
+                assert result.refused and result.findings == ["unreadable"], (form, result.reason)
             else:
                 assert says(home, result, "push_config.md", why=one_command_why, example=NAMED_EXAMPLE), \
                     (form, result.reason)
-    with when("self-protection is off and Claude sends the same pushes"):
+    with when("self-protection and the text gate's unreadable check are off and Claude sends the same pushes"):
         home.hubctl_from_mod("off", "self_protection")
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
         results = {form: bash(home, form) for form in one_command}
     with then("this gate refuses each one for its one-command setting"):
         for form, result in results.items():
@@ -502,7 +525,7 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
     file_why = "a file in the repo's remotes or branches folder sets where pushes to this remote go"
     with when("an old-style remotes file names remote old, whose Push line sends fix-a to feature, and an old-style "
               "branches file names remote old2 at feature, and Claude pushes fix-a by name to old, with its "
-              "destination to old, and with no branch to old2"):
+              "destination to old, and with no branch to old2, also with the text gate's unreadable check off"):
         os.makedirs(os.path.join(home.work, ".git", "remotes"), exist_ok=True)
         os.makedirs(os.path.join(home.work, ".git", "branches"), exist_ok=True)
         with open(os.path.join(home.work, ".git", "remotes", "old"), "w") as handle:
@@ -513,12 +536,18 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
         sent_from_file = home.git("push", "--dry-run", "--porcelain", "--force", "old", "fix-a").stdout
         file_with_destination = bash(home, "git push old fix-a:feature")
         bare_to_branches_file = bash(home, "git push old2")
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        bare_past_the_text_gate = bash(home, "git push old2")
+        home.hubctl_from_mod("on", "public_text_gate.unreadable")
         os.remove(os.path.join(home.work, ".git", "remotes", "old"))
         os.remove(os.path.join(home.work, ".git", "branches", "old2"))
-    with then("the pushes that leave the destination to the file are refused and asked to name it, and the push "
-              "that names feature is judged there as usual"):
+    with then("the pushes that leave the destination to the file are refused and asked to name it, the text gate "
+              "answers first for the push with no branch named, since it can not tell which commits go out either, "
+              "and the push that names feature is judged there as usual"):
         assert "refs/heads/fix-a:refs/heads/feature" in sent_from_file, sent_from_file
-        for result in (from_file, bare_to_branches_file):
+        assert bare_to_branches_file.refused and bare_to_branches_file.findings == ["unreadable"], \
+            bare_to_branches_file.reason
+        for result in (from_file, bare_past_the_text_gate):
             assert says(home, result, "push_config.md", why=file_why, example=DESTINATION_EXAMPLE), result.reason
         assert says(home, file_with_destination, "no_report.md", short=local[:7], branch="feature"), \
             file_with_destination.reason
@@ -648,7 +677,8 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         patched = bash(home, f"gh api -X PATCH repos/acme/demo/pulls -f head=side -F body=@{good}")
         aliased = {"ready": bash(home, ready), "update": bash(home, update)}
     with then("each is refused as its plain form would be: for the missing report of feature or side, for a "
-              "body with no tested part, for a ready step by node id, and for pushing every branch"):
+              "body with no tested part, for a ready step by node id, and by the text gate first for pushing every "
+              "branch, since it can not tell which commits go out either"):
         for step in feature_steps:
             assert says(home, results[step], "no_report.md", short=feature[:7], branch="feature"), step
         for step in new_pr_steps:
@@ -656,7 +686,7 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         for step in side_steps:
             assert says(home, results[step], "no_report.md", short=side[:7], branch="side"), step
         for spec, result in matching.items():
-            assert says(home, result, "unreadable_push.md", why="it pushes every branch"), (spec, result.reason)
+            assert result.refused and result.findings == ["unreadable"], (spec, result.reason)
         assert bare.refused and bare.reason == missing_part(home)
         assert glued_bare.refused and glued_bare.reason == missing_part(home), glued_bare.reason
         assert quiet(listing), listing.reason
@@ -676,11 +706,25 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
                  f"GIT_DIR={other}/.git gh pr create --title T --body-file {good}"]
     with when("Claude names another repo's git folder or work tree in an option or a variable, even with a report"):
         results = {step: bash(home, step) for step in elsewhere}
-    with then("each is refused with a sentence that asks for the repo's own folder instead"):
+    with then("the text gate refuses each push first as unreadable, since it reads the commits of the folder git "
+              "runs in, and the PR step is refused with a sentence that asks for the repo's own folder instead"):
+        for step, result in results.items():
+            if " push" in step:
+                assert result.refused and result.findings == ["unreadable"], (step, result.reason)
+            else:
+                assert says(home, result, "other_repo.md"), (step, result.reason)
+    with when("the text gate's unreadable check is off and Claude sends the same steps, and pushes every matching "
+              "branch"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        results = {step: bash(home, step) for step in elsewhere}
+        matching = {spec: bash(home, f"git push origin {spec}") for spec in (":", "+:")}
+    with then("each step is refused with a sentence that asks for the repo's own folder instead, and each push of "
+              "every matching branch for pushing every branch"):
         for step, result in results.items():
             assert says(home, result, "other_repo.md"), (step, result.reason)
-    with when("the text gate's unreadable check is off and Claude pushes with a quoted program name inside bash -c"):
-        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        for spec, result in matching.items():
+            assert says(home, result, "unreadable_push.md", why="it pushes every branch"), (spec, result.reason)
+    with when("Claude pushes with a quoted program name inside bash -c"):
         wrapped = bash(home, "bash -c 'g\"\"it push origin feature'")
         unknown_option = bash(home, f"gh api repos/acme/demo/pulls --head-ref side -F body=@{good}")
         hidden_action = bash(home, f"gh pr $ACTION --title T --body-file {good}")
@@ -1211,6 +1255,15 @@ def test_a_slow_lookup_stays_inside_the_hooks_time(home):
         assert took < 12, took
     with when("every git call takes 3 seconds"):
         fake_gh(home, open={"feature": 7, "side": 8})
+        result, took = timed(home, "git push", slow_git(home, 3))
+    with then("the text gate answers first, since git did not list the pushed commits in its time, and says so, "
+              "in under 12 seconds"):
+        assert result.refused and result.findings == ["unreadable"], result.reason
+        assert "git did not list the commits of this push in time" in result.reason, result.reason
+        assert "comes from a variable, a pipe" not in result.reason, result.reason
+        assert took < 12, took
+    with when("the text gate's unreadable check is off, and every git call takes 3 seconds"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
         result, took = timed(home, "git push", slow_git(home, 3))
     with then("the gate refuses because its lookups were too slow, in under 12 seconds"):
         assert says(home, result, "slow.md"), result.reason

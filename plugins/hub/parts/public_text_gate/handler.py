@@ -30,21 +30,30 @@ person who sets out to get around it.
 """
 import base64
 import binascii
+import functools
 import glob
 import hashlib
 import json
 import os
 import re
+import select
 import shlex
+import signal
 import stat
 import subprocess
+import time
 
 from hub import files
 
 PART = "public_text_gate"
 DASH = chr(0x2014)
 MAX_TEXT = 200_000  # characters read from one body file or one push
-MAX_COMMITS = 50
+# Reading 5,000 small commits takes git about a tenth of a second, so this many fit well inside the gate's time.
+# Past about 800 commits even the smallest ones pass MAX_TEXT.
+MAX_COMMITS = 1_000
+# Seconds from when hub's parts start answering until the text gate's git calls must end. The hook may run for 15
+# seconds, and the PR test gate's lookups end 10 seconds after the parts start.
+TEXT_SECONDS = 8.0
 # git push's long options, so a shortened one such as --mirr or --no-dry reads as the option git takes it for
 PUSH_LONG_OPTIONS = ("all", "atomic", "branches", "delete", "dry-run", "exec", "follow-tags", "force",
                      "force-if-includes", "force-with-lease", "ipv4", "ipv6", "mirror", "no-verify", "porcelain",
@@ -57,6 +66,19 @@ PUSH_SHORT_OPTIONS = {"d": "--delete", "n": "--dry-run", "o": "--push-option", "
 PUSH_VALUE_OPTIONS = {"--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
 # The name push_items gives a shortened option that starts more than one of git push's options
 AMBIGUOUS_OPTION = "ambiguous"
+CONFIG_OPTIONS = {"-c", "--config-env"}
+# The setting sections that may change where a push goes or what it sends
+PUSH_SETTING_SECTIONS = {"push", "remote", "url", "branch", "include", "includeif"}
+# The settings that decide what a push with no branch named sends
+BARE_PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror))$"
+FALSE_WORDS = {"false", "no", "off", "0"}
+# The folders in a repo's git folder where git also reads a remote from a file
+REMOTE_FILE_FOLDERS = ("remotes", "branches")
+# git's own options and variables that point it at another repo, work tree, namespace or settings than the folder
+# it runs in, whose commits the gate reads
+OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace", "--bare"}
+REPO_VARIABLE = re.compile(r"\bGIT_(?:DIR|WORK_TREE|COMMON_DIR|NAMESPACE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES"
+                           r"|CONFIG\w*)\b")
 
 # The checks, in the order the tree lists them. A private item can not be
 # taken back once it is public, so these refuse every time, in warn and in
@@ -72,6 +94,17 @@ DESCRIBE = {
     "dashes": "an em dash",
 }
 PRIVACY_NOTE = "A private item is refused on every try until it is removed from the text."
+LONG_PUSH_NOTE = ("This push sends more than hub can check before it goes out. hub reads at most "
+                  f"{MAX_COMMITS:,} commits and {MAX_TEXT:,} characters of change in one push. Push fewer commits at "
+                  "a time, as in git push origin main~20:main, then push the rest. If one commit is too large on its "
+                  f"own, only the user can let it through, by saying \"turn off {PART}.unreadable\". Tell the user, "
+                  "and do not change the setting yourself.")
+UNTRACKED_PUSH_NOTE = ("hub can not see which commits this remote already has, because the push goes to a URL, a "
+                       "folder or a remote with no remote-tracking branches. So it counts every commit of the branch "
+                       f"as new, and that is more than the {MAX_COMMITS:,} it reads. Add the remote by name and fetch "
+                       "it first, as in git remote add backup <url> and then git fetch backup. Then push to backup.")
+SLOW_PUSH_NOTE = ("git did not list the commits of this push in time, so hub could not check them. Send the command "
+                  "again. If it is still slow, push fewer commits at a time.")
 TARGET_NAMES = {"commit": "commit", "push": "push", "tag": "tag", "pr": "PR text", "issue": "issue text",
                 "review_comment": "review comment", "release": "release", "gist": "gist",
                 "discussion": "discussion", "commit_comment": "commit comment", "contents": "file write",
@@ -115,6 +148,13 @@ SUBSTITUTED = UNREADABLE + "\x01"
 # shell splits its output into words. As a program name it is then unreadable,
 # even before a / that would otherwise name only a folder.
 SPLIT = "\x02"
+# Marks for a push the gate can not read in full. Each holds UNREADABLE, so it is refused like one, with its own note:
+# more commits or more text than the gate reads at once, too many commits for a remote with no remote-tracking
+# branches to compare with, or git not listing the commits in time.
+LONG_PUSH = UNREADABLE + "\x03"
+UNTRACKED_PUSH = UNREADABLE + "\x04"
+SLOW_PUSH = UNREADABLE + "\x05"
+PUSH_NOTES = {LONG_PUSH: LONG_PUSH_NOTE, UNTRACKED_PUSH: UNTRACKED_PUSH_NOTE, SLOW_PUSH: SLOW_PUSH_NOTE}
 # The setup tools whose output may be the whole script for eval or a shell, as
 # in eval "$(ssh-agent -s)". Any other source could print a public command.
 # The name has no folder, other than the two that Homebrew's install steps
@@ -235,15 +275,17 @@ GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, script=False, parent=None, read_log=True):
+    def __init__(self, line, cwd, script=False, parent=None, read_log=True, deadline=None):
         """With script, each line is its own command, as a shell runs a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
         because the parent set them aside, and reads the log when its parent does.
         Without read_log, a push names its step but not the commits it sends.
+        Its git calls end by deadline, a time.monotonic() value, or TEXT_SECONDS from now.
         """
         self.cwd = cwd
         self.read_log = parent.read_log if parent else read_log
+        self.deadline = parent.deadline if parent else deadline or time.monotonic() + TEXT_SECONDS
         self.heredocs = parent.heredocs if parent else []
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
@@ -653,9 +695,12 @@ def git_target(words, command):
     if action == "push":
         if not command.read_log:
             return "push", ""
-        if any(UNREADABLE in word for word in words[1:index]):
+        options = words[1:index]
+        if any(UNREADABLE in word for word in options):
             return "push", UNREADABLE  # a git option the shell fills in, such as --git-dir, may name other commits
-        return "push", pushed_commits(rest, cwd)
+        if any(option.split("=", 1)[0] in OTHER_REPO_OPTIONS for option in options):
+            return "push", UNREADABLE  # git pushes the commits of another repo or namespace than the folder's
+        return "push", pushed_commits(rest, cwd, settings_set_by_options(options), command.deadline)
     if action == "tag":
         command.cwd, outer = cwd, command.cwd
         texts = commit_texts(rest, command)
@@ -762,15 +807,32 @@ def push_refspecs(words, deletes):
     return specs
 
 
-def pushed_commits(rest, cwd):
-    """The log and diff of the commits a push sends, from the source of each refspec it names, capped in size.
-    Its words are read the way git push reads them, so an option's value or the word tag is not a refspec.
+class TooSlow(Exception):
+    """git did not end before the text gate's deadline."""
+
+
+def pushed_commits(rest, cwd, one_command_settings, deadline):
+    """The log and diff of the commits a push sends, from the source of each refspec it names, and every tag with
+    --tags. Its words are read the way git push reads them, so an option's value or the word tag is not a
+    refspec. one_command_settings are the name=value settings git's -c options set for this push.
 
     When the shell fills in the folder or a word of the push, a source
     searches commit messages or holds a pattern, an option matches more than
-    one of git's, or git log can not list the commits in time, the gate can
-    not tell which commits it sends, so the push counts as unreadable.
+    one of git's, the push sends every branch or every branch that matches
+    on the remote, a push with no branch named may send more than HEAD, or
+    git fails, the gate can not tell which commits it sends, so the push
+    counts as unreadable. A push of more commits or more text than the gate
+    reads at once is LONG_PUSH, or UNTRACKED_PUSH when the remote has no
+    remote-tracking branches, and one that git does not list by the deadline
+    is SLOW_PUSH.
     """
+    try:
+        return commits_read(rest, cwd, one_command_settings, deadline)
+    except TooSlow:
+        return SLOW_PUSH
+
+
+def commits_read(rest, cwd, one_command_settings, deadline):
     if UNREADABLE in cwd or any(UNREADABLE in word for word in rest):
         return UNREADABLE
     items = list(push_items(without_redirects(rest)))
@@ -779,22 +841,129 @@ def pushed_commits(rest, cwd):
     positional = [value for option, value in items if option is None]
     remote = positional[0] if positional else None
     specs = push_refspecs(positional[1:], last_switch(items, "--delete"))
+    if last_switch(items, "--all") or last_switch(items, "--mirror") or any(spec.lstrip("+") == ":" for spec in specs):
+        return UNREADABLE  # every branch, or every branch that has a match on the remote
+    tags = last_switch(items, "--tags")
+    if not specs and not tags and sends_more_than_head(cwd, remote, one_command_settings, deadline):
+        return UNREADABLE
     sources = [source for source in (source_and_destination(spec.lstrip("+"))[0] for spec in specs)
                if source and not source.startswith("^")]
     if any(searches_commit_messages(source) or source.startswith("-") or "*" in source for source in sources):
         return UNREADABLE
-    if specs and not sources:
+    if specs and not sources and not tags:
         return ""  # deletes and ^ entries send no commits
     remotes = f"--remotes={remote}" if remote else "--remotes"
-    try:
-        log = subprocess.run(
-            ["git", "log", "-p", "--no-color", f"--max-count={MAX_COMMITS}", *(sources or ["HEAD"]),
-             "--not", remotes, "--"],
-            cwd=cwd, capture_output=True, text=True, errors="replace", timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+    revisions = [*(sources or ["HEAD"]), *(["--tags"] if tags else []), "--not", remotes, "--"]
+    counted = git_run(["rev-list", "--count", f"--max-count={MAX_COMMITS + 1}", *revisions], cwd, deadline)
+    if counted is None or counted[0] != 0 or not counted[1].strip().isdigit():
         return UNREADABLE
-    return log.stdout[:MAX_TEXT] if log.returncode == 0 else UNREADABLE
+    if int(counted[1]) > MAX_COMMITS:
+        return UNTRACKED_PUSH if remote and not has_tracking_branches(cwd, remote, deadline) else LONG_PUSH
+    log = git_run(["log", "-p", "--no-color", *revisions], cwd, deadline, limit=MAX_TEXT)
+    if log is None:
+        return UNREADABLE
+    if len(log[1]) > MAX_TEXT:
+        return LONG_PUSH
+    return log[1] if log[0] == 0 else UNREADABLE
+
+
+def has_tracking_branches(cwd, remote, deadline):
+    """Whether the repo has a remote-tracking branch for the remote, which a push to a URL or a folder never has.
+    A failed lookup counts as having one."""
+    found = git_run(["for-each-ref", "--count=1", "--format=%(refname)", f"refs/remotes/{remote}/"], cwd, deadline)
+    return found is None or found[0] != 0 or bool(found[1].strip())
+
+
+def git_run(words, cwd, deadline, limit=None):
+    """git's exit code and output, or None when git can not start. With a limit, git stops once its output passes
+    that many characters, and the output is cut just past it, so a caller sees it is too long without reading it
+    all. Raises TooSlow when git does not end by the deadline."""
+    try:
+        process = subprocess.Popen(["git", *words], cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return None
+    with process:
+        # A character takes at most four bytes, so output past this many bytes is past the limit
+        output, cut = output_until(process, deadline, None if limit is None else 4 * (limit + 1))
+        if cut:
+            os.killpg(process.pid, signal.SIGKILL)
+        try:
+            code = process.wait(timeout=max(deadline - time.monotonic(), 0))
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            raise TooSlow from None
+    return code, output.decode("utf-8", errors="replace")
+
+
+def output_until(process, deadline, most_bytes):
+    """(the bytes process writes until it ends or passes most_bytes, whether it passed most_bytes). Kills it and
+    raises TooSlow at the deadline."""
+    chunks = []
+    while most_bytes is None or sum(map(len, chunks)) <= most_bytes:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([process.stdout], [], [], left)[0]:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise TooSlow
+        chunk = os.read(process.stdout.fileno(), 65536)
+        if not chunk:
+            return b"".join(chunks), False
+        chunks.append(chunk)
+    return b"".join(chunks), True
+
+
+def settings_set_by_options(options):
+    """The name=value settings that git's -c and --config-env options set, read from git's own options."""
+    separate = [value for option, value in zip(options, options[1:]) if option in CONFIG_OPTIONS]
+    attached = [option.split("=", 1)[1] for option in options if option.startswith("--config-env=")]
+    return separate + attached
+
+
+def names_a_push_setting(setting):
+    """Whether a setting such as push.default=matching may change where a push goes or what it sends."""
+    return setting.split("=", 1)[0].split(".", 1)[0].lower() in PUSH_SETTING_SECTIONS
+
+
+def sends_more_than_head(cwd, remote, one_command_settings, deadline):
+    """Whether a push that names no branch may send more than HEAD's commits: by push.default matching, a remote's
+    push or mirror setting, a file for the remote in the repo's git folder, or a push setting set for this one
+    command. With no remote named, any remote's settings count. A failed lookup counts as more."""
+    if any(map(names_a_push_setting, one_command_settings)):
+        return True
+    listed = git_run(["config", "--get-regexp", BARE_PUSH_SETTINGS], cwd, deadline)
+    common = git_run(["rev-parse", "--git-common-dir"], cwd, deadline)
+    if listed is None or listed[0] not in (0, 1) or common is None or common[0] != 0:
+        return True  # git config ends with 1 when no setting matches
+    settings = [tuple((line.split(" ", 1) + [""])[:2]) for line in listed[1].splitlines()]
+    mode = next((value for key, value in reversed(settings) if key == "push.default"), "")
+    remote_settings = [(key, value) for key, value in settings if key != "push.default"
+                       and (remote is None or key in (f"remote.{remote}.push", f"remote.{remote}.mirror"))]
+    return (mode.lower() == "matching"
+            or any(key.endswith(".push") or value.lower() not in FALSE_WORDS for key, value in remote_settings)
+            or has_remote_file(os.path.join(cwd, common[1].strip()), remote))
+
+
+def has_remote_file(git_folder, remote):
+    """Whether the repo's remotes or branches folder holds a file for the remote, or any file when no remote is
+    named. git reads a remote from such a file, which git config does not show. A remote name never holds a
+    slash, so a path or URL remote has none."""
+    folders = [os.path.join(git_folder, name) for name in REMOTE_FILE_FOLDERS]
+    if remote is None:
+        return any(os.path.isfile(os.path.join(folder, name))
+                   for folder in folders if os.path.isdir(folder) for name in os.listdir(folder))
+    if "/" in remote or remote in ("", ".", ".."):
+        return False
+    return any(os.path.isfile(os.path.join(folder, remote)) for folder in folders)
+
+
+def pushes_read_in_place(steps, line):
+    """The steps, with each push unreadable when the line names a variable that points git at another repo, work
+    tree, namespace or settings, since the gate reads the commits of the folder git runs in. That holds wherever
+    the variable stands, as in an export earlier on the line."""
+    if not REPO_VARIABLE.search(line):
+        return steps
+    return [(target, UNREADABLE if target == "push" else text) for target, text in steps]
 
 
 def graphql_target(text):
@@ -1113,11 +1282,11 @@ def wrapped_steps(words, index, command, depth, first=False):
         # A public step that its source names could print other text, so it is unreadable.
         return [(target, UNREADABLE) for source in sources
                 for target, _text in public_steps(source, command.cwd, depth + 1, script=True,
-                                                  log=command.read_log)]
+                                                  log=command.read_log, deadline=command.deadline)]
     if hidden(script) or depth > 3:
         return [(WRAPPED, UNREADABLE)]
     steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first,
-                         log=command.read_log)
+                         log=command.read_log, deadline=command.deadline)
     return steps if how == "input" else [(target, UNREADABLE) for target, _text in steps]
 
 
@@ -1225,7 +1394,7 @@ def wrapper_option(option, options):
     return 1
 
 
-def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True):
+def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True, deadline=None):
     """[(target, text)] for each step in the command line that makes text public.
 
     That includes the steps inside every $(...) and backtick pair, such as
@@ -1233,8 +1402,9 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     says a script is the first thing the tool call runs, as the script of a
     shell that is the call's first command is. With log False, a push is
     named with no text, so a caller that needs only the steps runs no git.
+    Every git call ends by deadline, as Command takes it.
     """
-    command = Command(line, cwd, script, parent, read_log=log)
+    command = Command(line, cwd, script, parent, read_log=log, deadline=deadline)
     segments = command.segments()
     if segments is None:
         return rough_steps(command) + substituted_steps(command, depth)
@@ -1351,11 +1521,13 @@ def seen_before(flags, session, digest):
 # The handler
 
 
-def reason_text(targets, found, flags, warned_once):
+def reason_text(targets, found, text, flags, warned_once):
     names = sorted({TARGET_NAMES[target] for target in targets}, key=list(TARGET_NAMES.values()).index)
     lines = [f"hub's public text gate stopped this {' and '.join(names)}, because it contains:"]
     lines += [f"- {DESCRIBE[name]} ({PART}.{name})" for name in found]
     if "unreadable" in found:
+        lines += [note for mark, note in PUSH_NOTES.items() if mark in text]
+    if "unreadable" in found and UNREADABLE in without_push_marks(text):
         lines.append(flags.text(f"{PART}.unreadable.hint"))
     if "dashes" in found:
         lines.append(flags.text(f"{PART}.dashes.hint"))
@@ -1364,6 +1536,11 @@ def reason_text(targets, found, flags, warned_once):
     if warned_once:
         lines.append(flags.text(f"{PART}.instructions.after_warning"))
     return "\n".join(line for line in lines if line)
+
+
+def without_push_marks(text):
+    """The text with each mark of a push the gate could not read in full taken out, since those have their own note."""
+    return functools.reduce(lambda rest, mark: rest.replace(mark, ""), PUSH_NOTES, text)
 
 
 def target_runs(flags, target):
@@ -1377,7 +1554,10 @@ def handle(event, hook_input, flags, answer):
         return
     command = (hook_input.get("tool_input") or {}).get("command") or ""
     cwd = hook_input.get("cwd") or os.getcwd()
-    steps = [(target, text) for target, text in public_steps(command, cwd) if target_runs(flags, target)]
+    deadline = answer.started + TEXT_SECONDS
+    steps = [(target, text) for target, text in pushes_read_in_place(public_steps(command, cwd, deadline=deadline),
+                                                                     command)
+             if target_runs(flags, target)]
     if not steps:
         return
     if flags.runs(f"{PART}.public_repos_only") and not repo_is_public(cwd, flags.profile):
@@ -1404,4 +1584,5 @@ def handle(event, hook_input, flags, answer):
         answer.signal(f"{PART}.{name}", "blocked")
     for name in new_warnings:
         answer.signal(f"{PART}.{name}", "warned")
-    answer.refuse(reason_text([target for target, _text in steps], shown, flags, warned_once=bool(new_warnings)))
+    answer.refuse(reason_text([target for target, _text in steps], shown, text, flags,
+                              warned_once=bool(new_warnings)))
