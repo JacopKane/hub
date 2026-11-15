@@ -664,8 +664,9 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
     with then("the gate reads one push of main and names the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
-    piped = ["printf 'git push origin main\\n' |\nbash", "printf 'git push origin main\\n' | # run it\nbash"]
-    with when("Claude pipes a push into a shell whose name stands on the next line, after the pipe and maybe a "
+    piped = ["printf 'git push origin main\\n' |\nbash", "printf 'git push origin main\\n' | # run it\nbash",
+             "printf 'git push origin main\\n' |&\nbash"]
+    with when("Claude pipes a push into a shell whose name stands on the next line, after | or |& and maybe a "
               "comment"):
         results = hooks(home, tool, piped, "piped")
     with then("the shell still reads its script from the pipe, which the gate can not see, so the call is "

@@ -948,6 +948,11 @@ def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_w
         assert quiet(heredoc), heredoc.reason
         assert quiet(cat_heredoc), cat_heredoc.reason
         assert bare_heredoc.refused and bare_heredoc.reason == missing_part(home)
+    with when("the body is a $'...' string with its line breaks and quotes written as escapes"):
+        written = "$'" + CANONICAL.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+        dollar = bash(home, f"gh pr create --title T --body {written}")
+    with then("the gate reads the lines the shell writes, finds the tested part and the step runs"):
+        assert quiet(dollar), dollar.reason
     with when("Claude lets gh fill the body from the commits"):
         filled = bash(home, "gh pr create --fill")
     with then("it is refused, because a filled body has no tested part"):
