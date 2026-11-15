@@ -14,8 +14,10 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
 - sleep: seconds to wait before answering, for a slow network
 - fail: true makes every call exit 1, as when gh can not reach GitHub
 
-`gh api repos/<owner>/<repo>/git/ref/heads/<branch>` answers with the commit origin's bare repo has for the
-branch, and fails like GitHub's 404 when it has none.
+`gh api repos/<owner>/<repo>/git/ref/heads/<branch>`, or the same under repositories/<id>, answers with the
+commit origin's bare repo has for the branch, and fails like GitHub's 404 when it has none. A GraphQL query for
+a repo node's ref (-f ref=refs/heads/<branch>) answers the same way, with null when origin has none, and one for
+its defaultBranchRef answers like default.
 
 Every other call exits 0 with no output.
 """
@@ -27,6 +29,7 @@ import sys
 import time
 import urllib.parse
 
+REPO = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
 words = sys.argv[1:]
 config = {}
 if os.environ.get("FAKE_GH_CONFIG") and os.path.exists(os.environ["FAKE_GH_CONFIG"]):
@@ -82,13 +85,20 @@ elif words[:2] == ["pr", "view"]:
         print(f"no pull requests found for {key}", file=sys.stderr)
         sys.exit(1)
     print(json.dumps({"headRefOid": head, "baseRefName": base_of(key)}))
+elif words[:2] == ["api", "graphql"]:
+    fields = dict(value.split("=", 1) for option, value in zip(words, words[1:]) if option == "-f" and "=" in value)
+    query = fields.get("query", "")
+    if "ref(qualifiedName" in query:
+        print(pushed_head(fields.get("ref", "").removeprefix("refs/heads/")) or "null")
+    elif "defaultBranchRef" in query:
+        print(config.get("default", "main"))
 elif words[:1] == ["api"] and len(words) > 1:
-    ref = re.fullmatch(r"repos/[^/]+/[^/]+/git/ref/heads/(.+)", words[1])
+    ref = re.fullmatch(REPO + r"/git/ref/heads/(.+)", words[1])
     if ref:
         commit = pushed_head(urllib.parse.unquote(ref.group(1)))
         if commit is None:
             print("gh: Not Found (HTTP 404)", file=sys.stderr)
             sys.exit(1)
         print(commit if value_of("--jq") == ".object.sha" else json.dumps({"object": {"sha": commit}}))
-    elif re.fullmatch(r"repos/[^/]+/[^/]+", words[1]) and value_of("--jq") == ".default_branch":
+    elif re.fullmatch(REPO, words[1]) and value_of("--jq") == ".default_branch":
         print(config.get("default", "main"))

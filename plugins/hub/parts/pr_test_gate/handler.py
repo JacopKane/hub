@@ -77,6 +77,10 @@ GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
 GH_ALIASES = {("pr", "new"): ("pr", "create")}
 PR_REPO_OPTIONS = {"-R", "--repo"}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
+REPO_PATH = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
+HEAD_ON_NODE = ("query($id: ID!, $ref: String!) { node(id: $id) { ... on Repository { ref(qualifiedName: $ref) "
+                "{ target { oid } } } } }")
+DEFAULT_ON_NODE = "query($id: ID!) { node(id: $id) { ... on Repository { defaultBranchRef { name } } } }"
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
 PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
@@ -116,6 +120,8 @@ WHY = {
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
     "search": "a search of commit messages picks the commit",
     "pr_option": "gh has an option the gate does not know, or one with no value",
+    "head_repo": "it names the head's repo in a way the gate does not read",
+    "draft": "gh api may change the PR's draft state, which the gate reads only from gh pr ready",
 }
 
 
@@ -710,39 +716,61 @@ def body_stop(body, cwd, flags, answer):
 
 
 def gh_repo_place(step, repo_values=()):
-    """(owner, name, the variables gh runs with) for the repo a gh step works in. gh api fills {owner} and {repo}
-    from GH_REPO, or else from the current repo, as gh pr picks its repo, so -R or --repo becomes GH_REPO."""
+    """("rest", the repo's REST path, the variables gh runs with) for the repo a gh step works in. gh api fills
+    {owner} and {repo} from GH_REPO, or else from the current repo, as gh pr picks its repo, so -R or --repo
+    becomes GH_REPO."""
     variables = {"GH_REPO": repo_values[-1]} if repo_values else repo_variable(step)
     if any(unreadable_mark() in value for value in variables.values()):
         raise unreadable("word")
-    return "{owner}", "{repo}", variables
+    return "rest", "repos/{owner}/{repo}", variables
 
 
-def new_pr(step, head, named_head, named_base, place, lookups):
-    """[(branch, the commit the PR opens at, cwd, the branches it may go into)] for a new PR at head in the repo at
-    place. A head that is named is read on GitHub, since gh then pushes nothing. With no head named, gh opens the PR
-    only once HEAD matches a pushed branch, pushing HEAD first or stopping, so the local head is the PR's head."""
+def node_place(node, step):
+    """("node", the GraphQL node id, the variables gh runs with) for a repo a mutation names by its node id."""
+    if not isinstance(node, str) or not re.fullmatch(r"[A-Za-z0-9_=-]+", node):
+        raise unreadable("head_repo")
+    return "node", node, gh_repo_place(step)[2]
+
+
+def new_pr(step, head, named_head, named_base, places, lookups):
+    """[(branch, the commit the PR opens at, cwd, the branches it may go into)] for a new PR at head. places is
+    (the head's repo, the base's repo). A head that is named is read on GitHub, since gh then pushes nothing. With
+    no head named, gh opens the PR only once HEAD matches a pushed branch, pushing HEAD first or stopping, so the
+    local head is the PR's head."""
+    head_place, base_place = places
     branch = head.split(":", 1)[-1]
-    commit = github_head(step.cwd, head, place, lookups) if named_head else head_of_branch(step.cwd, branch, lookups)
-    return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, place, lookups))]
+    commit = (github_head(step.cwd, head, head_place, lookups) if named_head
+              else head_of_branch(step.cwd, branch, lookups))
+    return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, base_place, lookups))]
 
 
 def github_head(cwd, head, place, lookups):
-    """The commit a branch is at on GitHub, or a stop when GitHub gives none. owner:branch names the branch in the
-    owner's repo of the same name."""
-    fork, colon, after_colon = head.partition(":")
-    owner, name, variables = place
-    owner, branch = (fork, after_colon) if colon else (owner, head)
-    if any(unreadable_mark() in word for word in (head, owner, name)):
+    """The commit a branch is at on GitHub, or a stop when GitHub gives none."""
+    if any(unreadable_mark() in word for word in (head, place[1])):
         raise unreadable("word")
-    if colon and not re.fullmatch(r"[A-Za-z0-9-]+", fork):
-        raise unreadable("head")
-    path = f"repos/{owner}/{name}/git/ref/heads/{urllib.parse.quote(branch, safe='/')}"
-    output, why = lookups.gh(cwd, "api", path, "--jq", ".object.sha", variables=variables)
+    lookup, path_to_commit = head_lookup(head, place)
+    output, why = lookups.gh(cwd, "api", *lookup, "--jq", path_to_commit, variables=place[2])
     commit = (output or "").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise Stop("branch_head_unknown.md", branch=head, why=why or "GitHub gave no commit")
     return commit
+
+
+def head_lookup(head, place):
+    """(the gh api words that ask GitHub for the commit a head is at, the jq path to it). owner:branch names the
+    branch in the owner's repo of the same name, which only a repos/<owner>/<name> path can say."""
+    kind, where, _variables = place
+    fork, colon, after_colon = head.partition(":")
+    branch = after_colon if colon else head
+    if colon and not re.fullmatch(r"[A-Za-z0-9-]+", fork):
+        raise unreadable("head")
+    if colon and not (kind == "rest" and re.fullmatch(r"repos/[^/]+/[^/]+", where)):
+        raise unreadable("head_repo")
+    if kind == "node":
+        return (["graphql", "-f", "query=" + HEAD_ON_NODE, "-f", f"id={where}", "-f", f"ref=refs/heads/{branch}"],
+                ".data.node.ref.target.oid")
+    path = f"repos/{fork}/{where.split('/')[2]}" if colon else where
+    return [f"{path}/git/ref/heads/{urllib.parse.quote(branch, safe='/')}"], ".object.sha"
 
 
 def pr_bases(named_base, cwd, branch, place, lookups):
@@ -754,10 +782,18 @@ def pr_bases(named_base, cwd, branch, place, lookups):
     merge_base = lookups.git(cwd, "config", f"branch.{branch}.gh-merge-base")
     if merge_base:
         return {merge_base}
-    owner, name, variables = place
-    output, _why = lookups.gh(cwd, "api", f"repos/{owner}/{name}", "--jq", ".default_branch", variables=variables)
+    output, _why = lookups.gh(cwd, "api", *default_lookup(place), variables=place[2])
     default = (output or "").strip()
-    return {default} if default else set()
+    return {default} if default and default != "null" else set()
+
+
+def default_lookup(place):
+    """The gh api words that ask GitHub for a repo's default branch."""
+    kind, where, _variables = place
+    if kind == "node":
+        return ["graphql", "-f", "query=" + DEFAULT_ON_NODE, "-f", f"id={where}", "--jq",
+                ".data.node.defaultBranchRef.name"]
+    return [where, "--jq", ".default_branch"]
 
 
 def head_of_branch(cwd, name, lookups):
@@ -792,7 +828,7 @@ def pr_step(command, step, flags, answer, lookups):
         heads, bases = values.get("head"), values.get("base")
         head = heads[-1] if heads else current_branch(step.cwd, lookups)
         place = gh_repo_place(step, values.get("repo", ()))
-        return new_pr(step, head, bool(heads), bases[-1] if bases else None, place, lookups)
+        return new_pr(step, head, bool(heads), bases[-1] if bases else None, (place, place), lookups)
     if action == ["pr", "edit"]:
         values, _positional = gh_pr_flags(gate().without_redirects(rest), "edit")
         bodies = bodies_of(command, step, values)
@@ -905,19 +941,24 @@ def api_step(command, step, flags, answer, lookups):
         fields.update({key: str(value) for key, value in sent.items()})
     if endpoint == "graphql":
         return graphql_step(fields, step, flags, answer, lookups)
-    if re.fullmatch(r"repos/[^/]+/[^/]+/pulls", endpoint) and method == "POST":
+    new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
+    if new and method == "POST":
         written_out(step)
         body_stop(fields.get("body", ""), step.cwd, flags, answer)
         if not flags.runs(f"{PART}.report"):
             return []
         if not fields.get("head"):
             raise unreadable("head")
-        owner, name = endpoint.split("/")[1:3]
-        place = (owner, name, gh_repo_place(step)[2])
-        return new_pr(step, fields["head"], True, fields.get("base"), place, lookups)
-    if re.fullmatch(r"repos/[^/]+/[^/]+/pulls/\d+", endpoint) and method != "GET" and "body" in fields:
-        written_out(step)
-        body_stop(fields["body"], step.cwd, flags, answer)
+        if "head_repo" in fields:
+            raise unreadable("head_repo")
+        place = ("rest", new.group(1), gh_repo_place(step)[2])
+        return new_pr(step, fields["head"], True, fields.get("base"), (place, place), lookups)
+    if re.fullmatch(REPO_PATH + r"/pulls/\d+", endpoint) and method != "GET":
+        if "draft" in fields and flags.runs(f"{PART}.report"):
+            raise unreadable("draft")
+        if "body" in fields:
+            written_out(step)
+            body_stop(fields["body"], step.cwd, flags, answer)
     return []
 
 
@@ -951,18 +992,21 @@ def graphql_step(fields, step, flags, answer, lookups):
     branch = graphql_value(query, "headRefName", fields)
     if not branch:
         raise unreadable("head")
-    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), gh_repo_place(step), lookups)
+    base_place = node_place(graphql_value(query, "repositoryId", fields), step)
+    head_node = graphql_value(query, "headRepositoryId", fields)
+    head_place = base_place if head_node is None else node_place(head_node, step)
+    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), (head_place, base_place), lookups)
 
 
 def graphql_value(query, key, fields):
     """A string the mutation sets, written in the query or passed as a variable, or None."""
-    written = re.search(key + r'\s*:\s*"((?:[^"\\]|\\.)*)"', query)
+    written = re.search(r"\b" + key + r'\s*:\s*"((?:[^"\\]|\\.)*)"', query)
     if written:
         try:
             return json.loads('"' + written.group(1) + '"')
         except ValueError:
             return written.group(1)
-    variable = re.search(key + r"\s*:\s*\$(\w+)", query)
+    variable = re.search(r"\b" + key + r"\s*:\s*\$(\w+)", query)
     return fields.get(variable.group(1)) if variable else None
 
 

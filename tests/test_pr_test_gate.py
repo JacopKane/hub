@@ -1560,3 +1560,71 @@ def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_send
         missing = bash(home, f"gh pr create --head nowhere --title T --body-file {good}")
     with then("it is refused, since the gate can not read the commit the PR would open at"):
         assert says(home, missing, "branch_head_unknown.md", branch="nowhere"), missing.reason
+
+
+HEAD_REPO_WHY = "it names the head's repo in a way the gate does not read"
+DRAFT_WHY = "gh api may change the PR's draft state, which the gate reads only from gh pr ready"
+
+
+def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(home):
+    with given("branch side pushed with no report, its next commit with a report, a good and a bad body, and PR 7"):
+        with_github(home)
+        home.git("checkout", "-q", "-b", "side", "main")
+        side = change(home, message="Start side")
+        home.git("push", "-q", "-u", "origin", "side")
+        change(home)
+        record(home)
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+    creates = [f"gh api repositories/123/pulls -f head=side -f base=main -F body=@{good}",
+               f"gh api https://api.github.com/repositories/123/pulls -f head=side -F body=@{good}",
+               f"GH_REPO=acme/demo gh api 'repos/{{owner}}/{{repo}}/pulls' -f head=side -F body=@{good}",
+               f"gh api repos/:owner/:repo/pulls -f head=side -F body=@{good}"]
+    with when("Claude opens a PR at side through gh api, naming the repo by its numeric id or by the "
+              "{owner}/{repo} and :owner/:repo places that gh fills from GH_REPO or the current repo"):
+        results = {step: bash(home, step) for step in creates}
+        filled_head = bash(home, f"gh api 'repos/{{owner}}/{{repo}}/pulls' -F 'head={{branch}}' -F body=@{good}")
+    with then("each is refused for the commit GitHub has on side, and a head gh fills in is refused as one "
+              "GitHub does not have"):
+        for step, result in results.items():
+            assert says(home, result, "no_report.md", short=side[:7], branch="side"), (step, result.reason)
+        assert says(home, filled_head, "branch_head_unknown.md", branch="{branch}"), filled_head.reason
+    with when("Claude names the head's repo with head_repo, or a fork's branch through the numeric id form"):
+        head_repo = bash(home, f"gh api repos/acme/demo/pulls -f head=side -f head_repo=acme/demo -F body=@{good}")
+        fork = bash(home, f"gh api repositories/123/pulls -f head=octo:side -F body=@{good}")
+    with then("both are refused, since the gate does not read which repo the head is in"):
+        for result in (head_repo, fork):
+            assert says(home, result, "unreadable_push.md", why=HEAD_REPO_WHY), result.reason
+    with when("Claude edits PR 7's body to one with no tested part by its numeric repo id"):
+        edited = bash(home, f"gh api -X PATCH repositories/123/pulls/7 -F body=@{bad}")
+    with then("it is refused with pr-check's sentence"):
+        assert edited.refused and edited.reason == missing_part(home), edited.reason
+    drafts = ["gh api -X PATCH repos/acme/demo/pulls/7 -F draft=false",
+              "gh api -X PATCH repositories/123/pulls/7 -F draft=false"]
+    with when("Claude changes PR 7's draft state through gh api, by owner and name or by numeric id"):
+        results = {step: bash(home, step) for step in drafts}
+    with then("each is refused, since the gate reads a PR becoming ready only from gh pr ready"):
+        for step, result in results.items():
+            assert says(home, result, "unreadable_push.md", why=DRAFT_WHY), (step, result.reason)
+    create = graphql_call('mutation { createPullRequest(input: {repositoryId: "R_base", headRepositoryId: "R_head", '
+                          'baseRefName: "main", headRefName: "side", title: "T", body: $body}) '
+                          '{ pullRequest { number } } }', f"-F body=@{good}")
+    with when("Claude opens a PR at side through GraphQL, naming the head's repo by its node id"):
+        by_node = bash(home, create)
+    with then("it is refused for the commit GitHub has on side, read from the head's repo"):
+        assert says(home, by_node, "no_report.md", short=side[:7], branch="side"), by_node.reason
+        assert any(call[:2] == ["api", "graphql"] and "id=R_head" in call for call in gh_calls(home))
+    with when("the same mutation names no head repo and no base branch, or GitHub does not have the branch"):
+        base_only = bash(home, create.replace('headRepositoryId: "R_head", ', "")
+                         .replace('baseRefName: "main", ', ""))
+        nowhere = bash(home, create.replace('headRefName: "side"', 'headRefName: "nowhere"'))
+    with then("the first is judged in the base repo and refused for side, the second can not be read"):
+        assert says(home, base_only, "no_report.md", short=side[:7], branch="side"), base_only.reason
+        base_calls = [call for call in gh_calls(home) if call[:2] == ["api", "graphql"] and "id=R_base" in call]
+        assert any("ref=refs/heads/side" in call for call in base_calls), base_calls
+        assert any(any("defaultBranchRef" in word for word in call) for call in base_calls), base_calls
+        assert says(home, nowhere, "branch_head_unknown.md", branch="nowhere"), nowhere.reason
+    with when("side's tested commit is pushed"):
+        home.git("push", "-q")
+    with then("the same steps run with no answer"):
+        for step in creates + [create]:
+            assert quiet(bash(home, step)), step
