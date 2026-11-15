@@ -189,7 +189,6 @@ BINARY_PEEK = 8000  # bytes; a NUL byte here marks a binary file, as in git
 GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source",
                      "--shallow-file", "--super-prefix"}
 GIST_VALUE_OPTIONS = {"-d", "--desc", "-f", "--filename", "-r", "--remove", "-a", "--add"}
-GH_FIELD_OPTIONS = {"-f", "-F", "--field", "--raw-field"}
 # REST endpoints by target, checked in order. Any other write is "api".
 API_TARGETS = [
     (r"pulls/(?:\d+/)?(?:comments|reviews)|pulls/comments", "review_comment"),
@@ -202,8 +201,6 @@ API_TARGETS = [
     (r"commits/[^/]+/comments|^repos/[^/]+/[^/]+/comments(?:/|$)", "commit_comment"),
     (r"(?:^|/)contents(?:/|$)", "contents"),
 ]
-GH_API_VALUE_OPTIONS = GH_FIELD_OPTIONS | {"-X", "--method", "--input", "-H", "--header", "-q", "--jq",
-                                           "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 # The options of gh api, by long name, as gh reads them: short letters that take a value or not, and long names.
 GH_API_SHORT_VALUES = {"F": "--field", "f": "--raw-field", "X": "--method", "H": "--header", "p": "--preview",
                        "t": "--template", "q": "--jq"}
