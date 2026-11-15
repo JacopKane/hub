@@ -1564,6 +1564,7 @@ def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_send
 
 HEAD_REPO_WHY = "it names the head's repo in a way the gate does not read"
 DRAFT_WHY = "gh api may change the PR's draft state, which the gate reads only from gh pr ready"
+REMOTE_URL_WHY = "git could not say which URL the remote names"
 
 
 def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(home):
@@ -1628,3 +1629,56 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
     with then("the same steps run with no answer"):
         for step in creates + [create]:
             assert quiet(bash(home, step)), step
+
+
+def failing_git(home, verb):
+    """A PATH whose first git fails one verb, as a lookup can fail, and runs the real git for the rest."""
+    real = shutil.which("git", path=home.env["PATH"])
+    folder = os.path.join(home.root, "failing-bin")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "git"), "w") as handle:
+        handle.write(f'#!/bin/sh\nif [ "$1" = {verb} ]; then exit 128; fi\nexec {shlex.quote(real)} "$@"\n')
+    os.chmod(os.path.join(folder, "git"), 0o755)
+    return folder + os.pathsep + home.env["PATH"]
+
+
+def test_a_step_is_judged_where_git_or_gh_sends_it_and_a_lookup_that_fails_is_refused(home):
+    with given("branch feature with open PR 7 and a new commit with no report, an origin off GitHub, a remote "
+               "hubgh on GitHub, and a URL word that starts with a dash and url.*.insteadOf sends to GitHub"):
+        elsewhere = with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        home.git("remote", "set-url", "origin", elsewhere)
+        home.git("remote", "add", "hubgh", github_folder(home))
+        home.git("config", f"url.{github_folder(home)}.insteadOf", "-gh")
+    to_github = ["git push --repo=hubgh", "git push --repo hubgh", "git push --repo=origin --repo=hubgh",
+                 "git push -- -gh feature"]
+    with when("Claude pushes with --repo naming hubgh and no remote word, or names the dash URL after --"):
+        results = {step: bash(home, step) for step in to_github}
+        sent = {step: home.git("push", "--dry-run", "--porcelain", *shlex.split(step)[2:]).stdout
+                for step in to_github}
+    with then("git sends feature to GitHub each time, and each is refused for feature's commit"):
+        for step, result in results.items():
+            assert "refs/heads/feature:refs/heads/feature" in sent[step], (step, sent[step])
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (step, result.reason)
+    elsewhere_steps = ["git push", "git push origin --repo=hubgh", "git push --repo=hubgh --no-repo"]
+    with when("a remote word comes before --repo, --no-repo clears it, or nothing names hubgh"):
+        results = {step: bash(home, step) for step in elsewhere_steps}
+    with then("git pushes to origin, off GitHub, and each runs with no answer"):
+        for step, result in results.items():
+            assert quiet(result), (step, result.reason)
+    with when("git can not say where the dash URL points"):
+        failed, _took = timed(home, "git push -- -gh feature", failing_git(home, "ls-remote"))
+    with then("the push is refused, since it may reach GitHub"):
+        assert says(home, failed, "unreadable_push.md", why=REMOTE_URL_WHY), failed.reason
+    with when("feature's commit gets a report, gh fails, and Claude marks the current branch's PR ready"):
+        record(home)
+        fake_gh(home, fail=True)
+        ready = bash(home, "gh pr ready")
+    with then("it is refused, since gh did not say which commit the PR is at"):
+        assert says(home, ready, "branch_head_unknown.md", branch="feature"), ready.reason
+    with when("gh answers again with the PR's head at the reported commit"):
+        fake_gh(home, open={"feature": 7}, heads={"feature": feature})
+        again = bash(home, "gh pr ready")
+    with then("the step runs"):
+        assert quiet(again), again.reason

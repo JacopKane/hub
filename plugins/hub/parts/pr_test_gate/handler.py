@@ -122,6 +122,7 @@ WHY = {
     "pr_option": "gh has an option the gate does not know, or one with no value",
     "head_repo": "it names the head's repo in a way the gate does not read",
     "draft": "gh api may change the PR's draft state, which the gate reads only from gh pr ready",
+    "remote_url": "git could not say which URL the remote names",
 }
 
 
@@ -369,7 +370,8 @@ def git_place(step):
 
 
 def push_words(rest):
-    """(positional words, whether a reason that needs no state keeps it quiet, whether --tags is on)."""
+    """(positional words, whether a reason that needs no state keeps it quiet, whether --tags is on, the last
+    --repo value or None). git pushes to --repo when no remote word is given, and --no-repo clears it."""
     shared = gate()
     items = list(shared.push_items(shared.without_redirects(rest)))
     if any(option == shared.AMBIGUOUS_OPTION for option, _value in items):
@@ -378,7 +380,8 @@ def push_words(rest):
         raise unreadable("every")
     positional = [value for option, value in items if option is None]
     quiet = shared.last_switch(items, "--delete") or shared.last_switch(items, "--dry-run")
-    return positional, quiet, shared.last_switch(items, "--tags")
+    repo = next((value for option, value in reversed(items) if option == "--repo"), False)
+    return positional, quiet, shared.last_switch(items, "--tags"), repo or None
 
 
 def pushed(step, lookups):
@@ -387,7 +390,7 @@ def pushed(step, lookups):
     cwd, words = git_place(step)
     if sets_push_settings_for_one_command(step, words):
         raise push_settings_stop("option")
-    positional, quiet, tags = push_words(words[1:])
+    positional, quiet, tags, repo = push_words(words[1:])
     specs = [spec[1:] if spec.startswith("+") else spec
              for spec in gate().push_refspecs(positional[1:], deletes=False)]
     if not quiet and ":" in specs:
@@ -396,10 +399,10 @@ def pushed(step, lookups):
         return []
     written_out(step)
     hidden_mark = unreadable_mark()
-    if any(hidden_mark in word or "$" in word or "*" in word for word in positional):
+    if any(hidden_mark in word or "$" in word or "*" in word for word in positional + [repo or ""]):
         raise unreadable("word")
     branch = lookups.git(cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
-    remote = positional[0] if positional else None
+    remote = positional[0] if positional else repo
     if remote is None:
         if branch is None:
             raise unreadable("detached")
@@ -419,12 +422,18 @@ def reaches_github(cwd, remote, lookups):
 def push_urls(cwd, remote, lookups):
     """The URLs git pushes to for the remote word. A configured remote pushes to its push URLs, as git remote
     get-url --push shows them. git reads any other word as a URL, which url.<base>.pushInsteadOf rewrites, else
-    url.<base>.insteadOf, as git ls-remote --get-url shows."""
+    url.<base>.insteadOf, as git ls-remote --get-url shows. A lookup that fails may hide a GitHub URL, so it
+    stops the step."""
     listed = lookups.git(cwd, "remote", "get-url", "--push", "--all", "--", remote)
     if listed is not None:
         return listed.splitlines()
-    return (rewritten_urls(remote, push_rewrites(cwd, lookups))
-            or [lookups.git(cwd, "ls-remote", "--get-url", remote) or ""])
+    rewritten = rewritten_urls(remote, push_rewrites(cwd, lookups))
+    if rewritten:
+        return rewritten
+    url = lookups.git(cwd, "ls-remote", "--get-url", "--", remote)
+    if url is None:
+        raise unreadable("remote_url")
+    return [url]
 
 
 def push_rewrites(cwd, lookups):
@@ -883,8 +892,8 @@ def repo_variable(step):
 
 def ready_pr(step, named, repo, lookups):
     """The PR a ready step marks, read from gh in the repo the step names with its options or GH_REPO: its head
-    commit and the branch it goes into. With no number, gh finds the current branch's PR, and the local head stands
-    in when gh can not say."""
+    commit and the branch it goes into. With no number, gh finds the current branch's PR. When gh can not say the
+    head, the step stops, with or without a number."""
     variables = repo_variable(step)
     if any(unreadable_mark() in word for word in named + repo + list(variables.values())):
         raise unreadable("word")
@@ -895,14 +904,11 @@ def ready_pr(step, named, repo, lookups):
     commit, base = viewed.get("headRefOid"), viewed.get("baseRefName")
     branch = None if named else lookups.git(step.cwd, "symbolic-ref", "--quiet", "--short", "HEAD")
     bases = {base} if isinstance(base, str) and base else set()
-    if named:
-        if not commit:
-            raise Stop("pr_head_unknown.md", number=named[0], why=why or "gh gave no head commit")
-        return [(f"PR {named[0]}", commit, step.cwd, bases)]
-    commit = commit or lookups.git(step.cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-    if commit is None:
-        raise unreadable("detached")
-    return [(branch or "HEAD", commit, step.cwd, bases)]
+    if named and not commit:
+        raise Stop("pr_head_unknown.md", number=named[0], why=why or "gh gave no head commit")
+    if not commit:
+        raise Stop("branch_head_unknown.md", branch=branch or "HEAD", why=why or "gh gave no head commit")
+    return [(f"PR {named[0]}" if named else branch or "HEAD", commit, step.cwd, bases)]
 
 
 def api_fields(command, items):
