@@ -430,6 +430,12 @@ def mark_expansions(line, sources=None):
             out.append(char + following)
             index += 2
             continue
+        if char == "#" and quote is None and starts_a_word(out):
+            end = line.find("\n", index)
+            end = len(line) if end < 0 else end
+            out.append(line[index:end])  # a comment, so a quote mark in it opens no quote
+            index = end
+            continue
         if char == '"':
             quote = None if quote == '"' else '"'
         elif char == "'" and quote is None:

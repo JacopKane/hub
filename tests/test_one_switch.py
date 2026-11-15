@@ -706,6 +706,25 @@ def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, t
         assert escaped.refused and escaped.findings == ["dashes"], escaped.reason
 
 
+def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_lines(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    filled_in = ["echo hi # don't\ngit commit -m \"$MESSAGE\"", "echo hi # say \"x\ngit commit -m \"it's $MESSAGE\"",
+                 "git commit -m \"x\"#\"$MESSAGE\""]
+    with when("Claude commits with a message from a variable on the line after a comment that holds a quote mark, "
+              "or right after a # that stands inside a word, each in its own session"):
+        results = hooks(home, tool, filled_in, "filled-in")
+    with then("the shell drops only the comment and fills in the variable, so each commit is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude pushes main from a substitution on the line after a comment that holds a quote mark"):
+        substituted = home.hook(tool, "PreToolUse", "# it's late\necho \"$(git push origin main)\"",
+                                session="substituted")
+    with then("the gate reads the push inside the substitution and names the dash"):
+        assert substituted.refused and substituted.findings == ["dashes"], substituted.reason
+
+
 def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_own_end_line(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
