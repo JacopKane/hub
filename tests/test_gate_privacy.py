@@ -109,10 +109,15 @@ def test_chat_session_links_and_escaped_dashes_are_caught(home, tool):
         results = [home.hook(tool, "PreToolUse", command) for command in (link, trailer, link)]
     with then("each is refused as a secret, every time"):
         assert [result.findings for result in results] == [["secrets"]] * 3
-    with when("a message writes the em dash as an escape that the shell turns into a dash"):
-        escaped = home.hook(tool, "PreToolUse", "git commit -m $'Tidy \\u2014 done'")
+    with when("a message writes the em dash as hex escapes of its bytes, which every shell turns into a dash"):
+        escaped = home.hook(tool, "PreToolUse", "git commit -m $'Tidy \\xe2\\x80\\x94 done'")
     with then("the dash check names it"):
         assert escaped.refused and escaped.findings == ["dashes"]
+    with when("a message writes the em dash as \\u2014, which zsh turns into a dash and macOS bash 3.2 keeps"):
+        unicode_escape = home.hook(tool, "PreToolUse", "git commit -m $'Tidy \\u2014 done'", session="unicode-escape")
+    with then("the gate can not tell which text the shell makes, so it refuses the message as unreadable, and "
+              "the dash check names the written escape too"):
+        assert unicode_escape.refused and unicode_escape.findings == ["unreadable", "dashes"], unicode_escape.findings
 
 
 def test_merges_closes_and_graphql_mutations_are_checked(home, tool):

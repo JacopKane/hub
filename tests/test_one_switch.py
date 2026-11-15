@@ -778,6 +778,32 @@ def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joi
         assert split_variable.refused and split_variable.findings == ["unreadable"], split_variable.reason
 
 
+def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    apart = ["$'\\g\\i\\t' push origin main", "git push origin $'ma\\\nin'", "git commit -m $'Fix \\q it'",
+             "git commit -m $'Fix\\0 it'", "git commit -m $'Fix \\cA it'", "git commit -m $'Fix \\xZ it'",
+             "git commit -m $'Fix \\400 it'", "git commit -m $'Fix \\8 it'", "git commit -m $'Fix \\U110000 it'",
+             "git commit -m $'Fix \\u00e9 it'"]
+    with when("Claude writes a $'...' string with an escape that bash and zsh fill in differently, such as an "
+              "unknown letter, a backslash at a line end, a NUL, \\c, \\x with no digit, an octal past 377, \\8, "
+              "or a \\u or \\U code point, which macOS bash 3.2 keeps as written"):
+        results = hooks(home, tool, apart, "apart")
+    with then("the gate can not tell which text the shell makes, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude commits with a $'...' message whose escapes both shells fill in the same way"):
+        same = home.hook(tool, "PreToolUse", "git commit -m $'It\\'s \\\"fixed\\\"\\t\\x41\\101\\e\\?\\\\'",
+                         session="same")
+    with then("the commit runs"):
+        assert not same.refused, same.reason
+    with when("Claude pushes main with a program name written as a $\"...\" string"):
+        locale_quoted = home.hook(tool, "PreToolUse", '$"git" push origin main', session="locale-quoted")
+    with then("the gate drops the $ as bash does, reads the push and names the dash"):
+        assert locale_quoted.refused and locale_quoted.findings == ["dashes"], locale_quoted.reason
+
+
 def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
@@ -788,9 +814,8 @@ def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home
                                 session="hidden-push")
     with then("the gate reads the push between them, as the shell runs it, and names the dash"):
         assert hidden_push.refused and hidden_push.findings == ["dashes"], hidden_push.reason
-    messages = ["git commit -m $'Late \\u2014 change'", "git commit -m $'Late \\xe2\\x80\\x94 change'",
-                "git commit -m $'Late \\342\\200\\224 change'"]
-    with when("Claude commits with a message whose dash is written as a unicode, hex or octal escape in $'...'"):
+    messages = ["git commit -m $'Late \\xe2\\x80\\x94 change'", "git commit -m $'Late \\342\\200\\224 change'"]
+    with when("Claude commits with a message whose dash is written as hex or octal escapes of its bytes in $'...'"):
         results = hooks(home, tool, messages, "escaped-dash")
     with then("the gate reads the dash the shell writes and names it"):
         for message, result in results.items():

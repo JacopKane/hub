@@ -42,7 +42,6 @@ import shlex
 import signal
 import stat
 import subprocess
-import sys
 import time
 
 from hub import files
@@ -472,12 +471,17 @@ def mark_expansions(line, sources=None):
         elif char == "$" and following == "'" and quote is None:
             body = ANSI_C_BODY.match(line, index + 2)
             if body:
-                out.append(one_word(ansi_c_text(body.group(1)), None))
+                decoded_text = ansi_c_text(body.group(1))
+                out.append(UNREADABLE + one_word(body.group(1), None) if decoded_text is None
+                           else one_word(decoded_text, None))  # the shells read it apart
                 index = body.end()
                 continue
             out.append("$'")
             quote = "$'"
             index += 2
+            continue
+        elif char == "$" and following == '"' and quote is None:
+            index += 1  # bash reads $"..." as a plain double-quoted string
             continue
         elif char == "$" and following and (following.isalnum() or following in "_{@*#?!$-"):
             out.append(UNREADABLE)
@@ -489,36 +493,51 @@ def mark_expansions(line, sources=None):
 # The text of a $'...' string up to its closing quote, where a backslash keeps the next character.
 ANSI_C_BODY = re.compile(r"((?:[^\\']|\\.)*)'", re.S)
 ANSI_C_PIECE = re.compile(
-    r"\\(?:(?P<octal>[0-7]{1,3})|x(?P<byte>[0-9a-fA-F]{1,2})|u(?P<short>[0-9a-fA-F]{1,4})"
-    r"|U(?P<long>[0-9a-fA-F]{1,8})|c(?P<control>.)|(?P<letter>.))|(?P<plain>[^\\]+)", re.S)
+    r"\\(?:(?P<octal>[0-7]{1,3})|x(?P<byte>[0-9a-fA-F]{1,2})|(?P<letter>.))|(?P<plain>[^\\]+)", re.S)
+# The escapes bash and zsh both fill in, and with the same character.
 ANSI_C_LETTERS = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
                   "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 
 
 def ansi_c_text(body):
-    """The text the shell makes of a $'...' string's body, with each escape filled in.
+    """The text the shell makes of a $'...' string's body, with each escape filled in, or None when bash and
+    zsh make different text of it.
 
     Hex and octal escapes are bytes, so a character written as its UTF-8
     bytes reads as that character.
     """
-    return b"".join(map(ansi_c_bytes, ANSI_C_PIECE.finditer(body))).decode("utf-8", "replace")
+    pieces = list(ANSI_C_PIECE.finditer(body))
+    if not all(map(read_alike, pieces)):
+        return None
+    return b"".join(map(ansi_c_bytes, pieces)).decode("utf-8", "replace")
+
+
+def read_alike(piece):
+    """Whether bash and zsh write the same bytes for one escape, or for a run of plain text, in a $'...' string.
+
+    They agree on the letters in ANSI_C_LETTERS, on \\x with one or two hex
+    digits and on an octal escape up to 377. They differ on any other
+    letter, on \\c, on \\u and \\U (macOS bash 3.2 keeps them as written,
+    zsh fills them in), on a backslash at a line end and on a NUL.
+    """
+    found = piece.groupdict()
+    if found["octal"]:
+        return 0 < int(found["octal"], 8) <= 0o377
+    if found["byte"]:
+        return int(found["byte"], 16) > 0
+    return found["plain"] is not None or found["letter"] in ANSI_C_LETTERS
 
 
 def ansi_c_bytes(piece):
-    """The bytes the shell writes for one escape, or for a run of plain text, in a $'...' string."""
+    """The bytes the shell writes for one escape that read_alike takes, or for a run of plain text."""
     found = piece.groupdict()
-    code = found["short"] or found["long"]
     if found["octal"]:
-        return bytes([int(found["octal"], 8) & 0xFF])
+        return bytes([int(found["octal"], 8)])
     if found["byte"]:
         return bytes([int(found["byte"], 16)])
-    if code:
-        return chr(min(int(code, 16), sys.maxunicode)).encode("utf-8", "surrogatepass")
-    if found["control"]:
-        return bytes([ord(found["control"]) & 0x1F])
     if found["plain"] is not None:
         return found["plain"].encode("utf-8", "surrogateescape")
-    return ANSI_C_LETTERS.get(found["letter"], "\\" + found["letter"]).encode("utf-8", "surrogateescape")
+    return ANSI_C_LETTERS[found["letter"]].encode("utf-8")
 
 
 def one_word(text, quote):
