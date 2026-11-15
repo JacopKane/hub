@@ -387,9 +387,24 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
         plain = bash(home, "git push origin fix-a")
     with then("it runs, since fix-a has no PR"):
         assert quiet(plain), plain.reason
-    with when("push.default is upstream, fix-a's upstream is feature, and Claude names fix-a in each way"):
+    with when("push.default is upstream, fix-a's upstream is main with no remote set, fix-a has open PR 10, and "
+              "Claude pushes fix-a by name"):
         home.git("config", "push.default", "upstream")
+        home.git("config", "branch.fix-a.merge", "refs/heads/main")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9, "fix-a": 10})
+        no_remote = bash(home, "git push origin fix-a")
+        home.git("config", "branch.fix-a.remote", "")
+        empty_remote = bash(home, "git push origin fix-a")
+        home.git("config", "--unset", "branch.fix-a.remote")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9})
+    with then("it is refused for fix-a's commit on fix-a, since git maps a branch to its upstream only when the "
+              "branch also has a remote, and an empty remote is refused, since git can not say where it goes"):
+        assert says(home, no_remote, "no_report.md", short=local[:7], branch="fix-a"), no_remote.reason
+        assert says(home, empty_remote, "push_config.md", why="the branch's upstream names no remote"), \
+            empty_remote.reason
+    with when("fix-a's upstream is feature on origin, and Claude names fix-a in each way"):
         home.git("config", "branch.fix-a.merge", "refs/heads/feature")
+        home.git("config", "branch.fix-a.remote", "origin")
         upstream = {form: bash(home, form) for form in named}
     with then("each is refused for fix-a's commit on feature, the branch git updates"):
         for form, result in upstream.items():
@@ -402,9 +417,7 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
         assert quiet(two_upstreams), two_upstreams.reason
     mapped = [(["refs/heads/fix-a:refs/heads/feature"], "feature"), (["+refs/heads/fix-a:feature"], "feature"),
               (["refs/heads/*:refs/heads/review/*"], "review/fix-a"),
-              (["refs/heads/fix-a:refs/heads/feature", "refs/heads/*:refs/heads/review/*"], "feature"),
-              (["^refs/heads/fix-a", "refs/heads/main:refs/heads/z", "refs/heads/*:refs/heads/review/*"],
-               "review/fix-a")]
+              (["refs/heads/fix-a:refs/heads/feature", "refs/heads/*:refs/heads/review/*"], "feature")]
     for values, branch in mapped:
         with when(f"the remote's push settings are {values} and Claude pushes fix-a by name"):
             for value in values:
@@ -413,6 +426,34 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
             home.git("config", "--unset-all", "remote.origin.push")
         with then(f"it is refused for fix-a's commit on {branch}, where the first setting that matches sends it"):
             assert says(home, result, "no_report.md", short=local[:7], branch=branch), (values, result.reason)
+    with when("the remote's push setting holds two colons, fix-a has open PR 10, and Claude pushes fix-a by name"):
+        home.git("config", "remote.origin.push", "refs/heads/fix-a:x:refs/heads/feature")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9, "fix-a": 10})
+        two_colons = bash(home, "git push origin fix-a")
+        sent = home.git("push", "--dry-run", "--porcelain", "origin", "fix-a").stdout
+        home.git("config", "--unset-all", "remote.origin.push")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9})
+    with then("it is refused for fix-a's commit on fix-a: git splits the setting at its last colon, so its source "
+              "refs/heads/fix-a:x matches no branch and fix-a goes under its own name"):
+        assert "refs/heads/fix-a:refs/heads/fix-a" in sent, sent
+        assert says(home, two_colons, "no_report.md", short=local[:7], branch="fix-a"), two_colons.reason
+    negative_why = "the remote's push settings leave branches out with ^, which changes where git sends a branch"
+    for values in (["^refs/heads/fix-a", "refs/heads/main:refs/heads/z", "refs/heads/*:refs/heads/review/*"],
+                   ["^refs/heads/fix-a", "refs/heads/*:refs/heads/*"]):
+        with when(f"the remote's push settings are {values}, fix-a's upstream is feature again, and Claude pushes "
+                  f"fix-a by name, then by name and destination"):
+            home.git("config", "branch.fix-a.merge", "refs/heads/feature")
+            for value in values:
+                home.git("config", "--add", "remote.origin.push", value)
+            by_name = bash(home, "git push origin fix-a")
+            with_destination = bash(home, "git push origin fix-a:feature")
+            home.git("config", "--unset-all", "remote.origin.push")
+            home.git("config", "--unset", "branch.fix-a.merge")
+        with then("the push by name is refused for the ^ entry, and the push that names its destination is judged "
+                  "there as usual"):
+            assert says(home, by_name, "push_config.md", why=negative_why), (values, by_name.reason)
+            assert says(home, with_destination, "no_report.md", short=local[:7], branch="feature"), \
+                (values, with_destination.reason)
     with when("the remote's push setting names fix-a without refs/heads/, which git does not match"):
         home.git("config", "remote.origin.push", "fix-a:refs/heads/feature")
         short_source = bash(home, "git push origin fix-a")
@@ -434,6 +475,21 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
     with then("every one of those pushes runs"):
         for form in named + ["git push origin HEAD:heads/x", "git push origin HEAD:refs/heads/heads/x"]:
             assert quiet(bash(home, form)), form
+    searches = ["git push origin ':/Change the app:feature'", "git push origin '+:/Change:refs/heads/feature'",
+                "git push origin fix-a ':/Change:feature'"]
+    with when("Claude pushes to feature a commit named by a search of commit messages, as in :/Change"):
+        results = {form: bash(home, form) for form in searches}
+    with then("the text gate refuses each one first as unreadable, since git splits it at the last colon and sends "
+              "the newest commit whose message matches, which neither gate looks up"):
+        for form, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (form, result.reason)
+    with when("the text gate's unreadable check is off and Claude sends the same pushes"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        results = {form: bash(home, form) for form in searches}
+    with then("this gate refuses each one and asks for it to be written out"):
+        for form, result in results.items():
+            assert says(home, result, "unreadable_push.md", why="a search of commit messages picks the commit"), \
+                (form, result.reason)
 
 
 def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub_logs_no_error(home):

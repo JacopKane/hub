@@ -659,23 +659,37 @@ def git_target(words, command):
     return None
 
 
-def pushed_commits(rest, cwd):
-    """The log and diff of the commits a push sends, capped in size.
+def source_and_destination(spec):
+    """A refspec's source and destination, split at its last colon as git splits it. The destination is empty when
+    none is named, and the source is empty for a delete."""
+    source, colon, destination = spec.rpartition(":")
+    return (source, destination) if colon else (spec, "")
 
-    When the shell fills in the folder or a word of the push, the gate can not
-    tell which commits it sends, so the push counts as unreadable.
+
+def searches_commit_messages(source):
+    """Whether a refspec's source names its commit by a search of commit messages, as :/text does."""
+    return source.startswith(":/")
+
+
+def pushed_commits(rest, cwd):
+    """The log and diff of the commits a push sends, from the source of each refspec it names, capped in size.
+
+    When the shell fills in the folder or a word of the push, or a source
+    searches commit messages, the gate can not tell which commits it sends,
+    so the push counts as unreadable.
     """
     if UNREADABLE in cwd or any(UNREADABLE in word for word in rest):
         return UNREADABLE
     positional = [word for word in rest if not word.startswith("-")]
     remote = positional[0] if positional else None
-    source = "HEAD"
-    if len(positional) > 1:
-        source = positional[1].lstrip("+").split(":", 1)[0] or "HEAD"
+    sources = [source_and_destination(spec.lstrip("+"))[0] for spec in positional[1:]]
+    if any(map(searches_commit_messages, sources)):
+        return UNREADABLE
     remotes = f"--remotes={remote}" if remote else "--remotes"
     try:
         log = subprocess.run(
-            ["git", "log", "-p", "--no-color", f"--max-count={MAX_COMMITS}", source, "--not", remotes],
+            ["git", "log", "-p", "--no-color", f"--max-count={MAX_COMMITS}",
+             *([source for source in sources if source] or ["HEAD"]), "--not", remotes],
             cwd=cwd, capture_output=True, text=True, errors="replace", timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):

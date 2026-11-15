@@ -71,13 +71,15 @@ GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
 CONFIG_OPTIONS = {"-c", "--config-env"}
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
 PUSH_SETTING_SECTIONS = {"push", "remote", "url", "branch", "include", "includeif"}
-PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.merge)$"
+PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
 FALSE_WORDS = {"false", "no", "off", "0"}
 PUSH_CONFIG_WHY = {
     "matching": "the repo's push.default sends every branch that has a match on the remote",
     "refspec": "the remote has its own setting for what a push sends",
     "mirror": "the remote is set to mirror every branch",
     "option": "git -c, --config-env or a GIT_CONFIG variable changes its push settings for this one command",
+    "upstream": "the branch's upstream names no remote",
+    "negative": "the remote's push settings leave branches out with ^, which changes where git sends a branch",
 }
 WHY = {
     "parse": "the line does not parse",
@@ -95,6 +97,7 @@ WHY = {
     "folder": "the folder it runs in is missing or not known",
     "body": "a variable or a substitution fills in the PR body",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
+    "search": "a search of commit messages picks the commit",
 }
 
 
@@ -425,7 +428,7 @@ def pushed(step, lookups):
     specs = [spec[1:] if spec.startswith("+") else spec for spec in positional[1:]]
     if not quiet and ":" in specs:
         raise unreadable("every")  # a lone colon pushes each branch that has a match on the remote
-    if quiet or (tags and not specs) or (specs and all(spec.startswith(":") for spec in specs)):
+    if quiet or (tags and not specs) or (specs and all(map(is_a_delete, specs))):
         return []
     written_out(step)
     hidden_mark = unreadable_mark()
@@ -447,13 +450,19 @@ def pushed(step, lookups):
             and lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") != commit]
 
 
+def is_a_delete(spec):
+    return gate().source_and_destination(spec)[0] == ""
+
+
 def sent_by(spec, cwd, branch, remote, lookups):
     """[(a branch the refspec may update, the commit it sends)], or [] when it updates a tag or deletes. A tag sent
     to a branch counts as the commit it points to. A local branch named alone goes where git's push settings
-    send it."""
-    source, _colon, target = spec.partition(":")
+    send it. A source that searches commit messages, as :/text does, is refused."""
+    source, target = gate().source_and_destination(spec)
     if not source or target.startswith("refs/tags/"):
         return []
+    if gate().searches_commit_messages(source):
+        raise unreadable("search")
     source = branch_name(source)
     if source == "HEAD":
         commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
@@ -484,24 +493,37 @@ def remote_branch_names(target):
 
 def mapped_destination(source_ref, settings, remote):
     """Where git sends a local branch named with no destination: the first of the remote's push settings whose
-    source matches it, else its one upstream branch when push.default is upstream, else its own name."""
-    mapped = [destination for key, value in settings if key == f"remote.{remote}.push"
+    source matches it, else its one upstream branch when push.default is upstream and the branch has a remote,
+    else its own name. A ^ entry in the remote's push settings is refused, since it changes which setting git
+    uses."""
+    remote_settings = [value for key, value in settings if key == f"remote.{remote}.push"]
+    if any(value.startswith("^") for value in remote_settings):
+        raise push_settings_stop("negative")
+    mapped = [destination for value in remote_settings
               for destination in [refspec_destination(value, source_ref)] if destination is not None]
     if mapped:
         return mapped[0] or source_ref  # an empty destination keeps the branch's own name
-    branch = source_ref[len("refs/heads/"):]
+    return upstream_destination(source_ref[len("refs/heads/"):], settings) or source_ref
+
+
+def upstream_destination(branch, settings):
+    """The branch's one upstream branch when push.default is upstream and the branch has a remote, as git maps it,
+    else None. An empty remote is refused, since git can not say where the branch goes."""
     merges = [value for key, value in settings if key == f"branch.{branch}.merge"]
-    if last_value(settings, "push.default") in ("upstream", "tracking") and len(merges) == 1:
-        return merges[0]
-    return source_ref
+    if last_value(settings, "push.default") not in ("upstream", "tracking") or len(merges) != 1:
+        return None
+    branch_remote = last_value(settings, f"branch.{branch}.remote")
+    if branch_remote == "":
+        raise push_settings_stop("upstream")
+    return merges[0] if branch_remote is not None else None
 
 
 def refspec_destination(refspec, source_ref):
-    """Where one push setting sends the full source ref, or None when it does not match. A ^ entry only takes refs
-    out of a pattern, and git matches the source only by its full name, with at most one *."""
-    if refspec.startswith("^") or ":" not in refspec:
+    """Where one push setting sends the full source ref, or None when it does not match. git matches the source
+    only by its full name, with at most one *, and splits the setting at its last colon."""
+    if ":" not in refspec:
         return None
-    source, destination = refspec[1:].split(":", 1) if refspec.startswith("+") else refspec.split(":", 1)
+    source, destination = gate().source_and_destination(refspec[1:] if refspec.startswith("+") else refspec)
     if "*" not in source:
         return destination if source == source_ref else None
     prefix, suffix = source.split("*", 1)

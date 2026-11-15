@@ -504,6 +504,44 @@ def test_a_push_whose_remote_branch_or_folder_the_shell_fills_in_is_refused_as_u
             assert result.refused and result.findings == ["unreadable"], (push, result.reason)
 
 
+def test_a_push_is_checked_at_every_commit_it_names_split_as_git_splits_it_and_a_search_is_unreadable(home, tool):
+    with given("a repo with a local bare remote, a clean new commit on main, a branch draft whose new commit "
+               "message has a colon and a dash, and the em dash check on"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("checkout", "-q", "-b", "draft")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Draft: late {DASH} change")
+        home.git("checkout", "-q", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", "Plain change")
+    named = ["git push origin main draft", "git push origin 'draft^{/Draft: late}:refs/heads/x'",
+             "git push origin main '+draft^{/Draft: late}:x'"]
+    searches = ["git push origin ':/Draft:refs/heads/x'", "git push origin '+:/Draft: late:x'",
+                "git push origin main ':/Draft:x'"]
+    with when("Claude pushes draft's commit as a second refspec, or by a revision whose text holds a colon, "
+              "each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"named-{index}")
+                   for index, push in enumerate(named)}
+    with then("the gate reads the commit each refspec sends, up to its last colon, and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pushes a commit that a search of commit messages picks, in any refspec, each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"search-{index}")
+                   for index, push in enumerate(searches)}
+    with then("the gate does not look the search up and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+    with when("Claude pushes main alone, and deletes a remote branch"):
+        plain = home.hook(tool, "PreToolUse", "git push origin main")
+        delete = home.hook(tool, "PreToolUse", "git push origin :old")
+    with then("both run, since main's new commit is clean"):
+        assert plain.ran, plain.reason
+        assert delete.ran, delete.reason
+
+
 def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
     with given("a repo with a message file in it"):
         home.install()
