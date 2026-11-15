@@ -760,9 +760,10 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
         assert not shift.refused, shift.reason
         assert in_sum.refused and in_sum.findings == ["dashes"], in_sum.reason
     odd = ["cat <<$END\ngit push origin main\n$END", "cat <<EOF\ngit push origin main",
-           "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF"]
-    with when("Claude writes a << whose end word holds a $, whose end line is missing, that stands in a (( )) part "
-              "over several lines, or whose line runs on inside quotes"):
+           "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF",
+           "cat <<EOF; git push origin main"]
+    with when("Claude writes a << whose end word holds a $, whose end line is missing, also on the last line, that "
+              "stands in a (( )) part over several lines, or whose line runs on inside quotes"):
         results = hooks(home, tool, odd, "odd")
     with then("the gate can not tell where the heredoc starts or ends, so each call is unreadable"):
         for push, result in results.items():
@@ -795,6 +796,12 @@ def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joi
         split_variable = home.hook(tool, "PreToolUse", "git push $\\\nREMOTE main", session="split-variable")
     with then("the shell fills in the variable, so the push is unreadable"):
         assert split_variable.refused and split_variable.findings == ["unreadable"], split_variable.reason
+    split_messages = ["git commit -m \"Fix $\\\nMESSAGE\"", "git commit -m Fix$\\\nMESSAGE"]
+    with when("Claude commits with a message whose variable is split over two lines, in double quotes or bare"):
+        results = hooks(home, tool, split_messages, "split-message")
+    with then("the shell joins the lines and fills in the variable, so each commit is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
 
 
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
@@ -802,9 +809,9 @@ def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home,
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     apart = ["$'\\g\\i\\t' push origin main", "git push origin $'ma\\\nin'", "git commit -m $'Fix \\q it'",
-             "git commit -m $'Fix\\0 it'", "git commit -m $'Fix \\cA it'", "git commit -m $'Fix \\xZ it'",
-             "git commit -m $'Fix \\400 it'", "git commit -m $'Fix \\8 it'", "git commit -m $'Fix \\U110000 it'",
-             "git commit -m $'Fix \\u00e9 it'"]
+             "git commit -m $'Fix\\0 it'", "git commit -m $'Fix\\x00 it'", "git commit -m $'Fix \\cA it'",
+             "git commit -m $'Fix \\xZ it'", "git commit -m $'Fix \\400 it'", "git commit -m $'Fix \\8 it'",
+             "git commit -m $'Fix \\U110000 it'", "git commit -m $'Fix \\u00e9 it'"]
     with when("Claude writes a $'...' string with an escape that bash and zsh fill in differently, such as an "
               "unknown letter, a backslash at a line end, a NUL, \\c, \\x with no digit, an octal past 377, \\8, "
               "or a \\u or \\U code point, which macOS bash 3.2 keeps as written"):
