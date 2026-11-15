@@ -573,6 +573,22 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
         for form, result in results.items():
             assert says(home, result, "unreadable_push.md", why="a search of commit messages picks the commit"), \
                 (form, result.reason)
+    with when("release branch 1.0 has feature on origin as its upstream, tag v1.0 is at main's commit, which has no "
+              "report, tag tree-v1 points at main's tree, not a commit, and Claude pushes v1.0 and tree-v1 by name, "
+              "and tree-v1 to a new tag tree-v2"):
+        home.git("branch", "1.0", "main")
+        home.git("config", "branch.1.0.remote", "origin")
+        home.git("config", "branch.1.0.merge", "refs/heads/feature")
+        home.git("tag", "v1.0", "main")
+        home.git("tag", "tree-v1", "main^{tree}")
+        tags = {form: bash(home, form) for form in ("git push origin v1.0", "git push origin tree-v1",
+                                                    "git push origin tree-v1:refs/tags/tree-v2")}
+        sent = home.git("push", "--dry-run", "--porcelain", "origin", "v1.0").stdout
+    with then("each runs, since git sends a tag under its own name, never to a branch's upstream, and a tag updates "
+              "no branch, whatever it points at"):
+        assert "refs/tags/v1.0:refs/tags/v1.0" in sent, sent
+        for form, result in tags.items():
+            assert quiet(result), (form, result.reason)
 
 
 def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub_logs_no_error(home):
@@ -1023,6 +1039,13 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
     with then("each one may mark PR 12 ready, so each needs its head's report"):
         for result in marked:
             assert says(home, result, "no_report.md", short=side[:7]), result.reason
+    with when("--undo stands where gh reads it as the value of -R or --repo"):
+        fake_gh(home, heads={"12": side})
+        repo_values = [bash(home, step) for step in ("gh pr ready 12 -R --undo", "gh pr ready 12 --repo --undo")]
+        fake_gh(home, fail=True)
+    with then("each one may mark PR 12 of a repo named --undo ready, and is refused, since gh names no head there"):
+        for result in repo_values:
+            assert says(home, result, "pr_head_unknown.md", number="12"), result.reason
     with when("Claude edits PR 12's body, once without a tested part and once with one"):
         bad = bash(home, f"gh pr edit 12 --body-file {body_file(home, NO_PART)}")
         fine = bash(home, f"gh pr edit 12 --body-file {body_file(home, CANONICAL)}")

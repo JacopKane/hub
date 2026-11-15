@@ -10,6 +10,7 @@ import resource
 import statistics
 import subprocess
 import sys
+import time
 
 from conftest import DASH, FIXTURES, GIT_OPTION_VALUES, PLUGIN, REPO, Home, commit, load_fixture
 from steps import and_, given, then, when
@@ -496,7 +497,8 @@ def test_a_push_whose_remote_branch_or_folder_the_shell_fills_in_is_refused_as_u
         home.git("commit", "-q", "--allow-empty", "-m", "Late change")
     pushes = ["git push origin $BRANCH", "git push $REMOTE main", "git -C $DIR push", "git -C ~$DIR push",
               "git push origin ${BRANCH}:main", "git push origin $(git branch --show-current)",
-              "git -C $(pwd) push", "git -C `cd .; pwd` push", "git --git-dir=$(pwd)/.git push"]
+              "git -C $(pwd) push", "git -C `cd .; pwd` push", "git --git-dir=$(pwd)/.git push",
+              'git -c "$SETTING" push', "git -c $SETTING push origin main"]
     with when("Claude sends pushes whose remote, branch, folder or git option comes from a variable or a substitution"):
         results = {push: home.hook(tool, "PreToolUse", push) for push in pushes}
     with then("the gate reads each one, finds it can not tell the commits, and refuses it as unreadable"):
@@ -604,6 +606,25 @@ def test_a_push_is_read_by_gits_own_rules_for_its_words_and_one_whose_commits_gi
     with then("both run, since v1's commit is clean"):
         assert tag.ran, tag.reason
         assert delete.ran, delete.reason
+    with when("tag late is at main's new commit, whose message has a dash, and Claude deletes late or docs on the "
+              "remote"):
+        home.git("tag", "late", "main")
+        deletes = hooks(home, tool, ["git push --delete origin tag late", "git push --delete origin docs",
+                                     "git push -d origin docs late"], "deletes")
+    with then("each runs, since a delete sends no commits"):
+        for push, result in deletes.items():
+            assert result.ran, (push, result.reason)
+    with when("main gets a newer commit with a file, the repo loses that file's content, so git log stops before "
+              "the commit with the dash, and Claude pushes main"):
+        with open(os.path.join(home.work, "notes.txt"), "w") as handle:
+            handle.write("Plain notes\n")
+        home.git("add", "notes.txt")
+        home.git("commit", "-q", "-m", "Add notes")
+        blob = home.git("rev-parse", "HEAD:notes.txt").stdout.strip()
+        os.remove(os.path.join(home.work, ".git", "objects", blob[:2], blob[2:]))
+        broken = home.hook(tool, "PreToolUse", "git push origin main", session="broken")
+    with then("git counts the commits but fails to list them, and the gate refuses the push as unreadable"):
+        assert broken.refused and broken.findings == ["unreadable"], broken.reason
 
 
 def pushed_repo(home):
@@ -662,15 +683,18 @@ def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_
         os.remove(os.path.join(home.work, ".git", "remotes", "old"))
     with then("it is refused as unreadable"):
         assert from_file.refused and from_file.findings == ["unreadable"], from_file.reason
-    with when("Claude pushes every tag, and pushes with settings that send only the current branch"):
+    with when("Claude pushes every tag, and pushes with settings that send only the current branch, then with no "
+              "push setting left"):
         tags = hooks(home, tool, ["git push --tags", "git push origin --tags"], "tags")
         home.git("config", "remote.origin.mirror", "false")
         plain = hooks(home, tool, ["git push", "git -c user.name=Ann push", "git push origin"], "plain")
         home.git("config", "--unset", "remote.origin.mirror")
-    with then("the tag pushes are refused for v2's dash, and the others run, since main's new commit is clean"):
+        unset = hooks(home, tool, ["git push", "git push origin"], "unset")
+    with then("the tag pushes are refused for v2's dash, and the others run, since main's new commit is clean, also "
+              "once the repo has no push setting at all"):
         for push, result in tags.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
-        for push, result in plain.items():
+        for push, result in [*plain.items(), *unset.items()]:
             assert result.ran, (push, result.reason)
 
 
@@ -740,6 +764,20 @@ def test_a_push_too_long_to_read_in_full_is_refused_and_asked_to_go_in_smaller_p
     with then("it is refused the same way"):
         assert long_change.refused and long_change.findings == ["unreadable"], long_change.reason
         assert "Push fewer commits at a time" in long_change.reason, long_change.reason
+    with when("the next commit adds a file twenty times longer than the gate reads, and Claude pushes main"):
+        with open(os.path.join(home.work, "huge.txt"), "w") as handle:
+            handle.write("plain line\n" * 400_000)
+        home.git("add", "huge.txt")
+        home.git("commit", "-q", "-m", "Add a huge file")
+        started = time.monotonic()
+        huge_change = home.hook(tool, "PreToolUse", "git push origin main", session="huge")
+        took = time.monotonic() - started
+    with then("the gate stops git once it has read past its limit and refuses the same way, at once, not as too "
+              "slow"):
+        assert huge_change.refused and huge_change.findings == ["unreadable"], huge_change.reason
+        assert "Push fewer commits at a time" in huge_change.reason, huge_change.reason
+        assert "git did not list the commits of this push in time" not in huge_change.reason, huge_change.reason
+        assert took < 6, took
     remote = os.path.join(home.root, "remote.git")
     with when("Claude pushes main by the remote's folder and by its file URL, which have no remote-tracking "
               "branches, and to origin after its remote-tracking branches are gone"):
@@ -754,6 +792,58 @@ def test_a_push_too_long_to_read_in_full_is_refused_and_asked_to_go_in_smaller_p
             assert "Add the remote by name and fetch it first" in result.reason, (push, result.reason)
             assert "Push fewer commits at a time" not in result.reason, (push, result.reason)
             assert gate_text(home, "unreadable_hint.md") not in result.reason, (push, result.reason)
+
+
+def lock_held(path, seconds):
+    """Another process that holds the lock file for that many seconds, as a second call of the same chat does while
+    its own hook runs. It returns once the lock is held."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-I", "-c",
+                               "import fcntl, sys, time; handle = open(sys.argv[1], 'a'); "
+                               "fcntl.flock(handle, fcntl.LOCK_EX); print('held', flush=True); "
+                               "time.sleep(float(sys.argv[2]))", path, str(seconds)],
+                              stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def test_a_push_gets_only_the_time_the_hook_has_left_after_earlier_parts_and_earlier_pushes(home):
+    slow_note = "git did not list the commits of this push in time"
+    with given("a repo whose main has a clean new commit, the PR test gate off, the context budget on, a chat "
+               "transcript, and a git whose log takes 5 seconds"):
+        pushed_repo(home)
+        home.hubctl("on", "context_budget")
+        transcript = os.path.join(home.root, "chat.jsonl")
+        open(transcript, "w").close()
+        kept = home.env["PATH"]
+        home.env["PATH"] = git_log_waits(home, 5)
+    try:
+        with when("Claude pushes main, then pushes it again in a script a shell reads from a heredoc"):
+            started = time.monotonic()
+            twice = home.hook("claude_code", "PreToolUse",
+                              "git push origin main && bash <<'EOF'\ngit push origin main\nEOF", session="twice")
+            took = time.monotonic() - started
+        with then("the second push gets only what the first left of the gate's 8 seconds, so it is refused as too "
+                  "slow, inside the hook's time"):
+            assert twice.refused and twice.findings == ["unreadable"], twice.reason
+            assert slow_note in twice.reason, twice.reason
+            assert took < 9.5, took
+        with when("another call of the same chat holds the context budget's lock for 5 seconds, and Claude pushes "
+                  "main once"):
+            holder = lock_held(os.path.join(home.state, "context_budget", "budget.json.lock"), 5)
+            data = home.hook_input("claude_code", "PreToolUse", "git push origin main", session="budget")
+            data["transcript_path"] = transcript
+            started = time.monotonic()
+            waited = home.send("claude_code", "PreToolUse", data)
+            took = time.monotonic() - started
+            holder.wait()
+        with then("the gate gets only the 3 seconds the hook has left after the context budget waited, so git log "
+                  "is too slow, and the answer still comes inside the hook's time"):
+            assert waited.refused and waited.findings == ["unreadable"], waited.reason
+            assert slow_note in waited.reason, waited.reason
+            assert took < 9.5, took
+    finally:
+        home.env["PATH"] = kept
 
 
 def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
