@@ -1786,6 +1786,37 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
             assert quiet(bash(home, step)), step
 
 
+def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_names_the_pr_or_the_body(home):
+    with given("PR 7 and plain issue 12 on GitHub, and a good and a bad body"):
+        with_github(home)
+        fake_gh(home, issues=[12])
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+    issue_edits = {"by owner and name": "gh api -X PATCH repos/acme/demo/issues/{number} -F body=@{body}",
+                   "by numeric id": "gh api --method PATCH repositories/123/issues/{number} -F body=@{body}",
+                   "by full URL": "gh api -X PATCH https://api.github.com/repos/acme/demo/issues/{number} "
+                                  "-F body=@{body}",
+                   "in the current repo": "gh api -X PATCH 'repos/{{owner}}/{{repo}}/issues/{number}' "
+                                          "-F body=@{body}"}
+    with when("Claude edits PR 7's body to one with no tested part through the issues endpoint, as every PR is "
+              "an issue to GitHub's REST API"):
+        results = {case: bash(home, step.format(number=7, body=bad)) for case, step in issue_edits.items()}
+    with then("each is refused with pr-check's sentence, after gh says 7 is a PR"):
+        for case, result in results.items():
+            assert result.refused and result.reason == missing_part(home), (case, result.reason)
+        assert ["api", "repos/acme/demo/issues/7", "--jq", 'has("pull_request")'] in gh_calls(home)
+    with when("Claude edits PR 7's body to a good one the same way, and plain issue 12's body to the bad one"):
+        fine = {case: bash(home, step.format(number=7, body=good)) for case, step in issue_edits.items()}
+        plain = {case: bash(home, step.format(number=12, body=bad)) for case, step in issue_edits.items()}
+    with then("each runs, since the good body has its tested part and issue 12 is not a PR"):
+        for case, result in {**fine, **plain}.items():
+            assert quiet(result), (case, result.reason)
+    with when("gh can not reach GitHub, and Claude edits issue 12's body to the bad one"):
+        fake_gh(home, fail=True)
+        unknown = bash(home, issue_edits["by owner and name"].format(number=12, body=bad))
+    with then("it is refused, since 12 may be a PR"):
+        assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
+
+
 def failing_git(home, verb):
     """A PATH whose first git fails one verb, as a lookup can fail, and runs the real git for the rest."""
     real = shutil.which("git", path=home.env["PATH"])

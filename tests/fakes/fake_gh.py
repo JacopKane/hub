@@ -15,6 +15,8 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
 - default: the repo's default branch for `gh api repos/<owner>/<repo> --jq .default_branch`, main when not named
 - unknown_repos: repos, as GH_REPO names them, that gh api answers like GitHub's 404 for when the endpoint
   says {owner}/{repo}
+- issues: numbers of plain issues; `gh api <repo>/issues/<n> --jq 'has("pull_request")'` says false for them
+  and true for any other number, as for a PR
 - sleep: seconds to wait before answering, for a slow network
 - fail: true makes every call exit 1, as when gh can not reach GitHub
 
@@ -101,6 +103,9 @@ elif words[:1] == ["api"] and len(words) > 1 and "{owner}/{repo}" in words[1] \
         and os.environ.get("GH_REPO") in config.get("unknown_repos", []):
     print("gh: Not Found (HTTP 404)", file=sys.stderr)
     sys.exit(1)
+elif words[:1] == ["api"] and len(words) > 1 and re.fullmatch(r".*/issues/\d+", words[1]) \
+        and value_of("--jq") == 'has("pull_request")':
+    print("false" if int(words[1].rsplit("/", 1)[1]) in config.get("issues", []) else "true")
 elif words[:1] == ["api"] and len(words) > 1:
     ref = re.fullmatch(REPO + r"/git/ref/heads/(.+)", words[1])
     if ref:

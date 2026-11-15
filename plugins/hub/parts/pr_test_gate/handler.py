@@ -1094,7 +1094,21 @@ def api_step(command, step, flags, answer, lookups):
         if "body" in fields:
             written_out(step)
             body_stop(fields["body"], step.cwd, flags, answer)
+    if (re.fullmatch(REPO_PATH + r"/issues/\d+", endpoint) and method != "GET" and "body" in fields
+            and flags.runs(f"{PART}.body") and may_be_a_pr(step, endpoint, lookups)):
+        written_out(step)
+        body_stop(fields["body"], step.cwd, flags, answer)
     return []
+
+
+def may_be_a_pr(step, issue_path, lookups):
+    """Whether an issue that an issues endpoint names may be a PR, since GitHub's REST API counts every PR as an
+    issue and edits its body there too. Only GitHub's answer that it is a plain issue says no."""
+    if unreadable_mark() in issue_path:
+        return True
+    output, _why = lookups.gh(step.cwd, "api", issue_path, "--jq", 'has("pull_request")',
+                              variables=gh_repo_place(step)[2])
+    return (output or "").strip() != "false"
 
 
 def api_path(endpoint):
