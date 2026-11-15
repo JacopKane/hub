@@ -135,7 +135,9 @@ SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
 OPERATORS = re.compile(r"[;&|()]+")  # shlex gives operators that touch as one word, such as )|
 PIPE = re.compile(r"(?<![|&])\|(?!\|)")  # a | or |& that feeds the next command, not a ||
 # <<EOF, <<'EOF' or <<-"EOF", the rest of that line, the body, then the end line
-HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.S)
+# A heredoc's end word, once its quotes are taken out. The gate reads no other end word, such as one with a $.
+HEREDOC_END_WORD = re.compile(r"\w[\w.-]*", re.A)
+WORD_ENDS = " \t\n;&|()<>"
 CAT_FILE = re.compile(r"\$\((?:cat\s+|<\s*)(['\"]?)([^)'\"]+?)\1\s*\)")
 PLACEHOLDER = "__hub_heredoc_{}__"
 # Put before each spot the shell fills in at run time, so a text that holds
@@ -292,18 +294,18 @@ class Command:
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
 
-        def stash(match):
-            body = match.group(4)
+        found = set_aside_heredocs(line, len(self.heredocs))
+        self.unreadable = found is None  # the gate can not tell where a heredoc starts or ends
+        text, bodies = found or (line, [])
+        for body, quoted in bodies:
             self.scripts.append(body)
-            if not match.group(1):
+            if not quoted:
                 self.sources += heredoc_substitutions(body)  # the shell runs these when it fills in the body
                 if OPEN_HEREDOC_EXPANSION.search(body):
                     body = UNREADABLE + body  # the shell fills in this body at run time
             self.heredocs.append(body)
-            return PLACEHOLDER.format(len(self.heredocs) - 1) + match.group(3)
-
         self.fed = getattr(line, "fed", False)  # a process substitution's command reads the pipe that >(...) gets
-        self.flat = end_lines(mark_expansions(joined_lines(HEREDOC.sub(stash, line)), self.sources))
+        self.flat = end_lines(mark_expansions(text, self.sources))
 
     def heredoc_script(self, word):
         """The script a heredoc holds, when the word is where the heredoc stood, or None."""
@@ -333,12 +335,15 @@ class Command:
         return read_file(path, self.cwd)
 
     def segments(self):
-        """The simple commands in the line, each as a list of words, or None when the line does not parse.
+        """The simple commands in the line, each as a list of words, or None when the line does not parse
+        or the gate can not tell where one of its heredocs starts or ends.
 
         A segment is fed when a pipe gives it its standard input, or when it
         stands in a ( ) or { } group that a pipe feeds, since every command in
         the group reads that pipe.
         """
+        if self.unreadable:
+            return None
         try:
             lexer = shlex.shlex(self.flat, posix=True, punctuation_chars=";&|()")
             lexer.whitespace_split = True
@@ -389,7 +394,9 @@ def mark_expansions(line, sources=None):
     becomes UNREADABLE alone, so its words never mix with the outer command.
     Its inner command goes into sources and is checked on its own, and so
     does the command of a process substitution, <(...), >(...) or zsh's =(...),
-    whose text is a stream the gate can not read. The shell keeps each
+    whose text is a stream the gate can not read. A $((...)) sum runs no
+    command of its own, so only the substitutions inside it go into
+    sources, and a << inside it stays a shift. The shell keeps each
     substitution in one word, so the gate quotes the ones it keeps, and its
     brackets, spaces and quotes never split the command. A $'...' string
     becomes the text the shell makes of it, in plain single quotes, because
@@ -428,6 +435,16 @@ def mark_expansions(line, sources=None):
             quote = None if quote == '"' else '"'
         elif char == "'" and quote is None:
             quote = "'"
+        elif char == "$" and arithmetic_end(line, index) > 0:
+            end = arithmetic_end(line, index)
+            inner = line[index + 3:end - 1]
+            if sources is not None:
+                sources += heredoc_substitutions(inner)  # the shell runs these when it works out the sum
+            hidden_value = any(mark in inner for mark in ("$", "`", UNREADABLE))
+            out.append(UNREADABLE if hidden_value else SUBSTITUTED + ("" if quote else SPLIT) + one_word(
+                line[index:end + 1], quote))
+            index = end + 1
+            continue
         elif char == "`" or (char == "$" and following == "("):
             start = index + 1 if char == "`" else index + 2
             end = closing(line, index + 1) if char == "$" else line.find("`", start)
@@ -518,8 +535,12 @@ class Source(str):
     fed = False
 
 
-def closing(line, start):
-    """Where the ) that closes the ( at start is, or -1. Quotes and a backslash are skipped."""
+def closing(line, start, brackets="()"):
+    """Where the ) that closes the ( at start is, or -1. Quotes and a backslash are skipped.
+
+    With brackets="{}" it finds the } that closes a {.
+    """
+    opener, closer = brackets
     depth, index, quote = 0, start, None
     while index < len(line):
         char = line[index]
@@ -531,14 +552,201 @@ def closing(line, start):
             quote = None if char == '"' else quote
         elif char in "'\"":
             quote = char
-        elif char == "(":
+        elif char == opener:
             depth += 1
-        elif char == ")":
+        elif char == closer:
             depth -= 1
             if depth == 0:
                 return index
         index += 1
     return -1
+
+
+def arithmetic_end(line, index):
+    """Where the last ) of the $((...)) sum that starts at index is, or -1 when no such sum starts there.
+
+    A << inside a sum is a shift, so the gate must not read it as a command.
+    """
+    if not line.startswith("$((", index):
+        return -1
+    end = closing(line, index + 1)
+    return end if end > 0 and closing(line, index + 2) == end - 1 else -1
+
+
+def set_aside_heredocs(line, first=0):
+    """(the line with each heredoc body taken out, [(body, quoted)]), or None when the gate can not tell.
+
+    The shell starts a heredoc only at a << outside quotes, comments,
+    arithmetic and a <<< here-string. A placeholder numbered from first
+    takes the place of the << and its end word, and the body runs from the
+    next line to the line that holds only that word. Outside single quotes
+    and $'...', a backslash at a line end goes with the line end, as the
+    shell joins the two lines. The answer is None when a << stands where the
+    gate can not tell a heredoc from a shift, its end word is not plain, or
+    its end line is missing.
+    """
+    out, bodies, pending, stack, index = [], [], [], ["top"], 0
+    while index < len(line):
+        char, context = line[index], stack[-1]
+        if char == "\n" and pending:
+            if context not in ("top", "(", "`"):
+                return None  # a quoted string runs over the line that starts the heredoc
+            read = read_heredoc_bodies(line, index + 1, pending)
+            if read is None:
+                return None
+            index, found = read
+            bodies += found
+            pending = []
+            continue
+        if context in ("'", "$'"):
+            step = 2 if char == "\\" and context == "$'" else 1
+            stack = stack[:-1] if char == "'" and step == 1 else stack
+            out.append(line[index:index + step])
+            index += step
+            continue
+        if char == "\\":
+            out.append("" if line.startswith("\\\n", index) else line[index:index + 2])
+            index += 2
+            continue
+        line = joined_after(line, index)
+        region = skipped_region(line, index, context)
+        if region is not None:
+            if region == "":
+                return None
+            out.append(region)
+            index += len(region)
+            continue
+        if context == '"':
+            stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
+            if line.startswith("$(", index):
+                stack, char = stack + ["("], "$("
+            out.append(char)
+            index += len(char)
+            continue
+        if char == "#" and starts_a_word(out):
+            end = line.find("\n", index)
+            end = len(line) if end < 0 else end
+            out.append(line[index:end])
+            index = end
+            continue
+        if line.startswith("<<<", index):
+            out.append("<<<")
+            index += 3
+            continue
+        if line.startswith("<<", index):
+            start = heredoc_start(line, index)
+            if start is None:
+                return None
+            index, end_word, quoted, strip_tabs = start
+            pending.append((end_word, quoted, strip_tabs))
+            out.append(PLACEHOLDER.format(first + len(bodies) + len(pending) - 1))
+            continue
+        if line.startswith("$'", index):
+            stack, char = stack + ["$'"], "$'"
+        elif char in "'\"":
+            stack = stack + [char]
+        elif char == "`":
+            stack = stack[:-1] if context == "`" else stack + ["`"]
+        elif char == "(":
+            stack = stack + ["("]
+        elif char == ")" and context == "(":
+            stack = stack[:-1]
+        out.append(char)
+        index += len(char)
+    if pending:
+        return None  # the end line is missing
+    return "".join(out), bodies
+
+
+def joined_after(line, index):
+    """The line with each backslash and line end in the two places after index taken out, as the shell joins
+    the lines, so a <<, <<< or $( split over two lines reads whole. The character at index is not a backslash."""
+    for spot in (index + 1, index + 2):
+        if line[spot - 1:spot] == "\\":
+            break  # this backslash keeps the next character as it is
+        while line.startswith("\\\n", spot):
+            line = line[:spot] + line[spot + 2:]
+    return line
+
+
+def skipped_region(line, index, context):
+    """The text of $((...)), ((...)) or ${...} that starts at index, which holds no heredoc, or None.
+
+    A << inside is a shift or plain text. When such a part runs over a line
+    and holds a <<, the shells may read a heredoc there, so the answer is
+    "", and so it is when the part never closes.
+    """
+    if line.startswith("$((", index) or (context != '"' and line.startswith("((", index)):
+        end = closing(line, index + line.startswith("$", index))
+    elif line.startswith("${", index):
+        end = closing(line, index + 1, "{}")
+    else:
+        return None
+    if end < 0:
+        return ""
+    region = line[index:end + 1]
+    return "" if "\n" in region and "<<" in region.replace("<<<", "") else region
+
+
+def heredoc_start(line, index):
+    """(where the heredoc's end word stops, the word, whether it is quoted, whether <<- takes off leading tabs)
+    for the << at index, or None when the word is not plain."""
+    spot = index + 2
+    strip_tabs = line.startswith("-", spot)
+    spot += strip_tabs
+    while spot < len(line) and line[spot] in " \t":
+        spot += 1
+    pieces, quoted = [], False
+    while spot < len(line) and line[spot] not in WORD_ENDS:
+        char = line[spot]
+        if char in "'\"":
+            end = line.find(char, spot + 1)
+            if end < 0:
+                return None
+            pieces.append(line[spot + 1:end])
+            quoted, spot = True, end + 1
+        elif char == "\\" and spot + 1 < len(line):
+            pieces.append(line[spot + 1])
+            quoted, spot = True, spot + 2
+        elif char in "$`\\":
+            return None  # the shell does not fill in an end word, so a $ there is too odd to read
+        else:
+            pieces.append(char)
+            spot += 1
+    end_word = "".join(pieces)
+    return (spot, end_word, quoted, strip_tabs) if HEREDOC_END_WORD.fullmatch(end_word) else None
+
+
+def read_heredoc_bodies(line, start, pending):
+    """(where the new line after the last end line stands, [(body, quoted)]) for the heredocs that wait at a
+    line end, read one after the other from start, or None when an end line is missing."""
+    lines = line[start:].split("\n")
+    found, spot = [], 0
+    for end_word, quoted, strip_tabs in pending:
+        body = []
+        while True:
+            if spot >= len(lines):
+                return None
+            text, spot = body_line(lines, spot, quoted)
+            text = text.lstrip("\t") if strip_tabs else text
+            if text == end_word:
+                break
+            body.append(text)
+        found.append(("\n".join(body), quoted))
+    return start + sum(len(text) + 1 for text in lines[:spot]) - 1, found
+
+
+def body_line(lines, spot, quoted):
+    """(the heredoc body line that starts at lines[spot], the index of the line after it).
+
+    In a body whose end word is not quoted, a line that ends in an odd
+    number of backslashes goes on to the next line without that backslash,
+    as the shell joins them, so the end word must stand on the joined line.
+    """
+    text, spot = lines[spot], spot + 1
+    while not quoted and spot < len(lines) and (len(text) - len(text.rstrip("\\"))) % 2:
+        text, spot = text[:-1] + lines[spot], spot + 1
+    return text, spot
 
 
 def heredoc_substitutions(body):
@@ -551,6 +759,11 @@ def heredoc_substitutions(body):
         char = body[index]
         if char == "\\":
             index += 2
+            continue
+        if arithmetic_end(body, index) > 0:
+            end = arithmetic_end(body, index)
+            found += heredoc_substitutions(body[index + 3:end - 1])  # a sum runs only the commands inside it
+            index = end + 1
             continue
         if char == "`" or body.startswith("$(", index):
             start = index + 1 if char == "`" else index + 2
@@ -580,41 +793,6 @@ def publishes(source):
 def hidden(text):
     """Whether the shell fills in part of the text from a variable or from a source the gate can not trust."""
     return UNREADABLE in text.replace(SUBSTITUTED, "")
-
-
-def joined_lines(text):
-    """The text with each backslash at a line end taken out together with that line end, as the shell joins the
-    two lines into one word. Single quotes, a $'...' string and a comment keep both, as in the shell."""
-    out, index, quote = [], 0, None
-    while index < len(text):
-        char, pair = text[index], text[index:index + 2]
-        if quote in ("'", "$'"):
-            step = 2 if quote == "$'" and char == "\\" else 1
-            quote = None if char == "'" and step == 1 else quote
-            out.append(text[index:index + step])
-            index += step
-            continue
-        if pair == "\\\n":
-            index += 2
-            continue
-        if char == "\\" or (pair == "$'" and quote is None):
-            quote = "$'" if char == "$" else quote
-            out.append(pair)
-            index += 2
-            continue
-        if quote == '"':
-            quote = None if char == '"' else quote
-        elif char in "'\"":
-            quote = char
-        elif char == "#" and starts_a_word(out):
-            end = text.find("\n", index)
-            end = len(text) if end < 0 else end
-            out.append(text[index:end])
-            index = end
-            continue
-        out.append(char)
-        index += 1
-    return "".join(out)
 
 
 def end_lines(text):
@@ -1506,7 +1684,8 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     command = Command(line, cwd, parent, read_log=log, deadline=deadline)
     segments = command.segments()
     if segments is None:
-        return rough_steps(command) + substituted_steps(command, depth)
+        unreadable = [(WRAPPED, UNREADABLE)] if command.unreadable else []  # the shell may run any line
+        return rough_steps(command) + substituted_steps(command, depth) + unreadable
     steps = []
     for position, words in enumerate(segments):
         spot, program_is_hidden = program_spot(words)

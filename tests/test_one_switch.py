@@ -706,14 +706,59 @@ def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, t
         assert escaped.refused and escaped.findings == ["dashes"], escaped.reason
 
 
+def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_own_end_line(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    no_heredoc = ["echo '<<EOF'\ngit push origin main\nEOF", "echo \"<<EOF\"\ngit push origin main\nEOF",
+                  "# <<EOF\ngit push origin main\nEOF", "echo hi # <<EOF\ngit push origin main\nEOF",
+                  "cat <<<EOF\ngit push origin main\nEOF", "echo $((1<<EOF))\ngit push origin main\nEOF",
+                  "echo ${x:-<<EOF}\ngit push origin main\nEOF"]
+    with when("Claude pushes main on the line after a << in quotes, in a comment, in a <<< here-string, in "
+              "arithmetic or in a ${...} default, each in its own session"):
+        results = hooks(home, tool, no_heredoc, "no-heredoc")
+    with then("none of them starts a heredoc in the shell, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    after_body = ["cat <<EOF\n EOF\n'\nEOF\ngit push origin main", "cat <<A <<B\na\nA\nb'\nB\ngit push origin main",
+                  "cat <<-EOF\n\t'\n\tEOF\ngit push origin main", "bash <<'EOF'\ngit push origin main\nEOF"]
+    with when("Claude pushes main after a heredoc body that holds a quote mark and a line that only looks like its "
+              "end, after two heredocs on one line, after a <<- body, or inside a body a shell runs"):
+        results = hooks(home, tool, after_body, "after-body")
+    with then("the gate ends each body only at the line that holds its own end word, reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a push inside a heredoc body whose end line has a space before the end word"):
+        in_body = home.hook(tool, "PreToolUse", "cat <<EOF\nx\n EOF\ngit push origin main\nEOF", session="in-body")
+    with then("the shell reads that push as body text, and so does the gate, so the call runs"):
+        assert not in_body.refused, in_body.reason
+    with when("Claude shifts a number in a $((...)) sum on the line and in a heredoc body, and pushes main from a "
+              "substitution inside another sum"):
+        shift = home.hook(tool, "PreToolUse", "echo $((1<<3)) && cat <<EOF\n$((2<<1))\nEOF", session="shift")
+        in_sum = home.hook(tool, "PreToolUse", "echo $(( $(git push origin main) + 1 ))", session="in-sum")
+    with then("the shift is no heredoc, so the call runs, and the gate reads the push in the sum and names the dash"):
+        assert not shift.refused, shift.reason
+        assert in_sum.refused and in_sum.findings == ["dashes"], in_sum.reason
+    odd = ["cat <<$END\ngit push origin main\n$END", "cat <<EOF\ngit push origin main",
+           "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF"]
+    with when("Claude writes a << whose end word holds a $, whose end line is missing, that stands in a (( )) part "
+              "over several lines, or whose line runs on inside quotes"):
+        results = hooks(home, tool, odd, "odd")
+    with then("the gate can not tell where the heredoc starts or ends, so each call is unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+
+
 def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joins_them(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     joined = ["gi\\\nt push origin main", "git pu\\\nsh origin main", f"git commit -\\\nm 'Late {DASH} change'",
-              "git push \"orig\\\nin\" main"]
-    with when("Claude splits a program, an action, an option or a double-quoted remote over two lines with a "
-              "backslash"):
+              "cat <\\\n<EOF\n'\nEOF\ngit push origin main", "cat <<EOF\na\\\nEOF\n'\nEOF\ngit push origin main",
+              "cat <<EOF \\\n| cat\n'\nEOF\ngit push origin main", "git push \"orig\\\nin\" main"]
+    with when("Claude splits a program, an action, an option, a double-quoted remote or a << over two lines with a "
+              "backslash, or ends a line of a heredoc body, or the line that starts it, with a backslash"):
         results = hooks(home, tool, joined, "joined")
     with then("the gate joins the lines without a space, as the shell does, reads the step and names the dash"):
         for push, result in results.items():
