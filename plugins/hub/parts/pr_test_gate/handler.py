@@ -73,12 +73,14 @@ PUSH_CONFIG_WHY = {
     "option": "git -c, --config-env or a GIT_CONFIG variable changes its push settings for this one command",
     "upstream": "the branch's upstream names no remote",
     "negative": "the remote's push settings leave branches out with ^, which changes where git sends a branch",
+    "file": "a file in the repo's remotes or branches folder sets where pushes to this remote go",
 }
 # The push form the message asks for. A stop that refuses a branch named alone asks for its destination too.
 PUSH_CONFIG_EXAMPLE = {
     "named": "git push origin feature",
     "upstream": "git push origin fix-a:feature, where feature is the branch on the remote",
     "negative": "git push origin fix-a:feature, where feature is the branch on the remote",
+    "file": "git push origin fix-a:feature, where feature is the branch on the remote",
 }
 WHY = {
     "parse": "the line does not parse",
@@ -382,7 +384,7 @@ def pushed(step, lookups):
     if not GITHUB.search(lookups.git(cwd, "ls-remote", "--get-url", remote) or ""):
         return []
     defaults = default_branches(cwd, remote, lookups)
-    sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, lookups), remote, branch)
+    sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
     return [(target, commit, cwd, defaults) for target, commit in sent
             if not target.startswith("refs/") and target not in defaults
@@ -395,8 +397,8 @@ def is_a_delete(spec):
 
 def sent_by(spec, cwd, branch, remote, lookups):
     """[(a branch the refspec may update, the commit it sends)], or [] when it updates a tag or deletes. A tag sent
-    to a branch counts as the commit it points to. A local branch named alone goes where git's push settings
-    send it. A source that searches commit messages, as :/text does, is refused."""
+    to a branch counts as the commit it points to. A local branch or tag named alone goes where git's push
+    settings send it. A source that searches commit messages, as :/text does, is refused."""
     source, target = gate().source_and_destination(spec)
     if not source or target.startswith("refs/tags/"):
         return []
@@ -411,12 +413,25 @@ def sent_by(spec, cwd, branch, remote, lookups):
     commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{source}")
     if commit is None:
         if not target and is_a_tag(cwd, source, lookups):
-            return []  # a tag sent under its own name
+            return sent_as_a_tag(source, cwd, remote, lookups)
         commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"{source}^{{commit}}")
         if commit is None or not target:
             raise unreadable("unknown")
     if not target:
-        target = mapped_destination(f"refs/heads/{source}", push_settings(cwd, lookups), remote)
+        target = mapped_destination(f"refs/heads/{source}", push_settings(cwd, remote, lookups), remote)
+    return [(name, commit) for name in remote_branch_names(target)]
+
+
+def sent_as_a_tag(tag, cwd, remote, lookups):
+    """[(a branch the tag may update, its commit)] for a tag named alone. git sends it where the remote's push
+    settings send its full name, else under its own name, which updates no branch."""
+    tag_ref = tag if tag.startswith("refs/tags/") else f"refs/tags/{tag}"
+    target = mapped_destination(tag_ref, push_settings(cwd, remote, lookups), remote)
+    if target.startswith("refs/tags/"):
+        return []
+    commit = lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"{tag_ref}^{{commit}}")
+    if commit is None:
+        raise unreadable("unknown")
     return [(name, commit) for name in remote_branch_names(target)]
 
 
@@ -431,17 +446,19 @@ def remote_branch_names(target):
 
 
 def mapped_destination(source_ref, settings, remote):
-    """Where git sends a local branch named with no destination: the first of the remote's push settings whose
-    source matches it, else its one upstream branch when push.default is upstream and the branch has a remote,
-    else its own name. A ^ entry in the remote's push settings is refused, since it changes which setting git
-    uses."""
+    """Where git sends a local ref named with no destination: the first of the remote's push settings whose
+    source matches it, else, for a branch, its one upstream branch when push.default is upstream and the branch
+    has a remote, else its own name. A ^ entry in the remote's push settings is refused, since it changes which
+    setting git uses."""
     remote_settings = [value for key, value in settings if key == f"remote.{remote}.push"]
     if any(value.startswith("^") for value in remote_settings):
         raise push_settings_stop("negative")
     mapped = [destination for value in remote_settings
               for destination in [refspec_destination(value, source_ref)] if destination is not None]
     if mapped:
-        return mapped[0] or source_ref  # an empty destination keeps the branch's own name
+        return mapped[0] or source_ref  # an empty destination keeps the ref's own name
+    if not source_ref.startswith("refs/heads/"):
+        return source_ref
     return upstream_destination(source_ref[len("refs/heads/"):], settings) or source_ref
 
 
@@ -502,10 +519,26 @@ def sets_push_settings_for_one_command(step, words_after_options):
             or any(map(CONFIG_VARIABLE.match, step.before)))
 
 
-def push_settings(cwd, lookups):
-    """[(name, value)] of the repo's settings that decide what a push with no branch named sends."""
+def push_settings(cwd, remote, lookups):
+    """[(name, value)] of the repo's settings that decide what a push with no branch named sends. git also reads a
+    remote from a file in the repo's remotes or branches folder, which the settings do not show, so such a file
+    for the remote is refused."""
+    if remote_file_exists(cwd, remote, lookups):
+        raise push_settings_stop("file")
     listed = lookups.git(cwd, "config", "--get-regexp", PUSH_SETTINGS) or ""
     return [tuple((line.split(" ", 1) + [""])[:2]) for line in listed.splitlines()]
+
+
+def remote_file_exists(cwd, remote, lookups):
+    """Whether the repo's remotes or branches folder holds a file for the remote. git reads such a file only for a
+    remote name, which never holds a slash, so a path or URL remote has none."""
+    if "/" in remote or remote in ("", ".", ".."):
+        return False
+    common = lookups.git(cwd, "rev-parse", "--git-common-dir")
+    if common is None:
+        raise unreadable("folder")
+    folder = os.path.join(cwd, common)
+    return any(os.path.isfile(os.path.join(folder, kind, remote)) for kind in ("remotes", "branches"))
 
 
 def last_value(settings, name):

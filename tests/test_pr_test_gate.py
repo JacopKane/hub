@@ -475,6 +475,53 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
               "so both count, and the full name is heads/x, where gh finds PR 8"):
         assert says(home, short_name, "no_report.md", short=local[:7]), short_name.reason
         assert says(home, full_name, "no_report.md", short=local[:7], branch="heads/x"), full_name.reason
+    with when("tag v1 points at fix-a's commit, the remote's push setting sends refs/tags/v1 to feature, and "
+              "Claude pushes v1 by name, then with the word tag"):
+        home.git("tag", "v1", "fix-a")
+        home.git("config", "remote.origin.push", "refs/tags/v1:refs/heads/feature")
+        tag_by_name = bash(home, "git push origin v1")
+        sent_by_name = home.git("push", "--dry-run", "--porcelain", "--force", "origin", "v1").stdout
+        tag_word = bash(home, "git push origin tag v1")
+        sent_by_word = home.git("push", "--dry-run", "--porcelain", "origin", "tag", "v1").stdout
+        home.git("config", "--unset-all", "remote.origin.push")
+    with then("the push by name is refused for fix-a's commit on feature, where git sends the tag, and the push "
+              "with the word tag runs, since git sends it under its own name"):
+        assert "refs/tags/v1:refs/heads/feature" in sent_by_name, sent_by_name
+        assert says(home, tag_by_name, "no_report.md", short=local[:7], branch="feature"), tag_by_name.reason
+        assert "refs/tags/v1:refs/tags/v1" in sent_by_word, sent_by_word
+        assert quiet(tag_word), tag_word.reason
+    with when("the remote's push setting sends every tag to a branch of the same name, v1 has open PR 11, and "
+              "Claude pushes v1 by name"):
+        home.git("config", "remote.origin.push", "refs/tags/*:refs/heads/*")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9, "v1": 11})
+        tag_pattern = bash(home, "git push origin v1")
+        home.git("config", "--unset-all", "remote.origin.push")
+        fake_gh(home, open={"feature": 7, "heads/x": 8, "review/fix-a": 9})
+    with then("it is refused for fix-a's commit on v1"):
+        assert says(home, tag_pattern, "no_report.md", short=local[:7], branch="v1"), tag_pattern.reason
+    file_why = "a file in the repo's remotes or branches folder sets where pushes to this remote go"
+    with when("an old-style remotes file names remote old, whose Push line sends fix-a to feature, and an old-style "
+              "branches file names remote old2 at feature, and Claude pushes fix-a by name to old, with its "
+              "destination to old, and with no branch to old2"):
+        os.makedirs(os.path.join(home.work, ".git", "remotes"), exist_ok=True)
+        os.makedirs(os.path.join(home.work, ".git", "branches"), exist_ok=True)
+        with open(os.path.join(home.work, ".git", "remotes", "old"), "w") as handle:
+            handle.write(f"URL: {ORIGIN}\nPush: refs/heads/fix-a:refs/heads/feature\n")
+        with open(os.path.join(home.work, ".git", "branches", "old2"), "w") as handle:
+            handle.write(f"{ORIGIN}#feature\n")
+        from_file = bash(home, "git push old fix-a")
+        sent_from_file = home.git("push", "--dry-run", "--porcelain", "--force", "old", "fix-a").stdout
+        file_with_destination = bash(home, "git push old fix-a:feature")
+        bare_to_branches_file = bash(home, "git push old2")
+        os.remove(os.path.join(home.work, ".git", "remotes", "old"))
+        os.remove(os.path.join(home.work, ".git", "branches", "old2"))
+    with then("the pushes that leave the destination to the file are refused and asked to name it, and the push "
+              "that names feature is judged there as usual"):
+        assert "refs/heads/fix-a:refs/heads/feature" in sent_from_file, sent_from_file
+        for result in (from_file, bare_to_branches_file):
+            assert says(home, result, "push_config.md", why=file_why, example=DESTINATION_EXAMPLE), result.reason
+        assert says(home, file_with_destination, "no_report.md", short=local[:7], branch="feature"), \
+            file_with_destination.reason
     with when("fix-a's commit gets a passing report, and push.default is upstream again"):
         record(home, branch="fix-a")
         home.git("config", "push.default", "upstream")
