@@ -50,7 +50,23 @@ GH_SECONDS = 3.0
 RELEVANT = {"push", "pr", "wrapped"}
 EVERY_BRANCH = ("--all", "--mirror")
 BRANCH_PREFIXES = ("refs/heads/", "heads/")
-FILL_OPTIONS = {"--fill", "-f", "--fill-first", "--fill-verbose", "--web", "-w"}
+# The flags that let gh fill the body from the commits or a web form
+FILLS = ("fill", "fill-first", "fill-verbose", "web")
+# gh's flags for pr create and pr edit, as gh defines them: {long name: (short letter, whether it takes a value)}.
+# Every pr command also has -R or --repo, and --help.
+GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
+GH_PR_FLAGS = {
+    "create": {"draft": ("d", False), "title": ("t", True), "body": ("b", True), "body-file": ("F", True),
+               "base": ("B", True), "head": ("H", True), "editor": ("e", False), "web": ("w", False),
+               "fill-verbose": ("", False), "fill": ("f", False), "fill-first": ("", False),
+               "reviewer": ("r", True), "assignee": ("a", True), "label": ("l", True), "project": ("p", True),
+               "milestone": ("m", True), "no-maintainer-edit": ("", False), "recover": ("", True),
+               "template": ("T", True), "dry-run": ("", False)},
+    "edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True), "base": ("B", True),
+             "milestone": ("m", True), "remove-milestone": ("", False),
+             **{f"{change}-{what}": ("", True) for change in ("add", "remove")
+                for what in ("assignee", "label", "project", "reviewer")}},
+}
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
 OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
@@ -96,6 +112,7 @@ WHY = {
     "body": "a variable or a substitution fills in the PR body",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
     "search": "a search of commit messages picks the commit",
+    "pr_option": "gh has an option the gate does not know, or one with no value",
 }
 
 
@@ -581,19 +598,73 @@ def parsed_json(output):
 # PR steps
 
 
-def body_of(command, step, rest, text_options=("--body", "-b"), file_options=("--body-file", "-F")):
-    """The body a gh pr step sends: '' when gh fills it in, None when it names none."""
-    parser = gate()
-    if any(word in FILL_OPTIONS for word in rest):
-        return ""
+def gh_pr_flags(words, action):
+    """({long name: its values in order}, positional words) of a gh pr create or edit step, read the way gh's flag
+    parser (pflag) reads them. A flag that takes a value takes the next word even when it starts with -, short flags
+    stack as in -dH branch, and a value may be attached, as in -Hbranch, -H=branch or --head=branch. A flag gh does
+    not know is refused, since gh fails on it, and so is a word the shell fills in where gh may read a flag."""
+    known = {**GH_PR_SHARED_FLAGS, **GH_PR_FLAGS[action]}
+    values, positional, index = {}, [], 0
+    while index < len(words):
+        word, index = words[index], index + 1
+        if word == "--":
+            positional += words[index:]
+            break
+        if len(word) < 2 or not word.startswith("-"):
+            positional.append(word)
+            continue
+        read = long_gh_flag if word.startswith("--") else short_gh_flags
+        pairs, index = read(word, words, index, known)
+        for name, value in pairs:
+            values.setdefault(name, []).append(value)
+    if any(unreadable_mark() in word for word in positional):
+        raise unreadable("word")
+    return values, positional
+
+
+def long_gh_flag(word, words, index, known):
+    """([(name, value)], the index after it) for a word such as --head, --head=x or --draft."""
+    name, equals, value = word[2:].partition("=")
+    if name not in known:
+        raise unreadable("pr_option")
+    if equals or not known[name][1]:
+        return [(name, value if equals else "true")], index
+    if index >= len(words):
+        raise unreadable("pr_option")
+    return [(name, words[index])], index + 1
+
+
+def short_gh_flags(word, words, index, known):
+    """([(name, value)], the index after them) for a cluster such as -dHx: each bool letter is on, and the first
+    letter that takes a value takes the rest of the word, or the next word when nothing is left. As in pflag, a
+    letter followed by = and more takes what follows the =."""
+    letters = {short: name for name, (short, _takes) in known.items() if short}
+    pairs, cluster = [], word[1:]
+    while cluster:
+        letter, rest = cluster[0], cluster[1:]
+        if letter not in letters:
+            raise unreadable("pr_option")
+        name = letters[letter]
+        if len(rest) > 1 and rest[0] == "=":
+            return pairs + [(name, rest[1:])], index
+        if not known[name][1]:
+            pairs, cluster = pairs + [(name, "true")], rest
+            continue
+        if rest:
+            return pairs + [(name, rest)], index
+        if index >= len(words):
+            raise unreadable("pr_option")
+        return pairs + [(name, words[index])], index + 1
+    return pairs, index
+
+
+def bodies_of(command, step, values):
+    """The bodies a gh pr step may send, '' for one gh fills in. gh reads --body-file over --body, so both count."""
     command.cwd = step.cwd
-    texts = parser.option_values(rest, list(text_options), attached=True)
-    paths = parser.option_values(rest, list(file_options), attached=True)
-    if texts:
-        return command.expand(texts[-1])
-    if paths:
-        return command.from_file(paths[-1])
-    return None
+    filled = [""] if any(values.get(name, ["false"])[-1] in TRUE_WORDS for name in FILLS) else []
+    texts = [command.expand(values["body"][-1])] if "body" in values else []
+    paths = [command.from_file(values["body-file"][-1])] if "body-file" in values else []
+    return filled + texts + paths
 
 
 def body_stop(body, cwd, flags, answer):
@@ -659,18 +730,20 @@ def pr_step(command, step, flags, answer, lookups):
         return api_step(command, step, flags, answer, lookups)
     if action == ["pr", "create"]:
         written_out(step)
-        body = body_of(command, step, rest)
-        body_stop("" if body is None else body, step.cwd, flags, answer)
+        values, _positional = gh_pr_flags(gate().without_redirects(rest), "create")
+        for body in bodies_of(command, step, values) or [""]:
+            body_stop(body, step.cwd, flags, answer)
         if not flags.runs(f"{PART}.report"):
             return []
-        heads = gate().option_values(rest, ["--head", "-H"], attached=True)
-        bases = gate().option_values(rest, ["--base", "-B"], attached=True)
+        heads, bases = values.get("head"), values.get("base")
         branch = heads[-1].split(":", 1)[-1] if heads else current_branch(step.cwd, lookups)
         return new_pr(step, branch, bool(heads), bases[-1] if bases else None, lookups)
     if action == ["pr", "edit"]:
-        body = body_of(command, step, rest)
-        if body is not None:
+        values, _positional = gh_pr_flags(gate().without_redirects(rest), "edit")
+        bodies = bodies_of(command, step, values)
+        if bodies:
             written_out(step)
+        for body in bodies:
             body_stop(body, step.cwd, flags, answer)
         return []
     if action == ["pr", "ready"] and flags.runs(f"{PART}.report"):

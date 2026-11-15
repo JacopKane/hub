@@ -1407,3 +1407,66 @@ def test_neither_a_model_nor_a_repos_settings_file_can_turn_the_gate_off(home):
     with and_("hubctl refuses to write the gate off into the repo's file"):
         refused = home.hubctl("off", PART, "--scope", "project", check=False)
         assert refused.returncode == 1 and "privacy" in refused.stderr
+
+
+# Review 7b: what gh really sends, where the PR opens and which remote a push reaches
+
+
+def tested_and_untested(home):
+    """Branches tested, with a passing report, and untested, with none, both pushed; tested is checked out."""
+    with_github(home)
+    home.git("checkout", "-q", "-b", "untested", "main")
+    untested = change(home, message="Start untested")
+    home.git("push", "-q", "-u", "origin", "untested")
+    home.git("checkout", "-q", "-b", "tested", "main")
+    tested = change(home, message="Start tested")
+    home.git("push", "-q", "-u", "origin", "tested")
+    record(home)
+    return tested, untested
+
+
+def test_gh_pr_create_and_edit_words_are_read_the_way_gh_reads_its_flags(home):
+    with given("branch tested with a report and branch untested with none, both pushed, and a good and a bad body"):
+        _tested, untested = tested_and_untested(home)
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+        good_here = os.path.relpath(good, home.work)  # a title the text gate does not read as a private path
+    hidden_heads = [f"gh pr create --head untested --title --head=tested --body-file {good}",
+                    f"gh pr create -H untested -t -Htested --body-file {good}",
+                    f"gh pr create -dHuntested --title T --body-file {good}",
+                    f"gh pr create --draft=true -H=untested -t T -F {good}"]
+    with when("Claude opens a PR at untested, where a later word only looks like a --head, because --title or -t "
+              "takes it as the title, or names untested inside a cluster of short flags"):
+        results = {step: bash(home, step) for step in hidden_heads}
+    with then("the gate reads the head gh opens the PR at and refuses each for untested's missing report"):
+        for step, result in results.items():
+            assert says(home, result, "no_report.md", short=untested[:7], branch="untested"), (step, result.reason)
+            assert blocked(home, "report")
+    hidden_bodies = [f"gh pr create --head tested --body-file {bad} --title --body-file={good_here}",
+                     f"gh pr create --head tested --body {shlex.quote(CANONICAL)} --body-file {bad}",
+                     f"gh pr edit 7 --body-file {bad} --title --body-file={good_here}",
+                     f"gh pr edit 7 -t T -F={bad}"]
+    with when("Claude sends a body with no tested part, behind a later word that --title takes, beside a good "
+              "--body that gh's --body-file wins over, or written as -F=file"):
+        results = {step: bash(home, step) for step in hidden_bodies}
+    with then("the gate checks the body gh sends and refuses each with pr-check's sentence, as the body's refusal"):
+        for step, result in results.items():
+            assert result.refused and result.reason == missing_part(home), (step, result.reason)
+        assert blocked(home, "body")
+    unknown = [f"gh pr create --head tested --frobnicate x --body-file {good}",
+               f"gh pr create -Z --head tested --body-file {good}",
+               f"gh pr create --head tested --body-file {good} --title",
+               f"gh pr edit 7 --frobnicate --body-file {bad}"]
+    with when("a step has a flag gh does not know, or a flag that wants a value at the end of the line"):
+        results = {step: bash(home, step) for step in unknown}
+    with then("the gate refuses it as a step it can not read, naming the option"):
+        for step, result in results.items():
+            assert says(home, result, "unreadable_push.md",
+                        why="gh has an option the gate does not know, or one with no value"), (step, result.reason)
+    plain = [f"gh pr create -dtT -Htested -F {good}", f"gh pr create --draft=false --head=tested -F{good} -t T",
+             f"gh pr create -R acme/demo --head tested --title T --body-file {good}",
+             f"gh pr edit 7 --add-label docs -t 'New title'", f"gh pr edit 7 -b {shlex.quote(CANONICAL)}"]
+    with when("Claude writes the same steps plainly, at tested with its report and a good body"):
+        results = {step: bash(home, step) for step in plain}
+    with then("each runs with no answer"):
+        for step, result in results.items():
+            assert quiet(result), (step, result.reason)
