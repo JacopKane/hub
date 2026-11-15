@@ -621,8 +621,10 @@ def end_lines(text):
 
 def ends_in_a_pipe_or_list(pieces):
     """Whether the text so far ends with |, |&, && or ||, so the shell reads the next line as part of the same
-    command. A lone & ends its command, and an escaped \\| is plain text."""
-    marks = list(itertools.islice((piece for piece in reversed(pieces) if not piece.isspace()), 2))
+    command. A comment after the mark does not count, since the shell drops it. A lone & ends its command,
+    and an escaped \\| is plain text."""
+    marks = list(itertools.islice((piece for piece in reversed(pieces) if not (
+        piece.isspace() or piece.startswith("#"))), 2))
     last, before = (marks + ["", ""])[:2]
     return last == "|" or (last == "&" and before in ("&", "|"))
 
