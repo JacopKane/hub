@@ -312,9 +312,10 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                        "printf feature | xargs git push origin", "git -C $(pwd) push origin feature",
                        "git --git-dir=$(pwd)/.git push origin feature", "git push --d origin feature",
                        "git push --all", "git push --mirror origin", "git push --al", "git push --mirr origin",
-                       "git push --branch origin"]
+                       "git push --branch origin", "git push origin 'feature"]
     with then("the text gate answers first for the variable, the wrapper, xargs, the option git could read two "
-              "ways and every branch, since it can not read their commits either, and every other form is asked "
+              "ways, every branch and the broken quote, since it can not read their commits either, and every other "
+              "form is asked "
               "to be written out as its own command"):
         for form, result in results.items():
             if form in text_gate_first:

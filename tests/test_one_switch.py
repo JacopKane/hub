@@ -933,6 +933,29 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
         assert argument.ran and argument.output == {}, argument.reason
 
 
+def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    broken = ["git push origin main\necho 'oops", "git push origin main \\", "g''it push origin main\necho 'oops",
+              "$CMD origin main\necho 'oops", "gh pr comment 3 --body-file note.md\necho \"oops"]
+    with when("Claude pushes main or comments on a PR, with the program written out, split by quote marks or filled "
+              "in by a variable, and a later line opens a quote that never closes or the call ends in a backslash"):
+        results = hooks(home, tool, broken, "broken")
+    with then("bash runs the lines before the broken quote and drops the last backslash, so each call is "
+              "unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude commits with a message that names a home folder and never closes its quote"):
+        message = home.hook(tool, "PreToolUse", "git commit -m 'Fix /home/sam/notes", session="message")
+    with then("the gate still names the path, and the commit is unreadable too"):
+        assert message.refused and message.findings == ["private_paths", "unreadable"], message.reason
+    with when("Claude sends a broken line that names neither git nor gh and has nothing the shell fills in"):
+        plain = home.hook(tool, "PreToolUse", "echo hi\necho 'oops", session="plain")
+    with then("the gate lets it run, since it can make no text public"):
+        assert plain.ran, plain.reason
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)

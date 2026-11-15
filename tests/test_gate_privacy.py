@@ -92,8 +92,9 @@ def test_the_gate_reads_the_text_a_command_publishes_and_not_the_paths_it_names(
             "gh api -X PATCH repos/o/r/pulls/1 -f body='See /home/sam/e.md'",
         ]
         results = [home.hook(tool, "PreToolUse", command) for command in lines]
-    with then("each is still refused for the path"):
-        assert [result.findings for result in results] == [["private_paths"]] * 3
+    with then("each is still refused for the path, and the one whose quote does not close is unreadable too"):
+        assert [result.findings for result in results] == [["private_paths"], ["private_paths", "unreadable"],
+                                                           ["private_paths"]]
     with and_("a commit that adds no new text runs"):
         assert home.hook(tool, "PreToolUse", "git commit --amend --no-edit").ran
         assert home.hook(tool, "PreToolUse", "git log --oneline -3 | grep /home/sam").ran

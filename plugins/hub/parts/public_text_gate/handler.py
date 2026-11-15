@@ -1784,6 +1784,12 @@ def quiet_sources(script, command):
     return None
 
 
+def may_run_git_or_gh(text):
+    """Whether a line that does not parse may still run git or gh. It does when it names one, even with quote marks
+    or backslashes inside the name, as in g''it, or when the shell fills in a word, since that word could be one."""
+    return UNREADABLE in text or bool(GIT_TOOLS.search(re.sub(r"[\\'\"]", "", text)))
+
+
 def rough_steps(command):
     """For a line that does not parse: the whole line, when it clearly makes text public."""
     line = command.expand(command.flat)
@@ -1884,7 +1890,9 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     command = Command(line, cwd, parent, read_log=log, deadline=deadline)
     segments = command.segments()
     if segments is None:
-        unreadable = [(WRAPPED, UNREADABLE)] if command.unreadable else []  # the shell may run any line
+        # The shell may run any line when the gate can not tell where a heredoc ends. bash also runs the lines before
+        # a quote that never closes and drops a backslash at the very end, so a line that may run git or gh counts.
+        unreadable = [(WRAPPED, UNREADABLE)] if command.unreadable or may_run_git_or_gh(command.flat) else []
         return rough_steps(command) + substituted_steps(command, depth) + unreadable
     steps = []
     for position, words in enumerate(segments):
