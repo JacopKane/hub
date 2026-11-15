@@ -133,7 +133,6 @@ ESCAPED_DASH = "\\u2014"  # the escape that $'...' in a shell turns into the das
 SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
 OPERATORS = re.compile(r"[;&|()]+")  # shlex gives operators that touch as one word, such as )|
 PIPE = re.compile(r"(?<![|&])\|(?!\|)")  # a | or |& that feeds the next command, not a ||
-# <<EOF, <<'EOF' or <<-"EOF", the rest of that line, the body, then the end line
 # A heredoc's end word, once its quotes are taken out. The gate reads no other end word, such as one with a $.
 HEREDOC_END_WORD = re.compile(r"\w[\w.-]*", re.A)
 WORD_ENDS = " \t\n;&|()<>"
