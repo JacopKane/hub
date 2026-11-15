@@ -1051,12 +1051,14 @@ def test_ready_steps_need_the_prs_head_report_and_body_edits_get_the_body_check_
         failed = bash(home, "gh pr ready 12")
     with then("the step is refused, because the head is unknown"):
         assert says(home, failed, "pr_head_unknown.md", number="12"), failed.reason
-    with when("gh takes 8 seconds to answer"):
-        fake_gh(home, sleep=8, heads={"12": feature})
+    with when("gh takes 3.5 seconds to name PR 12's head, which has a report: longer than the 3 seconds a gh call "
+              "gets, but inside the gate's 5 seconds for all its lookups"):
+        fake_gh(home, sleep=3.5, heads={"12": feature})
         started = time.monotonic()
         slow = bash(home, "gh pr ready 12")
         took = time.monotonic() - started
-    with then("the gate stops waiting after its 3 seconds for gh and refuses, well inside the hook's time"):
+    with then("the gate stops waiting after its 3 seconds for gh and refuses, though the head has a report, well "
+              "inside the hook's time"):
         assert says(home, slow, "pr_head_unknown.md", number="12"), slow.reason
         assert took < 6, took
     with when("Claude turns a PR back into a draft"):
