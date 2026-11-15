@@ -93,7 +93,8 @@ def failing(runs):
 
 def problem(report, cwd, sha, run_git, bases=None):
     """(the gate's message name, its values) for what the report lacks, or None when it passes. bases, when given,
-    are the branches the PR may go into, and a texts report must list its changes since one of them."""
+    are {branch: the commit GitHub has it at} for the branches the PR may go into. A texts report must name one of
+    them, and its changes are then counted from that commit, not from the base the report saw."""
     if report.get("version") != 1 or report.get("kind") not in ("code", "texts"):
         return "report_unreadable.md", {}
     if report["kind"] == "texts":
@@ -127,6 +128,10 @@ def texts_problem(report, cwd, sha, run_git, bases=None):
         return "texts_base.md", {"base": base_branch, "into": " or ".join(sorted(bases)) or "a branch the gate "
                                                                                              "can not read"}
     base = (report.get("base") or {}).get("sha") if isinstance(report.get("base"), dict) else None
+    if bases is not None:
+        base = bases[base_branch]
+        if base and run_git(cwd, "cat-file", "-e", base + "^{commit}") is None:
+            return "texts_base_missing.md", {"base": base_branch, "commit": base[:7]}
     start = run_git(cwd, "merge-base", base, sha) if base else None
     if not start:
         return "report_unreadable.md", {}

@@ -1149,6 +1149,7 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
         assert says(home, bash(home, "git push"), "failed.md", which="make texts")
     with when("the texts report passes, but PR 9 goes into release, not main"):
         texts_report(home)
+        home.git("push", "-q", "origin", "main:release")
         fake_gh(home, open={"docs": 9}, bases={"docs": "release"})
         other_base = bash(home, "git push")
     with then("the push is refused, since the report lists the changes since main, not since release"):
@@ -1682,3 +1683,38 @@ def test_a_step_is_judged_where_git_or_gh_sends_it_and_a_lookup_that_fails_is_re
         again = bash(home, "gh pr ready")
     with then("the step runs"):
         assert quiet(again), again.reason
+
+
+def test_a_texts_report_is_counted_from_the_base_branch_github_has_not_the_local_copy_of_it(home):
+    with given("branch docs with open PR 9 that changes a guide, then app.py, then notes, and a local copy of "
+               "origin's main moved to the app.py commit"):
+        with_github(home)
+        home.git("checkout", "-q", "-b", "docs")
+        home.git("push", "-q", "-u", "origin", "docs")
+        change(home, "docs/guide.md")
+        code = change(home, "app.py")
+        sha = change(home, "docs/notes.txt")
+        fake_gh(home, open={"docs": 9})
+        home.git("update-ref", "refs/remotes/origin/main", code)
+    with when("a texts report is made against that local main and Claude pushes"):
+        texts_report(home)
+        moved = bash(home, "git push")
+    with then("the gate lists the changes since main as GitHub has it, and refuses, naming app.py"):
+        assert says(home, moved, "texts_has_code.md", short=sha[:7], file="app.py"), moved.reason
+    with when("main moves on GitHub to a commit this repo has not fetched, and docs changes only the guide again"):
+        other = os.path.join(home.root, "other-clone")
+        home.git("clone", "-q", github_folder(home), other)
+        github_main = change(home, "README.md", cwd=other)
+        home.git("push", "-q", "origin", "main", cwd=other)
+        home.git("reset", "-q", "--hard", "origin/docs")
+        texts_sha = change(home, "docs/guide.md")
+        texts_report(home)
+        unfetched = bash(home, "git push")
+    with then("the push is refused until main is fetched, since the gate can not list the changes"):
+        assert says(home, unfetched, "texts_base_missing.md", short=texts_sha[:7], base="main",
+                    commit=github_main[:7]), unfetched.reason
+    with when("Claude fetches origin and pushes again"):
+        home.git("fetch", "-q", "origin")
+        fetched = bash(home, "git push")
+    with then("the push runs"):
+        assert quiet(fetched), fetched.reason

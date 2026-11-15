@@ -77,6 +77,7 @@ GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
 GH_ALIASES = {("pr", "new"): ("pr", "create")}
 PR_REPO_OPTIONS = {"-R", "--repo"}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
+CURRENT_REPO = ("rest", "repos/{owner}/{repo}", {})  # the repo gh picks from the folder, as gh pr list does
 REPO_PATH = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
 HEAD_ON_NODE = ("query($id: ID!, $ref: String!) { node(id: $id) { ... on Repository { ref(qualifiedName: $ref) "
                 "{ target { oid } } } } }")
@@ -411,7 +412,7 @@ def pushed(step, lookups):
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
-    return [(target, commit, cwd, set()) for target, commit in sent if not target.startswith("refs/")]
+    return [(target, commit, cwd, set(), CURRENT_REPO) for target, commit in sent if not target.startswith("refs/")]
 
 
 def reaches_github(cwd, remote, lookups):
@@ -614,9 +615,9 @@ def with_open_pr(candidates, lookups):
     """The pushed branches that send something new to an open PR, each with the branch its PR goes into, as GitHub
     says. A branch with no open PR, or whose PR's head is already the commit sent, drops out. More than one
     branch, or a failed lookup, keeps them all, with no known base."""
-    if len({branch for branch, _commit, _cwd, _bases in candidates}) != 1:
+    if len({branch for branch, _commit, _cwd, _bases, _place in candidates}) != 1:
         return candidates
-    branch, _commit, cwd, _bases = candidates[0]
+    branch, _commit, cwd, _bases, _place = candidates[0]
     output, _why = lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
                               "number,baseRefName,headRefOid", "--limit", "1")
     listed = parsed_json(output)
@@ -627,7 +628,8 @@ def with_open_pr(candidates, lookups):
     found = listed[0] if isinstance(listed[0], dict) else {}
     base, pr_head_commit = found.get("baseRefName"), found.get("headRefOid")
     bases = {base} if isinstance(base, str) and base else set()
-    return [(name, commit, here, bases) for name, commit, here, _bases in candidates if commit != pr_head_commit]
+    return [(name, commit, here, bases, place) for name, commit, here, _bases, place in candidates
+            if commit != pr_head_commit]
 
 
 def parsed_json(output):
@@ -750,7 +752,7 @@ def new_pr(step, head, named_head, named_base, places, lookups):
     branch = head.split(":", 1)[-1]
     commit = (github_head(step.cwd, head, head_place, lookups) if named_head
               else head_of_branch(step.cwd, branch, lookups))
-    return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, base_place, lookups))]
+    return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, base_place, lookups), base_place)]
 
 
 def github_head(cwd, head, place, lookups):
@@ -908,7 +910,17 @@ def ready_pr(step, named, repo, lookups):
         raise Stop("pr_head_unknown.md", number=named[0], why=why or "gh gave no head commit")
     if not commit:
         raise Stop("branch_head_unknown.md", branch=branch or "HEAD", why=why or "gh gave no head commit")
-    return [(f"PR {named[0]}" if named else branch or "HEAD", commit, step.cwd, bases)]
+    place = ("rest", "repos/{owner}/{repo}", {"GH_REPO": repo_value(repo)} if repo else variables)
+    return [(f"PR {named[0]}" if named else branch or "HEAD", commit, step.cwd, bases, place)]
+
+
+def repo_value(repo):
+    """The repo the last of gh's -R or --repo options names, written as -R X, -RX, --repo X or --repo=X."""
+    last = repo[-2:] if len(repo) > 1 and repo[-2] in PR_REPO_OPTIONS else repo[-1:]
+    word = last[-1]
+    if len(last) == 2:
+        return word
+    return word.split("=", 1)[1] if word.startswith("--repo=") else word[3:] if word.startswith("-R=") else word[2:]
 
 
 def api_fields(command, items):
@@ -1019,7 +1031,15 @@ def graphql_value(query, key, fields):
 # The report check
 
 
-def report_stop(branch, commit, cwd, bases, lookups):
+def bases_on_github(report, bases, cwd, place, lookups):
+    """{branch: the commit GitHub has it at, or None} for the branches the PR may go into. Only a texts report's
+    own base is looked up, since its changes are counted from there."""
+    base = report.get("base") if report.get("kind") == "texts" else None
+    branch = base.get("branch") if isinstance(base, dict) else None
+    return {name: github_head(cwd, name, place, lookups) if name == branch else None for name in bases}
+
+
+def report_stop(branch, commit, cwd, bases, place, lookups):
     store = reports()
     short_sha = commit[:7]
     report, broken = store.find(cwd, commit, lookups.git)
@@ -1027,7 +1047,7 @@ def report_stop(branch, commit, cwd, bases, lookups):
         raise Stop("report_unreadable.md", short=short_sha)
     if report is None:
         raise Stop("no_report.md", short=short_sha, branch=branch)
-    found = store.problem(report, cwd, commit, lookups.git, bases)
+    found = store.problem(report, cwd, commit, lookups.git, bases_on_github(report, bases, cwd, place, lookups))
     if found:
         name, values = found
         raise Stop(name, short=short_sha, **values)
@@ -1047,8 +1067,8 @@ def check(command_line, cwd, flags, answer):
     if candidates:
         needed += with_open_pr(candidates, lookups)
     if report_on:
-        for branch, commit, here, bases in needed:
-            report_stop(branch, commit, here, bases, lookups)
+        for branch, commit, here, bases, place in needed:
+            report_stop(branch, commit, here, bases, place, lookups)
 
 
 def handle(event, hook_input, flags, answer):
