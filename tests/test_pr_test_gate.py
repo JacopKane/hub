@@ -64,6 +64,27 @@ def fake_gh(home, **config):
     home.write_json(home.env["FAKE_GH_CONFIG"], config)
 
 
+def with_fake_ssh(home, **config):
+    """A fake ssh on PATH, which answers ssh -G from config and never connects, so no test reads a real ssh config."""
+    folder = os.path.join(home.root, "ssh-bin")
+    os.makedirs(folder, exist_ok=True)
+    shutil.copy(os.path.join(REPO, "tests", "fakes", "fake_ssh.py"), os.path.join(folder, "ssh"))
+    os.chmod(os.path.join(folder, "ssh"), 0o755)
+    home.env["PATH"] = folder + os.pathsep + home.env["PATH"]
+    home.env["FAKE_SSH_CONFIG"] = os.path.join(home.root, "ssh.json")
+    home.env["FAKE_SSH_LOG"] = os.path.join(home.root, "ssh-calls.jsonl")
+    home.env["GIT_SSH_COMMAND"] = "false"
+    home.write_json(home.env["FAKE_SSH_CONFIG"], config)
+
+
+def ssh_calls(home):
+    path = home.env["FAKE_SSH_LOG"]
+    if not os.path.exists(path):
+        return []
+    with open(path) as handle:
+        return [json.loads(line) for line in handle]
+
+
 def gh_calls(home):
     path = home.env["FAKE_GH_LOG"]
     if not os.path.exists(path):
@@ -1517,6 +1538,50 @@ def test_the_push_urls_decide_whether_a_push_reaches_github(home):
     with then("each runs with no answer"):
         for case, result in results.items():
             assert quiet(result), (case, result.reason)
+
+
+SSH_HOST_WHY = "ssh could not say which host the remote's address names"
+
+
+def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_other_hosts_stay_quiet(home):
+    with given("branch feature with open PR 7 and a new commit with no report, ssh aliases github-work for "
+               "github.com and lab-work for gitlab.com, and remotes that name hosts in different ways"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        with_fake_ssh(home, hosts={"github-work": "github.com", "lab-work": "gitlab.com"}, fail=["broken-alias"])
+        # Joined from two parts so the shape scan does not take these addresses for email.
+        ssh_user = "git" + "@"
+        remotes = {"ssh443": f"ssh://{ssh_user}ssh.github.com:443/acme/demo.git",
+                   "www": "https://www.github.com/acme/demo.git",
+                   "upper": f"{ssh_user}GitHub.COM.:acme/demo.git",
+                   "alias": f"{ssh_user}github-work:acme/demo.git",
+                   "aliasurl": f"ssh://{ssh_user}github-work/acme/demo.git",
+                   "lab": f"{ssh_user}lab-work:acme/demo.git",
+                   "gitlab": "https://gitlab.com/acme/demo.git",
+                   "lookalike": "https://github.com.example.org/acme/demo.git",
+                   "notgithub": f"{ssh_user}notgithub.com:acme/demo.git",
+                   "broken": f"{ssh_user}broken-alias:acme/demo.git"}
+        for name, url in remotes.items():
+            home.git("remote", "add", name, url)
+    on_github = ["ssh443", "www", "upper", "alias", "aliasurl"]
+    with when("Claude pushes feature to each remote that reaches GitHub"):
+        results = {name: bash(home, f"git push {name} feature") for name in on_github}
+    with then("each is judged as the push to GitHub it is, and refused for feature's commit"):
+        for name, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
+    with when("Claude pushes feature to each remote on another host"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in ("lab", "gitlab", "lookalike",
+                                                                               "notgithub")}
+    with then("each runs with no answer, and ssh is asked only about the ssh addresses"):
+        for name, result in results.items():
+            assert quiet(result), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", "lab-work"], ["-G", "--", "notgithub.com"]]
+    with when("ssh can not read its config for the alias a remote names"):
+        broken = bash(home, "git push broken feature")
+    with then("the push is refused, since the alias may name GitHub"):
+        assert says(home, broken, "unreadable_push.md", why=SSH_HOST_WHY), broken.reason
 
 
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):

@@ -83,6 +83,8 @@ HEAD_ON_NODE = ("query($id: ID!, $ref: String!) { node(id: $id) { ... on Reposit
                 "{ target { oid } } } } }")
 DEFAULT_ON_NODE = "query($id: ID!) { node(id: $id) { ... on Repository { defaultBranchRef { name } } } }"
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
+SSH_SCHEMES = {"ssh", "git+ssh", "ssh+git"}  # the URL schemes git reaches over ssh
+SCP_LIKE = re.compile(r"(?:[^@/:]*@)?(\[[^\]/]*\]|[^:/]+):")  # [user@]host:path, where host may be [host:port]
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
 PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
 # The words Go's strconv.ParseBool reads as true, which gh uses for a value such as --undo=true
@@ -126,6 +128,7 @@ WHY = {
     "draft": "gh api may change the PR's draft state, which the gate reads only from gh pr ready",
     "remote_url": "git could not say which URL the remote names",
     "copies": "git could not list its copies of the remote's branches",
+    "ssh_host": "ssh could not say which host the remote's address names",
 }
 
 
@@ -227,6 +230,23 @@ class Lookups:
             if done is None:
                 raise Stop("slow.md")
             self.cache[key] = done[1].strip() if done[0] == 0 else None
+        return self.cache[key]
+
+    def ssh_hostname(self, cwd, host):
+        """The host ssh connects to for a host or a Host alias, as ssh -G prints it after reading ssh's config,
+        without connecting. A lookup that fails may hide GitHub, so it stops the step."""
+        key = ("ssh", host)
+        if key not in self.cache:
+            try:
+                done = self.run(["ssh", "-G", "--", host], cwd, GIT_SECONDS)
+            except OSError:
+                done = None
+            printed = done[1] if done and done[0] == 0 else ""
+            found = [value.strip() for name, _space, value in (line.partition(" ") for line in printed.splitlines())
+                     if name.lower() == "hostname" and value.strip()]
+            if not found:
+                raise unreadable("ssh_host")
+            self.cache[key] = found[0]
         return self.cache[key]
 
     def gh(self, cwd, *words, variables=None):
@@ -420,12 +440,46 @@ def pushed(step, lookups):
 
 
 def reaches_github(cwd, remote, lookups):
-    """Whether a push to the remote word may reach GitHub: any URL git pushes to names github.com."""
-    return any(map(is_a_github_url, push_urls(cwd, remote, lookups)))
+    """Whether a push to the remote word may reach GitHub: any URL git pushes to is on GitHub."""
+    return any(is_a_github_url(url, cwd, lookups) for url in push_urls(cwd, remote, lookups))
 
 
-def is_a_github_url(url):
-    return GITHUB.search(url) is not None
+def is_a_github_url(url, cwd, lookups):
+    """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
+    as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those."""
+    if GITHUB.search(url):
+        return True
+    host, over_ssh = url_host(url)
+    if host is None:
+        return False
+    return is_a_github_host(host) or (over_ssh and is_a_github_host(lookups.ssh_hostname(cwd, host)))
+
+
+def url_host(url):
+    """(the host a remote URL names, or None for a local path, whether git reaches it over ssh), as git reads a URL:
+    scheme://[user@]host[:port]/path, or [user@]host:path when a colon comes before any slash."""
+    scheme, separator, rest = url.partition("://")
+    if separator and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
+        if scheme.lower() == "file":
+            return None, False
+        return bare_host(rest.split("/", 1)[0]), scheme.lower() in SSH_SCHEMES
+    scp_like = SCP_LIKE.match(url)
+    return (bare_host(scp_like.group(1)), True) if scp_like else (None, False)
+
+
+def bare_host(authority):
+    """The host of [user@]host[:port], [host] or [host:port]. Inside brackets more than one colon is an IPv6
+    address, which stays whole."""
+    host = authority.rpartition("@")[2]
+    if host.startswith("["):
+        inside = host[1:].partition("]")[0]
+        return inside.partition(":")[0] if inside.count(":") == 1 else inside
+    return host.partition(":")[0]
+
+
+def is_a_github_host(host):
+    name = host.lower().rstrip(".")
+    return name == "github.com" or name.endswith(".github.com")
 
 
 def push_urls(cwd, remote, lookups):
@@ -774,7 +828,7 @@ def check_github_copies(cwd, commit, lookups):
         url = lookups.git(cwd, "remote", "get-url", "--", remote)
         if url is None:
             raise unreadable("remote_url")
-        if not is_a_github_url(url):
+        if not is_a_github_url(url, cwd, lookups):
             continue
         on_github = github_head(cwd, branch, ("rest", repo_path_of(url), {}), lookups)
         if on_github != commit:
