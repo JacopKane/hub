@@ -1625,6 +1625,13 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
         assert any("ref=refs/heads/side" in call for call in base_calls), base_calls
         assert any(any("defaultBranchRef" in word for word in call) for call in base_calls), base_calls
         assert says(home, nowhere, "branch_head_unknown.md", branch="nowhere"), nowhere.reason
+    with when("the mutation names only the head's repo, written in the query or passed as a variable"):
+        head_only = [bash(home, create.replace('repositoryId: "R_base", ', "")),
+                     bash(home, create.replace('headRepositoryId: "R_head"', "headRepositoryId: $head")
+                          .replace('repositoryId: "R_base", ', "") + " -f head=R_head")]
+    with then("each is refused, since the head's repo id does not say which repo the PR goes into"):
+        for result in head_only:
+            assert says(home, result, "unreadable_push.md", why=HEAD_REPO_WHY), result.reason
     with when("side's tested commit is pushed"):
         home.git("push", "-q")
     with then("the same steps run with no answer"):
@@ -1668,6 +1675,15 @@ def test_a_step_is_judged_where_git_or_gh_sends_it_and_a_lookup_that_fails_is_re
     with then("git pushes to origin, off GitHub, and each runs with no answer"):
         for step, result in results.items():
             assert quiet(result), (step, result.reason)
+    with when("the shell fills in the --repo remote, with the text gate's unreadable check on and then off"):
+        filled = [bash(home, 'git push --repo="$REMOTE"')]
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        filled.append(bash(home, 'git push --repo="$REMOTE"'))
+        home.hubctl_from_mod("on", "public_text_gate.unreadable")
+    with then("the text gate refuses it first, and this gate refuses it too, since it can not tell where it goes"):
+        assert filled[0].refused and filled[0].findings == ["unreadable"], filled[0].reason
+        assert says(home, filled[1], "unreadable_push.md", why="a variable or a pattern names the branch"), \
+            filled[1].reason
     with when("git can not say where the dash URL points"):
         failed, _took = timed(home, "git push -- -gh feature", failing_git(home, "ls-remote"))
     with then("the push is refused, since it may reach GitHub"):
@@ -1718,3 +1734,12 @@ def test_a_texts_report_is_counted_from_the_base_branch_github_has_not_the_local
         fetched = bash(home, "git push")
     with then("the push runs"):
         assert quiet(fetched), fetched.reason
+    with when("Claude marks PR 9 ready in a repo named with -R, where GitHub has no main, and then in this repo"):
+        fake_gh(home, open={"docs": 9}, heads={"someone/fork#9": texts_sha, "9": texts_sha},
+                unknown_repos=["someone/fork"])
+        steps = {step: bash(home, step) for step in ("gh pr ready 9 -R someone/fork", "gh pr ready 9")}
+    with then("the first is refused, since the report is counted from main in the repo the step goes to, and the "
+              "second runs"):
+        assert says(home, steps["gh pr ready 9 -R someone/fork"], "branch_head_unknown.md", branch="main"), \
+            steps["gh pr ready 9 -R someone/fork"].reason
+        assert quiet(steps["gh pr ready 9"]), steps["gh pr ready 9"].reason
