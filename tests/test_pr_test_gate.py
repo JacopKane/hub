@@ -26,6 +26,9 @@ NEAR_MISS = "## What it is\n\nA fix.\n\n## Testing\n\nRan the scenarios.\nLeft o
 HOW_THIS = "## What it is\n\nA fix.\n\n## How this was tested\n\nRan the scenarios.\nNot tested: Windows.\n"
 HOW_TO_TEST = "## What it is\n\nA fix.\n\n## How to test\n\nRun the scenarios.\nNot tested: Windows.\n"
 TEMPLATE = "## Summary\n\n## Test plan\n"
+# The push form the push settings message shows, for most stops and for those that refuse a branch named alone
+NAMED_EXAMPLE = "git push origin feature"
+DESTINATION_EXAMPLE = "git push origin fix-a:feature, where feature is the branch on the remote"
 TEMPLATE_BODY = "## Summary\n\nA fix.\n\n## Test plan\n\nRan the scenarios.\nNot covered: the slow network case.\n"
 
 
@@ -333,7 +336,7 @@ def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_o
             home.git("config", "--unset", name)
         with then("each push with no branch named is refused for that setting, and the named push runs"):
             for form, result in bare_pushes.items():
-                assert says(home, result, "push_config.md", why=why), (name, form, result.reason)
+                assert says(home, result, "push_config.md", why=why, example=NAMED_EXAMPLE), (name, form, result.reason)
             assert quiet(named), (name, named.reason)
     with when("the repo sets remote.origin.mirror to off and Claude pushes with no branch named"):
         home.git("config", "remote.origin.mirror", "off")
@@ -361,13 +364,15 @@ def test_a_push_whose_settings_send_more_than_the_current_branch_or_change_for_o
             if "--config-env" in form:
                 assert result.refused and "(self_protection.lowering)" in result.reason, (form, result.reason)
             else:
-                assert says(home, result, "push_config.md", why=one_command_why), (form, result.reason)
+                assert says(home, result, "push_config.md", why=one_command_why, example=NAMED_EXAMPLE), \
+                    (form, result.reason)
     with when("self-protection is off and Claude sends the same pushes"):
         home.hubctl_from_mod("off", "self_protection")
         results = {form: bash(home, form) for form in one_command}
     with then("this gate refuses each one for its one-command setting"):
         for form, result in results.items():
-            assert says(home, result, "push_config.md", why=one_command_why), (form, result.reason)
+            assert says(home, result, "push_config.md", why=one_command_why, example=NAMED_EXAMPLE), \
+                    (form, result.reason)
     with and_("a one-command setting that does not touch pushes leaves the push to be judged as usual"):
         for form in ["git -c core.quotepath=off push origin feature", "git -c user.name=Ann push"]:
             assert quiet(bash(home, form)), form
@@ -401,8 +406,8 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
     with then("it is refused for fix-a's commit on fix-a, since git maps a branch to its upstream only when the "
               "branch also has a remote, and an empty remote is refused, since git can not say where it goes"):
         assert says(home, no_remote, "no_report.md", short=local[:7], branch="fix-a"), no_remote.reason
-        assert says(home, empty_remote, "push_config.md", why="the branch's upstream names no remote"), \
-            empty_remote.reason
+        assert says(home, empty_remote, "push_config.md", why="the branch's upstream names no remote",
+                    example=DESTINATION_EXAMPLE), empty_remote.reason
     with when("fix-a's upstream is feature on origin, and Claude names fix-a in each way"):
         home.git("config", "branch.fix-a.merge", "refs/heads/feature")
         home.git("config", "branch.fix-a.remote", "origin")
@@ -450,9 +455,10 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
             with_destination = bash(home, "git push origin fix-a:feature")
             home.git("config", "--unset-all", "remote.origin.push")
             home.git("config", "--unset", "branch.fix-a.merge")
-        with then("the push by name is refused for the ^ entry, and the push that names its destination is judged "
-                  "there as usual"):
-            assert says(home, by_name, "push_config.md", why=negative_why), (values, by_name.reason)
+        with then("the push by name is refused for the ^ entry and asked to name its destination, and the push "
+                  "that names its destination is judged there as usual"):
+            assert says(home, by_name, "push_config.md", why=negative_why, example=DESTINATION_EXAMPLE), \
+                (values, by_name.reason)
             assert says(home, with_destination, "no_report.md", short=local[:7], branch="feature"), \
                 (values, with_destination.reason)
     with when("the remote's push setting names fix-a without refs/heads/, which git does not match"):

@@ -74,6 +74,12 @@ PUSH_CONFIG_WHY = {
     "upstream": "the branch's upstream names no remote",
     "negative": "the remote's push settings leave branches out with ^, which changes where git sends a branch",
 }
+# The push form the message asks for. A stop that refuses a branch named alone asks for its destination too.
+PUSH_CONFIG_EXAMPLE = {
+    "named": "git push origin feature",
+    "upstream": "git push origin fix-a:feature, where feature is the branch on the remote",
+    "negative": "git push origin fix-a:feature, where feature is the branch on the remote",
+}
 WHY = {
     "parse": "the line does not parse",
     "inside": "it runs inside another command",
@@ -109,7 +115,8 @@ def unreadable(why):
 
 
 def push_settings_stop(why):
-    return Stop("push_config.md", why=PUSH_CONFIG_WHY[why])
+    return Stop("push_config.md", why=PUSH_CONFIG_WHY[why],
+                example=PUSH_CONFIG_EXAMPLE.get(why, PUSH_CONFIG_EXAMPLE["named"]))
 
 
 # Modules loaded by path, once per process
