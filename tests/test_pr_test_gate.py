@@ -221,13 +221,20 @@ def test_a_new_line_ends_a_push_or_ready_step_as_the_shell_ends_it_unless_quotes
     with then("the gate reads the push up to the end of its line and refuses it for the commit with no report"):
         for push, result in results.items():
             assert says(home, result, "no_report.md", short=first[:7], branch="feature"), (push, result.reason)
-    one_push = ["git push -o 'note=one\ntwo --delete'", "git push origin \\\nfeature"]
-    with when("Claude pushes feature with a new line inside quotes, or with a backslash that carries the push on "
-              "to the next line"):
+    one_push = ["git push -o 'note=one\ntwo --delete'", "git push -o $'it\\'s\ntwo --delete'",
+                "git push origin \\\nfeature"]
+    with when("Claude pushes feature with a new line inside quotes, even after an escaped quote in $'...', or with "
+              "a backslash that carries the push on to the next line"):
         results = {push: bash(home, push) for push in one_push}
     with then("the gate reads one push of feature and refuses it the same way"):
         for push, result in results.items():
             assert says(home, result, "no_report.md", short=first[:7], branch="feature"), (push, result.reason)
+    with when("Claude pushes feature between two echo commands, where the first echo's $'...' string holds an "
+              "escaped quote and the second echo prints a quote"):
+        hidden_push = bash(home, "echo $'\\'' ; git push ; echo \\'")
+    with then("the gate finds the push the shell runs and refuses it, since another command runs before it"):
+        assert says(home, hidden_push, "unreadable_push.md", why="another command runs before it on the same line"), \
+            hidden_push.reason
     with when("Claude marks PR 7 ready, and the next line turns PR 8 back into a draft"):
         ready = bash(home, "gh pr ready 7\ngh pr ready 8 --undo")
     with then("the gate reads the ready step up to the end of its line and refuses it for PR 7's head"):

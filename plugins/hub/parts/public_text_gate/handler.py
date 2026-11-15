@@ -42,6 +42,7 @@ import shlex
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 from hub import files
@@ -390,7 +391,9 @@ def mark_expansions(line, sources=None):
     does the command of a process substitution, <(...), >(...) or zsh's =(...),
     whose text is a stream the gate can not read. The shell keeps each
     substitution in one word, so the gate quotes the ones it keeps, and its
-    brackets, spaces and quotes never split the command.
+    brackets, spaces and quotes never split the command. A $'...' string
+    becomes the text the shell makes of it, in plain single quotes, because
+    the gate's lexer does not know its escapes.
     """
     out, index, quote = [], 0, None
     while index < len(line):
@@ -450,6 +453,11 @@ def mark_expansions(line, sources=None):
             else:
                 out.append(UNREADABLE)
         elif char == "$" and following == "'" and quote is None:
+            body = ANSI_C_BODY.match(line, index + 2)
+            if body:
+                out.append(one_word(ansi_c_text(body.group(1)), None))
+                index = body.end()
+                continue
             out.append("$'")
             quote = "$'"
             index += 2
@@ -459,6 +467,41 @@ def mark_expansions(line, sources=None):
         out.append(char)
         index += 1
     return "".join(out)
+
+
+# The text of a $'...' string up to its closing quote, where a backslash keeps the next character.
+ANSI_C_BODY = re.compile(r"((?:[^\\']|\\.)*)'", re.S)
+ANSI_C_PIECE = re.compile(
+    r"\\(?:(?P<octal>[0-7]{1,3})|x(?P<byte>[0-9a-fA-F]{1,2})|u(?P<short>[0-9a-fA-F]{1,4})"
+    r"|U(?P<long>[0-9a-fA-F]{1,8})|c(?P<control>.)|(?P<letter>.))|(?P<plain>[^\\]+)", re.S)
+ANSI_C_LETTERS = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                  "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def ansi_c_text(body):
+    """The text the shell makes of a $'...' string's body, with each escape filled in.
+
+    Hex and octal escapes are bytes, so a character written as its UTF-8
+    bytes reads as that character.
+    """
+    return b"".join(map(ansi_c_bytes, ANSI_C_PIECE.finditer(body))).decode("utf-8", "replace")
+
+
+def ansi_c_bytes(piece):
+    """The bytes the shell writes for one escape, or for a run of plain text, in a $'...' string."""
+    found = piece.groupdict()
+    code = found["short"] or found["long"]
+    if found["octal"]:
+        return bytes([int(found["octal"], 8) & 0xFF])
+    if found["byte"]:
+        return bytes([int(found["byte"], 16)])
+    if code:
+        return chr(min(int(code, 16), sys.maxunicode)).encode("utf-8", "surrogatepass")
+    if found["control"]:
+        return bytes([ord(found["control"]) & 0x1F])
+    if found["plain"] is not None:
+        return found["plain"].encode("utf-8", "surrogateescape")
+    return ANSI_C_LETTERS.get(found["letter"], "\\" + found["letter"]).encode("utf-8", "surrogateescape")
 
 
 def one_word(text, quote):

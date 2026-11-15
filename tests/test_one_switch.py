@@ -656,10 +656,10 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
     with then("the gate reads the push up to the end of its line, lists main's new commit and names the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
-    one_push = ["git push origin main -o 'note=one\ntwo --delete'", "git push origin \\\nmain",
-                "git push origin \\\n  main # send it"]
-    with when("Claude pushes main with a new line inside quotes, or with a backslash that carries the push on to "
-              "the next line"):
+    one_push = ["git push origin main -o 'note=one\ntwo --delete'", "git push origin main -o $'it\\'s\ntwo --delete'",
+                "git push origin \\\nmain", "git push origin \\\n  main # send it"]
+    with when("Claude pushes main with a new line inside quotes, even after an escaped quote in $'...', or with a "
+              "backslash that carries the push on to the next line"):
         results = hooks(home, tool, one_push, "one-push")
     with then("the gate reads one push of main and names the dash"):
         for push, result in results.items():
@@ -669,6 +669,29 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
     with then("the shell still reads its script from the pipe, which the gate can not see, so the call is "
               "unreadable"):
         assert piped.refused and piped.findings == ["unreadable"], piped.reason
+
+
+def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    with when("Claude pushes main between two echo commands, where the first echo's $'...' string holds an "
+              "escaped quote and the second echo prints a quote"):
+        hidden_push = home.hook(tool, "PreToolUse", "echo $'\\'' ; git push origin main ; echo \\'",
+                                session="hidden-push")
+    with then("the gate reads the push between them, as the shell runs it, and names the dash"):
+        assert hidden_push.refused and hidden_push.findings == ["dashes"], hidden_push.reason
+    messages = ["git commit -m $'Late \\u2014 change'", "git commit -m $'Late \\xe2\\x80\\x94 change'",
+                "git commit -m $'Late \\342\\200\\224 change'"]
+    with when("Claude commits with a message whose dash is written as a unicode, hex or octal escape in $'...'"):
+        results = hooks(home, tool, messages, "escaped-dash")
+    with then("the gate reads the dash the shell writes and names it"):
+        for message, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (message, result.reason)
+    with when("Claude commits with a plain $'...' message that has a new line and an escaped quote"):
+        plain = home.hook(tool, "PreToolUse", "git commit -m $'It\\'s fixed\\n\\nNo dash here'", session="plain")
+    with then("the commit runs"):
+        assert not plain.refused, plain.reason
 
 
 def commit_notes(home, text, message):
