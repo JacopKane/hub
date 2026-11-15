@@ -268,9 +268,10 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
         results = {form: bash(home, form) for form in unreadable}
     text_gate_first = ["git push origin $BRANCH", "bash -c 'git push origin feature'",
                        "printf feature | xargs git push origin", "git -C $(pwd) push origin feature",
-                       "git --git-dir=$(pwd)/.git push origin feature"]
-    with then("the text gate answers first for the variable, the wrapper and xargs, since it can not read "
-              "their commits either, and every other form is asked to be written out as its own command"):
+                       "git --git-dir=$(pwd)/.git push origin feature", "git push --d origin feature"]
+    with then("the text gate answers first for the variable, the wrapper, xargs and the option git could read "
+              "two ways, since it can not read their commits either, and every other form is asked to be written "
+              "out as its own command"):
         for form, result in results.items():
             if form in text_gate_first:
                 assert result.refused and result.findings == ["unreadable"], (form, result.reason)
@@ -506,25 +507,32 @@ def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub
              f"gh pr edit 7 --body-file {good}", "gh pr ready", "git push origin feature"]
     lines = [place + step for place in (f"cd {missing}; ", "cd -; ", f"cd {missing} && ", "cd -; cd .; ")
              for step in steps]
-    lines.append(f"git -C {missing} push origin feature")
+    into_missing = f"git -C {missing} push origin feature"
     with when("Claude sends a new PR, gh's pr new, a body edit, a ready step and a push after a cd to a folder "
               "that is not there or back to the last folder, also with a cd from there, and a push into a folder "
               "that is not there"):
-        results = {line: bash(home, line) for line in lines}
-    with then("each is refused as a step whose folder the gate can not find, and hub logs no error"):
-        for line, result in results.items():
-            assert says(home, result, "unreadable_push.md", why="the folder it runs in is missing or not known"), \
-                (line, result.reason)
+        results = {line: bash(home, line) for line in lines + [into_missing]}
+    with then("each is refused as a step whose folder the gate can not find, the push into the missing folder "
+              "first by the text gate, which can not list its commits, and hub logs no error"):
+        for line in lines:
+            assert says(home, results[line], "unreadable_push.md", why="the folder it runs in is missing or not "
+                        "known"), (line, results[line].reason)
+        assert results[into_missing].refused and results[into_missing].findings == ["unreadable"], \
+            results[into_missing].reason
         assert home.errors() == ""
     with when("the text gate's unreadable check is off and a PR body comes from a variable or a substitution"):
         home.hubctl_from_mod("off", "public_text_gate.unreadable")
         hidden = {"new": bash(home, 'gh pr create --title T --body "$BODY"'),
                   "edit": bash(home, 'gh pr edit 7 --body "$(git log -1 --format=%b)"'),
                   "api": bash(home, 'gh api -X PATCH repos/acme/demo/pulls/7 -f body="$BODY"')}
-    with then("each is refused, since the gate can not check a body it can not read"):
+        pushed_into_missing = bash(home, into_missing)
+    with then("each is refused, since the gate can not check a body it can not read, and the push into the "
+              "missing folder is refused by this gate as one whose folder it can not find"):
         for name, result in hidden.items():
             assert says(home, result, "unreadable_push.md", why="a variable or a substitution fills in the PR body"), \
                 (name, result.reason)
+        assert says(home, pushed_into_missing, "unreadable_push.md",
+                    why="the folder it runs in is missing or not known"), pushed_into_missing.reason
     with when("feature gets a passing report and Claude sends the steps from the repo's own folder"):
         record(home)
         fake_gh(home, open={"feature": 7}, heads={"7": feature, "feature": feature})

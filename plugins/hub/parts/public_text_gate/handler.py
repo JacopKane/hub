@@ -45,6 +45,18 @@ PART = "public_text_gate"
 DASH = chr(0x2014)
 MAX_TEXT = 200_000  # characters read from one body file or one push
 MAX_COMMITS = 50
+# git push's long options, so a shortened one such as --mirr or --no-dry reads as the option git takes it for
+PUSH_LONG_OPTIONS = ("all", "atomic", "branches", "delete", "dry-run", "exec", "follow-tags", "force",
+                     "force-if-includes", "force-with-lease", "ipv4", "ipv6", "mirror", "no-verify", "porcelain",
+                     "progress", "prune", "push-option", "quiet", "receive-pack", "recurse-submodules", "repo",
+                     "set-upstream", "signed", "tags", "thin", "verbose")
+NEVER_NEGATED = {"ipv4", "ipv6"}
+PUSH_ALIASES = {"--branches": "--all"}
+PUSH_SHORT_OPTIONS = {"d": "--delete", "n": "--dry-run", "o": "--push-option", "u": "--set-upstream", "f": "--force",
+                      "q": "--quiet", "v": "--verbose", "4": "--ipv4", "6": "--ipv6"}
+PUSH_VALUE_OPTIONS = {"--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
+# The name push_items gives a shortened option that starts more than one of git push's options
+AMBIGUOUS_OPTION = "ambiguous"
 
 # The checks, in the order the tree lists them. A private item can not be
 # taken back once it is public, so these refuse every time, in warn and in
@@ -668,30 +680,121 @@ def searches_commit_messages(source):
     return source.startswith(":/")
 
 
+def without_redirects(words):
+    """The words of a command without its redirects and their targets, such as 2>&1 or > push.log."""
+    kept, skip = [], False
+    for word in words:
+        if skip:
+            skip = False
+        elif REDIRECT.fullmatch(word):
+            skip = True
+        elif not REDIRECT.match(word):
+            kept.append(word)
+    return kept
+
+
+def option_spellings(option):
+    """(spelling, option, whether it turns the option on) for each way git writes a long option out in full."""
+    if option.startswith("no-"):
+        return [(option, option, True), (option[3:], option, False)]
+    return [(option, option, True)] + ([] if option in NEVER_NEGATED else [("no-" + option, option, False)])
+
+
+PUSH_SPELLINGS = [spelling for option in PUSH_LONG_OPTIONS for spelling in option_spellings(option)]
+
+
+def full_push_option(name):
+    """(the long option git reads for a word such as --mirr or --no-dry, whether the word turns it on). A word
+    that starts only one option is that option, as in git, and a word that starts more than one is
+    AMBIGUOUS_OPTION."""
+    word = name[2:]
+    exact = [(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling == word]
+    shortened = {(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling.startswith(word)}
+    if not exact and len(shortened) > 1:
+        return AMBIGUOUS_OPTION, True
+    option, on = (exact or sorted(shortened) or [(name, True)])[0]
+    return PUSH_ALIASES.get(option, option), on
+
+
+def push_items(words):
+    """(the option in full, its value) for each of git push's words in order, or (None, word) for a positional
+    word. A switch's value is whether it is on. A value option takes its value the way git does."""
+    remaining = iter(words)
+    for word in remaining:
+        if word == "--":
+            yield from ((None, positional) for positional in remaining)
+        elif word.startswith("--"):
+            name, equals, attached = word.partition("=")
+            option, on = full_push_option(name)
+            takes_next_word = option in PUSH_VALUE_OPTIONS and on and not equals
+            yield option, next(remaining, "") if takes_next_word else attached if equals else on
+        elif word.startswith("-") and len(word) > 1:
+            yield from short_push_items(word[1:], remaining)
+        else:
+            yield None, word
+
+
+def short_push_items(letters, remaining):
+    """The options in a cluster such as -uo, where -o takes the rest of the word, or else the next word."""
+    for position, letter in enumerate(letters):
+        option = PUSH_SHORT_OPTIONS.get(letter, "-" + letter)
+        if option in PUSH_VALUE_OPTIONS:
+            yield option, letters[position + 1:] or next(remaining, "")
+            return
+        yield option, True
+
+
+def last_switch(items, option):
+    """Whether a switch is on after every word that names it, so -n --no-dry-run is not a dry run."""
+    return next((value is not False for name, value in reversed(items) if name == option), False)
+
+
+def push_refspecs(words, deletes):
+    """The refspecs git push makes of the words after the remote: tag v1 is refs/tags/v1 under its own name, and
+    with --delete each word deletes that name on the remote. A tag with no name after it stays the word tag."""
+    specs, remaining = [], iter(words)
+    for word in remaining:
+        name = next(remaining, None) if word == "tag" else None
+        if name is not None:
+            specs.append(f":refs/tags/{name}" if deletes else f"refs/tags/{name}:refs/tags/{name}")
+        else:
+            specs.append(f":{word}" if deletes and word != "tag" else word)
+    return specs
+
+
 def pushed_commits(rest, cwd):
     """The log and diff of the commits a push sends, from the source of each refspec it names, capped in size.
+    Its words are read the way git push reads them, so an option's value or the word tag is not a refspec.
 
-    When the shell fills in the folder or a word of the push, or a source
-    searches commit messages, the gate can not tell which commits it sends,
-    so the push counts as unreadable.
+    When the shell fills in the folder or a word of the push, a source
+    searches commit messages or holds a pattern, an option matches more than
+    one of git's, or git log can not list the commits in time, the gate can
+    not tell which commits it sends, so the push counts as unreadable.
     """
     if UNREADABLE in cwd or any(UNREADABLE in word for word in rest):
         return UNREADABLE
-    positional = [word for word in rest if not word.startswith("-")]
-    remote = positional[0] if positional else None
-    sources = [source_and_destination(spec.lstrip("+"))[0] for spec in positional[1:]]
-    if any(map(searches_commit_messages, sources)):
+    items = list(push_items(without_redirects(rest)))
+    if any(option == AMBIGUOUS_OPTION for option, _value in items):
         return UNREADABLE
+    positional = [value for option, value in items if option is None]
+    remote = positional[0] if positional else None
+    specs = push_refspecs(positional[1:], last_switch(items, "--delete"))
+    sources = [source for source in (source_and_destination(spec.lstrip("+"))[0] for spec in specs)
+               if source and not source.startswith("^")]
+    if any(searches_commit_messages(source) or source.startswith("-") or "*" in source for source in sources):
+        return UNREADABLE
+    if specs and not sources:
+        return ""  # deletes and ^ entries send no commits
     remotes = f"--remotes={remote}" if remote else "--remotes"
     try:
         log = subprocess.run(
-            ["git", "log", "-p", "--no-color", f"--max-count={MAX_COMMITS}",
-             *([source for source in sources if source] or ["HEAD"]), "--not", remotes],
+            ["git", "log", "-p", "--no-color", f"--max-count={MAX_COMMITS}", *(sources or ["HEAD"]),
+             "--not", remotes, "--"],
             cwd=cwd, capture_output=True, text=True, errors="replace", timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return log.stdout[:MAX_TEXT] if log.returncode == 0 else ""
+        return UNREADABLE
+    return log.stdout[:MAX_TEXT] if log.returncode == 0 else UNREADABLE
 
 
 def graphql_target(text):

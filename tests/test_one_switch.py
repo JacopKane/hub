@@ -542,6 +542,70 @@ def test_a_push_is_checked_at_every_commit_it_names_split_as_git_splits_it_and_a
         assert delete.ran, delete.reason
 
 
+def git_log_waits(home, seconds):
+    """A PATH whose git waits that long before git log, and runs every other git call at once."""
+    folder = os.path.join(home.root, "slow-log-bin")
+    os.makedirs(folder, exist_ok=True)
+    real = subprocess.run(["sh", "-c", "command -v git"], env=home.env, capture_output=True, text=True).stdout.strip()
+    with open(os.path.join(folder, "git"), "w") as handle:
+        handle.write(f'#!/bin/sh\nif [ "$1" = log ]; then sleep {seconds}; fi\nexec "{real}" "$@"\n')
+    os.chmod(os.path.join(folder, "git"), 0o755)
+    return folder + os.pathsep + home.env["PATH"]
+
+
+def test_a_push_is_read_by_gits_own_rules_for_its_words_and_one_whose_commits_git_can_not_list_is_unreadable(
+        home, tool):
+    with given("a repo with a local bare remote, tag v1 on main's pushed commit, a new commit on main whose "
+               "message has a dash, a branch docs at that commit that is also a folder, and the em dash check on"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("tag", "v1")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+        home.git("branch", "docs")
+        os.makedirs(os.path.join(home.work, "docs"))
+    worded = ["git push origin main --recurse-submodules check", "git push origin main -o ci.skip",
+              "git push origin main --push-option ci.skip", "git push origin main -oci.skip",
+              "git push origin main --repo origin", "git push origin main tag v1", "git push origin tag v1 main",
+              "git push origin main '^refs/heads/none'", "git push origin main 2>&1",
+              "git push origin main > push.log", "git push origin docs", "git push origin -- main"]
+    with when("Claude pushes main with an option value, a tag word, a ^ entry or a redirect after it, or pushes "
+              "docs, each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"worded-{index}")
+                   for index, push in enumerate(worded)}
+    with then("the gate reads the words as git push does, lists main's new commit and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    unclear = ["git push origin main nosuch", "git push origin 'ma*:main'",
+               "git push origin main --re origin", "git push origin -- main --output=listed.txt"]
+    with when("Claude pushes a branch git does not have, a pattern, a shortened option git can not tell apart, "
+              "or a word after -- that git log would read as its own option"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"unclear-{index}")
+                   for index, push in enumerate(unclear)}
+    with then("the gate can not list the commits, refuses each one as unreadable, and runs no option of git log"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+        assert not os.path.exists(os.path.join(home.work, "listed.txt"))
+    with when("git log takes longer than the gate waits for it"):
+        kept = home.env["PATH"]
+        home.env["PATH"] = git_log_waits(home, 12)
+        try:
+            slow = home.hook(tool, "PreToolUse", "git push origin main", session="slow")
+        finally:
+            home.env["PATH"] = kept
+    with then("the gate stops waiting and refuses the push as unreadable"):
+        assert slow.refused and slow.findings == ["unreadable"], slow.reason
+    with when("Claude pushes tag v1 alone, or deletes the tag on the remote"):
+        tag = home.hook(tool, "PreToolUse", "git push origin tag v1", session="tag")
+        delete = home.hook(tool, "PreToolUse", "git push --delete origin tag v1", session="delete")
+    with then("both run, since v1's commit is clean"):
+        assert tag.ran, tag.reason
+        assert delete.ran, delete.reason
+
+
 def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
     with given("a repo with a message file in it"):
         home.install()

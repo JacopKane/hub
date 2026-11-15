@@ -48,16 +48,6 @@ PARTS_SECONDS = 10.0
 GIT_SECONDS = 2.0
 GH_SECONDS = 3.0
 RELEVANT = {"push", "pr", "wrapped"}
-# git push's long options, so a shortened one such as --mirr or --no-dry reads as the option git takes it for
-PUSH_LONG_OPTIONS = ("all", "atomic", "branches", "delete", "dry-run", "exec", "follow-tags", "force",
-                     "force-if-includes", "force-with-lease", "ipv4", "ipv6", "mirror", "no-verify", "porcelain",
-                     "progress", "prune", "push-option", "quiet", "receive-pack", "recurse-submodules", "repo",
-                     "set-upstream", "signed", "tags", "thin", "verbose")
-NEVER_NEGATED = {"ipv4", "ipv6"}
-PUSH_ALIASES = {"--branches": "--all"}
-PUSH_SHORT_OPTIONS = {"d": "--delete", "n": "--dry-run", "o": "--push-option", "u": "--set-upstream", "f": "--force",
-                      "q": "--quiet", "v": "--verbose", "4": "--ipv4", "6": "--ipv6"}
-PUSH_VALUE_OPTIONS = {"--push-option", "--repo", "--receive-pack", "--exec", "--recurse-submodules"}
 EVERY_BRANCH = ("--all", "--mirror")
 BRANCH_PREFIXES = ("refs/heads/", "heads/")
 FILL_OPTIONS = {"--fill", "-f", "--fill-first", "--fill-verbose", "--web", "-w"}
@@ -341,83 +331,20 @@ def git_place(step):
     return cwd, words[index:]
 
 
-def without_redirects(words):
-    kept, skip = [], False
-    for word in words:
-        if skip:
-            skip = False
-        elif gate().REDIRECT.fullmatch(word):
-            skip = True
-        elif not gate().REDIRECT.match(word):
-            kept.append(word)
-    return kept
-
-
 # Pushes
-
-
-def option_spellings(option):
-    """(spelling, option, whether it turns the option on) for each way git writes a long option out in full."""
-    if option.startswith("no-"):
-        return [(option, option, True), (option[3:], option, False)]
-    return [(option, option, True)] + ([] if option in NEVER_NEGATED else [("no-" + option, option, False)])
-
-
-PUSH_SPELLINGS = [spelling for option in PUSH_LONG_OPTIONS for spelling in option_spellings(option)]
-
-
-def full_push_option(name):
-    """(the long option git reads for a word such as --mirr or --no-dry, whether the word turns it on). A word
-    that starts only one option is that option, as in git, and a word that starts more than one is refused."""
-    word = name[2:]
-    exact = [(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling == word]
-    shortened = {(f"--{option}", on) for spelling, option, on in PUSH_SPELLINGS if spelling.startswith(word)}
-    if not exact and len(shortened) > 1:
-        raise unreadable("option")
-    option, on = (exact or sorted(shortened) or [(name, True)])[0]
-    return PUSH_ALIASES.get(option, option), on
-
-
-def push_items(words):
-    """(the option in full, its value) for each of git push's words in order, or (None, word) for a positional
-    word. A switch's value is whether it is on. A value option takes its value the way git does."""
-    remaining = iter(words)
-    for word in remaining:
-        if word == "--":
-            yield from ((None, positional) for positional in remaining)
-        elif word.startswith("--"):
-            name, equals, attached = word.partition("=")
-            option, on = full_push_option(name)
-            takes_next_word = option in PUSH_VALUE_OPTIONS and on and not equals
-            yield option, next(remaining, "") if takes_next_word else attached if equals else on
-        elif word.startswith("-") and len(word) > 1:
-            yield from short_push_items(word[1:], remaining)
-        else:
-            yield None, word
-
-
-def short_push_items(letters, remaining):
-    """The options in a cluster such as -uo, where -o takes the rest of the word, or else the next word."""
-    for position, letter in enumerate(letters):
-        option = PUSH_SHORT_OPTIONS.get(letter, "-" + letter)
-        if option in PUSH_VALUE_OPTIONS:
-            yield option, letters[position + 1:] or next(remaining, "")
-            return
-        yield option, True
-
-
-def last_switch(items, option):
-    """Whether a switch is on after every word that names it, so -n --no-dry-run is not a dry run."""
-    return next((value is not False for name, value in reversed(items) if name == option), False)
 
 
 def push_words(rest):
     """(positional words, whether a reason that needs no state keeps it quiet, whether --tags is on)."""
-    items = list(push_items(without_redirects(rest)))
-    if any(last_switch(items, option) for option in EVERY_BRANCH):
+    shared = gate()
+    items = list(shared.push_items(shared.without_redirects(rest)))
+    if any(option == shared.AMBIGUOUS_OPTION for option, _value in items):
+        raise unreadable("option")
+    if any(shared.last_switch(items, option) for option in EVERY_BRANCH):
         raise unreadable("every")
     positional = [value for option, value in items if option is None]
-    return positional, last_switch(items, "--delete") or last_switch(items, "--dry-run"), last_switch(items, "--tags")
+    quiet = shared.last_switch(items, "--delete") or shared.last_switch(items, "--dry-run")
+    return positional, quiet, shared.last_switch(items, "--tags")
 
 
 def pushed(step, lookups):
@@ -427,7 +354,8 @@ def pushed(step, lookups):
     if sets_push_settings_for_one_command(step, words):
         raise push_settings_stop("option")
     positional, quiet, tags = push_words(words[1:])
-    specs = [spec[1:] if spec.startswith("+") else spec for spec in positional[1:]]
+    specs = [spec[1:] if spec.startswith("+") else spec
+             for spec in gate().push_refspecs(positional[1:], deletes=False)]
     if not quiet and ":" in specs:
         raise unreadable("every")  # a lone colon pushes each branch that has a match on the remote
     if quiet or (tags and not specs) or (specs and all(map(is_a_delete, specs))):
@@ -724,7 +652,7 @@ def pr_step(command, step, flags, answer, lookups):
         return []
     if action == ["pr", "ready"] and "--undo" not in rest and flags.runs(f"{PART}.report"):
         written_out(step)
-        return ready_pr(step, *ready_words(without_redirects(rest)), lookups)
+        return ready_pr(step, *ready_words(gate().without_redirects(rest)), lookups)
     return []
 
 
