@@ -395,7 +395,7 @@ def pushed(step, lookups):
         if branch is None:
             raise unreadable("detached")
         remote = push_remote(cwd, branch, lookups)
-    if not GITHUB.search(lookups.git(cwd, "ls-remote", "--get-url", remote) or ""):
+    if not reaches_github(cwd, remote, lookups):
         return []
     defaults = default_branches(cwd, remote, lookups)
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
@@ -403,6 +403,36 @@ def pushed(step, lookups):
     return [(target, commit, cwd, defaults) for target, commit in sent
             if not target.startswith("refs/") and target not in defaults
             and lookups.git(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{target}") != commit]
+
+
+def reaches_github(cwd, remote, lookups):
+    """Whether a push to the remote word may reach GitHub: any URL git pushes to names github.com."""
+    return any(GITHUB.search(url) for url in push_urls(cwd, remote, lookups))
+
+
+def push_urls(cwd, remote, lookups):
+    """The URLs git pushes to for the remote word. A configured remote pushes to its push URLs, as git remote
+    get-url --push shows them. git reads any other word as a URL, which url.<base>.pushInsteadOf rewrites, else
+    url.<base>.insteadOf, as git ls-remote --get-url shows."""
+    listed = lookups.git(cwd, "remote", "get-url", "--push", "--all", "--", remote)
+    if listed is not None:
+        return listed.splitlines()
+    return (rewritten_urls(remote, push_rewrites(cwd, lookups))
+            or [lookups.git(cwd, "ls-remote", "--get-url", remote) or ""])
+
+
+def push_rewrites(cwd, lookups):
+    """[(the start of a URL, the base git puts in its place)] from the repo's url.<base>.pushInsteadOf settings."""
+    listed = lookups.git(cwd, "config", "-z", "--get-regexp", r"^url\..*\.pushinsteadof$") or ""
+    return [(start, key[len("url."):-len(".pushinsteadof")])
+            for key, _newline, start in (entry.partition("\n") for entry in listed.split("\0") if entry)]
+
+
+def rewritten_urls(url, rewrites):
+    """The URL with its longest matching start replaced, as git's alias_url picks it, or [] when none matches.
+    When two bases tie, each counts, so the check does not depend on which one git meets first."""
+    longest = max((len(start) for start, _base in rewrites if url.startswith(start)), default=None)
+    return [base + url[len(start):] for start, base in rewrites if url.startswith(start) and len(start) == longest]
 
 
 def is_a_delete(spec):

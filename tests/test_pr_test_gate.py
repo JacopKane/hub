@@ -1,7 +1,7 @@
 """The PR test gate, end to end through hub's dispatcher.
 
-Each scenario walks a real repo whose origin names GitHub while its pushes go
-to a local bare repo, so the gate sees GitHub and nothing leaves the machine.
+Each scenario walks a real repo whose origin is a local bare repo in a folder
+named github.com, so the gate sees GitHub and nothing leaves the machine.
 A fake gh on PATH is the only stand-in: it says which branches have an open
 PR and which commit a PR's head is. Test reports are written where hub keeps
 them, in the repo's common git folder, in the shape the pr-tested step writes.
@@ -17,7 +17,6 @@ from conftest import REPO, commit
 from steps import and_, given, then, when
 
 PART = "pr_test_gate"
-ORIGIN = "https://github.com/acme/demo.git"
 CANONICAL = ("## What it is\n\nThe save button keeps the draft.\n\n### How it was tested\n\n"
              "Ran the save scenarios against a local server.\nNot tested: real GitHub, since a fake gh stands in.\n")
 ONLY_PASSING = "## What it is\n\nA fix.\n\n## How it was tested\n\nAll 54 tests pass.\n"
@@ -35,13 +34,19 @@ TEMPLATE_BODY = "## Summary\n\nA fix.\n\n## Test plan\n\nRan the scenarios.\nNot
 # The repo, its remote and the fake gh
 
 
+def github_folder(home):
+    """The local bare repo that stands in for acme/demo on GitHub: its path names github.com."""
+    return os.path.join(home.root, "github.com", "acme", "demo.git")
+
+
 def with_github(home):
-    """hub installed, a repo whose origin names GitHub and pushes to a local bare repo, and the fake gh."""
+    """hub installed, a repo whose origin is a local bare repo in a folder named github.com, and the fake gh.
+    It returns a second local bare repo, whose path names no GitHub host."""
     home.install()
-    bare = os.path.join(home.root, "remote.git")
-    home.git("init", "-q", "--bare", bare)
-    home.git("remote", "add", "origin", ORIGIN)
-    home.git("config", f"url.{bare}.pushInsteadOf", ORIGIN)
+    origin, elsewhere = github_folder(home), os.path.join(home.root, "other.git")
+    for bare in (origin, elsewhere):
+        home.git("init", "-q", "--bare", bare)
+    home.git("remote", "add", "origin", origin)
     folder = os.path.join(home.root, "gh-bin")
     os.makedirs(folder)
     shutil.copy(os.path.join(REPO, "tests", "fakes", "fake_gh.py"), os.path.join(folder, "gh"))
@@ -52,7 +57,7 @@ def with_github(home):
     fake_gh(home)
     home.git("push", "-q", "-u", "origin", "main")
     home.git("remote", "set-head", "origin", "main")
-    return bare
+    return elsewhere
 
 
 def fake_gh(home, **config):
@@ -563,9 +568,9 @@ def test_a_branch_named_in_a_push_is_judged_at_the_remote_branch_git_updates(hom
         os.makedirs(os.path.join(home.work, ".git", "remotes"), exist_ok=True)
         os.makedirs(os.path.join(home.work, ".git", "branches"), exist_ok=True)
         with open(os.path.join(home.work, ".git", "remotes", "old"), "w") as handle:
-            handle.write(f"URL: {ORIGIN}\nPush: refs/heads/fix-a:refs/heads/feature\n")
+            handle.write(f"URL: {github_folder(home)}\nPush: refs/heads/fix-a:refs/heads/feature\n")
         with open(os.path.join(home.work, ".git", "branches", "old2"), "w") as handle:
-            handle.write(f"{ORIGIN}#feature\n")
+            handle.write(f"{github_folder(home)}#feature\n")
         from_file = bash(home, "git push old fix-a")
         sent_from_file = home.git("push", "--dry-run", "--porcelain", "--force", "old", "fix-a").stdout
         file_with_destination = bash(home, "git push old fix-a:feature")
@@ -1470,3 +1475,37 @@ def test_gh_pr_create_and_edit_words_are_read_the_way_gh_reads_its_flags(home):
     with then("each runs with no answer"):
         for step, result in results.items():
             assert quiet(result), (step, result.reason)
+
+
+def test_the_push_urls_decide_whether_a_push_reaches_github(home):
+    with given("branch feature with open PR 7 and a new commit with no report, and remotes whose fetch and push "
+               "URLs point at different hosts"):
+        elsewhere = with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        github = github_folder(home)
+        home.git("remote", "add", "pub", elsewhere)
+        home.git("config", "remote.pub.pushurl", github)
+        home.git("remote", "add", "both", elsewhere)
+        home.git("config", "remote.both.pushurl", elsewhere)
+        home.git("config", "--add", "remote.both.pushurl", github)
+        home.git("remote", "add", "fetchonly", github)
+        home.git("config", "remote.fetchonly.pushurl", elsewhere)
+        mapped = os.path.join(home.root, "mapped", "demo.git")
+        home.git("config", f"url.{os.path.join(home.root, 'github.com', 'acme')}/.pushInsteadOf",
+                 os.path.join(home.root, "mapped") + "/")
+    to_github = {"a remote that fetches elsewhere and pushes to GitHub": "git push pub feature",
+                 "a remote with a second push URL on GitHub": "git push both feature",
+                 "a URL that url.*.pushInsteadOf sends to GitHub": f"git push {mapped} feature"}
+    with when("Claude pushes feature where one of the push URLs is on GitHub"):
+        results = {case: bash(home, step) for case, step in to_github.items()}
+    with then("each is judged as the push to GitHub it is, and refused for feature's commit"):
+        for case, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (case, result.reason)
+    elsewhere_only = {"a remote that fetches from GitHub and pushes elsewhere": "git push fetchonly feature",
+                      "a URL with no GitHub host": f"git push {elsewhere} feature"}
+    with when("Claude pushes feature where no push URL is on GitHub"):
+        results = {case: bash(home, step) for case, step in elsewhere_only.items()}
+    with then("each runs with no answer"):
+        for case, result in results.items():
+            assert quiet(result), (case, result.reason)
