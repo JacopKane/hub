@@ -29,6 +29,9 @@ TEMPLATE = "## Summary\n\n## Test plan\n"
 NAMED_EXAMPLE = "git push origin feature"
 DESTINATION_EXAMPLE = "git push origin fix-a:feature, where feature is the branch on the remote"
 TEMPLATE_BODY = "## Summary\n\nA fix.\n\n## Test plan\n\nRan the scenarios.\nNot covered: the slow network case.\n"
+# gh's lookup of feature's open PR, in gh's own repo for the folder; the same words with -R ask another repo
+OPEN_PR_LIST = ["pr", "list", "--head", "feature", "--state", "open", "--json", "number,baseRefName,headRefOid",
+                "--limit", "1"]
 
 
 # The repo, its remote and the fake gh
@@ -921,10 +924,10 @@ def test_steps_outside_the_gate_run_quietly(home):
     with when("gh works and feature has no open PR"):
         fake_gh(home, open={})
         result = bash(home, "git push")
-    with then("the push runs after one lookup for feature, since the later new PR needs the report"):
+    with then("the push runs after gh is asked for feature's PR in its own repo and in acme/demo, since the later "
+              "new PR needs the report"):
         assert quiet(result)
-        assert gh_calls(home) == [["pr", "list", "--head", "feature", "--state", "open", "--json",
-                                   "number,baseRefName,headRefOid", "--limit", "1"]]
+        assert gh_calls(home) == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
 
 
 def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_was_not_tested(home):
@@ -1540,7 +1543,40 @@ def test_the_push_urls_decide_whether_a_push_reaches_github(home):
             assert quiet(result), (case, result.reason)
 
 
-SSH_HOST_WHY = "ssh could not say which host the remote's address names"
+def test_a_push_is_judged_by_an_open_pr_in_the_repo_it_goes_to_as_well_as_in_ghs_own_repo_for_the_folder(home):
+    with given("branch feature with a new commit and no report, and open PR 7 for feature in acme/demo, which "
+               "origin pushes to, while gh's own repo for the folder, as gh repo set-default may pick, has none"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={}, open_in={"github.com/acme/demo": {"feature": 7}})
+    with when("Claude pushes feature to origin, by the remote's name and by its URL"):
+        results = {step: bash(home, step) for step in ("git push", f"git push {github_folder(home)} feature")}
+    with then("each is refused for feature's commit, after gh is asked in its own repo and in acme/demo"):
+        for step, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (step, result.reason)
+        assert gh_calls(home)[-4:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]] * 2
+    with when("a second GitHub remote, acme/fork, holds the open PR instead, and Claude pushes feature there"):
+        fork = os.path.join(home.root, "github.com", "acme", "fork.git")
+        home.git("init", "-q", "--bare", fork)
+        home.git("remote", "add", "fork", fork)
+        fake_gh(home, open={}, open_in={"github.com/acme/fork": {"feature": 8}})
+        to_fork = bash(home, "git push fork feature")
+    with then("it is refused too, since PR 8 gets the new commit"):
+        assert says(home, to_fork, "no_report.md", short=feature[:7], branch="feature"), to_fork.reason
+    with when("no repo has an open PR for feature, and Claude pushes it to the fork"):
+        fake_gh(home, open={}, open_in={})
+        no_pr = bash(home, "git push fork feature")
+    with then("it runs, after gh is asked in its own repo and in acme/fork"):
+        assert quiet(no_pr), no_pr.reason
+        assert gh_calls(home)[-2:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/fork"]]
+    with when("gh can not reach GitHub, and Claude pushes feature to the fork"):
+        fake_gh(home, fail=True)
+        failed = bash(home, "git push fork feature")
+    with then("the push is refused, as after any failed lookup"):
+        assert says(home, failed, "no_report.md", short=feature[:7], branch="feature"), failed.reason
+
+
+SSH_HOST_WHY ="ssh could not say which host the remote's address names"
 
 
 def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_other_hosts_stay_quiet(home):
@@ -1613,10 +1649,9 @@ def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_send
         home.git("push", "-q")
         fake_gh(home, open={"feature": 7})
         again = bash(home, "git push")
-    with then("it runs after one lookup, which reads the head of PR 7 from GitHub"):
+    with then("it runs after gh reads the head of PR 7 from GitHub, in its own repo and in acme/demo"):
         assert quiet(again), again.reason
-        assert gh_calls(home)[-1] == ["pr", "list", "--head", "feature", "--state", "open", "--json",
-                                      "number,baseRefName,headRefOid", "--limit", "1"]
+        assert gh_calls(home)[-2:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
     with when("branch side is pushed with no report, its next commit gets a report, and the local copy of "
               "origin's side is moved to that commit"):
         home.git("checkout", "-q", "-b", "side", "main")

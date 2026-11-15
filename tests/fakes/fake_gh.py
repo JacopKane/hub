@@ -6,6 +6,8 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
 
 - open: {branch: PR number} for `gh pr list --head <branch> --state open`; the PR's head commit is the one
   origin's bare repo has for the branch, as GitHub would say
+- open_in: {repo: {branch: PR number}} for the same list in the repo -R, --repo or GH_REPO names, such as
+  github.com/acme/demo; a repo it does not name gets open
 - heads: {PR number or branch: head commit} for `gh pr view [<it>] --json headRefOid,baseRefName`; with no
   number, gh's own way to find the current branch's PR, the branch checked out in the folder is the key; with
   -R or --repo, or else a GH_REPO that is not empty, the key is <repo>#<number>
@@ -76,7 +78,8 @@ def base_of(key):
 
 if words[:2] == ["pr", "list"]:
     branch = value_of("--head")
-    number = config.get("open", {}).get(branch)
+    listed = config.get("open_in", {}).get(repo_named(), config.get("open", {}))
+    number = listed.get(branch)
     print(json.dumps([{"number": number, "baseRefName": base_of(branch), "headRefOid": pushed_head(branch)}]
                      if number else []))
 elif words[:2] == ["pr", "view"]:

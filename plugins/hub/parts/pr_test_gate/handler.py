@@ -4,7 +4,8 @@ Before a Bash call runs, it reads the command with the public text gate's
 shell parser and stops three steps until the commit they send has a passing
 report from hub's pr-tested step:
 
-- a push to a GitHub branch that has an open PR (one gh lookup at most);
+- a push to a GitHub branch that has an open PR, in gh's own repo for the folder or in the repo the push goes
+  to;
 - a new PR, through gh pr create or gh api, for the PR's head commit;
 - marking a PR ready, for the PR's head commit.
 
@@ -410,8 +411,9 @@ def push_words(rest):
 
 
 def pushed(step, lookups):
-    """[(branch, commit, cwd, no known base)] for each GitHub branch the push may update. Local refs do not show
-    what GitHub has, so with_open_pr asks GitHub which of them bring an open PR something new."""
+    """[(branch, commit, cwd, no known base, the GitHub repo it goes to)] for each GitHub branch the push may
+    update, once for each GitHub repo it pushes to. Local refs do not show what GitHub has, so with_open_pr asks
+    GitHub which of them bring an open PR something new."""
     cwd, words = git_place(step)
     if sets_push_settings_for_one_command(step, words):
         raise push_settings_stop("option")
@@ -432,16 +434,20 @@ def pushed(step, lookups):
         if branch is None:
             raise unreadable("detached")
         remote = push_remote(cwd, branch, lookups)
-    if not reaches_github(cwd, remote, lookups):
+    repos = github_repos(cwd, remote, lookups)
+    if not repos:
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
-    return [(target, commit, cwd, set(), CURRENT_REPO) for target, commit in sent if not target.startswith("refs/")]
+    return [(target, commit, cwd, set(), ("rest", repo, {})) for target, commit in sent
+            if not target.startswith("refs/") for repo in repos]
 
 
-def reaches_github(cwd, remote, lookups):
-    """Whether a push to the remote word may reach GitHub: any URL git pushes to is on GitHub."""
-    return any(is_a_github_url(url, cwd, lookups) for url in push_urls(cwd, remote, lookups))
+def github_repos(cwd, remote, lookups):
+    """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
+    GitHub, or [] when none is on GitHub."""
+    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups)]
+    return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
 def is_a_github_url(url, cwd, lookups):
@@ -674,24 +680,35 @@ def branch_name(ref):
 
 
 def with_open_pr(candidates, lookups):
-    """The pushed branches that send something new to an open PR, each with the branch its PR goes into, as GitHub
-    says. A branch with no open PR, or whose PR's head is already the commit sent, drops out. More than one
-    branch, or a failed lookup, keeps them all, with no known base."""
+    """The pushed branches that send something new to an open PR, each with the branch its PR goes into and the
+    repo the PR is in, as GitHub says. gh is asked in its own repo for the folder, where a PR from a fork is, and
+    in each repo the push goes to. A branch with no open PR, or whose PR's head is already the commit sent, drops
+    out. More than one branch, or a failed lookup, keeps them all, with no known base."""
     if len({branch for branch, _commit, _cwd, _bases, _place in candidates}) != 1:
         return candidates
     branch, _commit, cwd, _bases, _place = candidates[0]
-    output, _why = lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
-                              "number,baseRefName,headRefOid", "--limit", "1")
-    listed = parsed_json(output)
-    if not isinstance(listed, list):
-        return candidates
-    if not listed:
-        return []
-    found = listed[0] if isinstance(listed[0], dict) else {}
-    base, pr_head_commit = found.get("baseRefName"), found.get("headRefOid")
-    bases = {base} if isinstance(base, str) and base else set()
-    return [(name, commit, here, bases, place) for name, commit, here, _bases, place in candidates
-            if commit != pr_head_commit]
+    found = []
+    for place, repo_words in pr_lists({place[1] for *_start, place in candidates}):
+        listed = parsed_json(lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
+                                        "number,baseRefName,headRefOid", "--limit", "1", *repo_words)[0])
+        if not isinstance(listed, list):
+            return candidates
+        found += [(pr if isinstance(pr, dict) else {}, place) for pr in listed[:1]]
+    sent = list(dict.fromkeys((name, commit, here) for name, commit, here, _bases, _place in candidates))
+    return [(name, commit, here, bases_of_pr(pr), place) for pr, place in found for name, commit, here in sent
+            if commit != pr.get("headRefOid")]
+
+
+def pr_lists(repos):
+    """[(the repo a PR that gh pr list finds is in, the -R words it is asked with)]: gh's own repo for the folder,
+    then each GitHub repo by its REST path, in a fixed order."""
+    return [(CURRENT_REPO, []), *((("rest", repo, {}), ["-R", "github.com/" + repo[len("repos/"):]])
+                                  for repo in sorted(repos))]
+
+
+def bases_of_pr(pr):
+    base = pr.get("baseRefName")
+    return {base} if isinstance(base, str) and base else set()
 
 
 def parsed_json(output):
