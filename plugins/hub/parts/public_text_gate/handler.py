@@ -866,7 +866,8 @@ def commits_read(rest, cwd, one_command_settings, deadline):
         return UNREADABLE
     if int(counted[1]) > MAX_COMMITS:
         return UNTRACKED_PUSH if remote and not has_tracking_branches(cwd, remote, deadline) else LONG_PUSH
-    log = git_run(["log", "-p", "--no-color", *revisions], cwd, deadline, limit=MAX_TEXT)
+    # --cc shows the text a merge adds beyond its parents, such as a settled conflict, and plain -p shows none.
+    log = git_run(["log", "-p", "--cc", "--no-color", *revisions], cwd, deadline, limit=MAX_TEXT)
     if log is None:
         return UNREADABLE
     if len(log[1]) > MAX_TEXT:

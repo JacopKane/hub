@@ -671,6 +671,48 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
         assert piped.refused and piped.findings == ["unreadable"], piped.reason
 
 
+def commit_notes(home, text, message):
+    with open(os.path.join(home.work, "notes.txt"), "w") as notes:
+        notes.write(text)
+    home.git("add", "notes.txt")
+    home.git("commit", "-q", "-m", message)
+
+
+def merge_side_into_main(home, resolved):
+    """Merge branch side into main, where both changed the second line of notes.txt, and settle the conflict by
+    writing resolved as that line."""
+    home.run(["git", "merge", "-q", "side", "-m", "Merge side"], check=False)
+    with open(os.path.join(home.work, "notes.txt"), "w") as notes:
+        notes.write(f"one\n{resolved}\n")
+    home.git("add", "notes.txt")
+    home.git("commit", "-q", "--no-edit")
+
+
+def test_a_merge_whose_conflict_is_settled_with_new_text_is_read_like_any_other_commit(home, tool):
+    with given("a pushed main with notes.txt, then a branch side and main that each change its second line, and "
+               "the PR test gate off"):
+        pushed_repo(home)
+        commit_notes(home, "one\ntwo\n", "Add notes")
+        home.git("push", "-q", "origin", "main")
+        home.git("checkout", "-q", "-b", "side")
+        commit_notes(home, "one\nside two\n", "Side change")
+        home.git("checkout", "-q", "main")
+        commit_notes(home, "one\nmain two\n", "Main change")
+        before_merge = home.git("rev-parse", "HEAD").stdout.strip()
+    with and_("side merged into main, with the conflict settled by a line that has a dash"):
+        merge_side_into_main(home, f"Settled {DASH} line")
+    with when("Claude pushes main"):
+        dashed = home.hook(tool, "PreToolUse", "git push origin main", session="merge-dash")
+    with then("the gate reads the text the merge commit itself adds and names the dash"):
+        assert dashed.refused and dashed.findings == ["dashes"], dashed.reason
+    with when("main goes back to before the merge, merges side again with a plain line, and Claude pushes it"):
+        home.git("reset", "-q", "--hard", before_merge)
+        merge_side_into_main(home, "Settled line")
+        plain = home.hook(tool, "PreToolUse", "git push origin main", session="merge-plain")
+    with then("the push runs"):
+        assert not plain.refused, plain.reason
+
+
 def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_tags_are_read(home, tool):
     with given("a repo whose main has a clean new commit, a branch draft and a tag v2 at a new commit whose "
                "message has a dash, and the PR test gate off"):
