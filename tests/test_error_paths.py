@@ -84,6 +84,34 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
         assert listing.ran and listing.output == {}
 
 
+def test_after_a_part_crashes_hub_names_a_push_as_public_without_reading_its_commits(home, tool):
+    with given("hub is installed with the PR test gate off, the repo has a local bare remote and a new commit, the "
+               "gate's handler raises as soon as it runs, and a git first on PATH logs each call"):
+        home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", "Late change")
+        plant(home, lambda code: code.replace(
+            "def handle(event, hook_input, flags, answer):\n",
+            "def handle(event, hook_input, flags, answer):\n    raise RuntimeError('planted failure')\n"))
+        logging = os.path.join(home.root, "logging-git")
+        calls = os.path.join(home.root, "git-calls.txt")
+        real = home.run(["sh", "-c", "command -v git"]).stdout.strip()
+        write_text(os.path.join(logging, "git"), f"#!/bin/sh\necho \"$*\" >> '{calls}'\nexec '{real}' \"$@\"\n")
+        os.chmod(os.path.join(logging, "git"), 0o755)
+        home.env["PATH"] = logging + os.pathsep + home.env["PATH"]
+    with when("Claude pushes main"):
+        push = home.hook(tool, "PreToolUse", "git push origin main", errors_expected=True)
+    with then("the push is refused with the error, and hub never asked git for the commits it sends, so the "
+              "refusal does not spend the hook's time on a second read"):
+        assert push.refused and "planted failure" in push.reason
+        asked = open(calls).read().split("\n") if os.path.exists(calls) else []
+        assert not [line for line in asked if line.split(" ", 1)[0] in ("rev-list", "log")], asked
+
+
 def test_hook_input_that_is_not_json_or_an_unknown_event_never_lets_a_public_step_through(home):
     dispatcher = [sys.executable, "-I", os.path.join(PLUGIN, "lib", "hub", "dispatch.py")]
     adapter = [sys.executable, "-I", os.path.join(PLUGIN, "lib", "hub", "adapters", "cursor_hooks.py")]

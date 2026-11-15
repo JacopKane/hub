@@ -312,8 +312,8 @@ def is_public_step(hook_input, raw):
     if hook_input.get("tool_name") != "Bash":
         return False
     command = (hook_input.get("tool_input") or {}).get("command") or ""
-    try:
-        return bool(load_handler(GATE).public_steps(command, hook_input.get("cwd") or os.getcwd()))
+    try:  # without the log, so naming a push runs no git after the parts have used up their time
+        return bool(load_handler(GATE).public_steps(command, hook_input.get("cwd") or os.getcwd(), log=False))
     except Exception:
         return bool(ROUGH_PUBLIC.search(command))
 
