@@ -786,13 +786,17 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
         wrapped = bash(home, "bash -c 'g\"\"it push origin feature'")
         unknown_option = bash(home, f"gh api repos/acme/demo/pulls --head-ref side -F body=@{good}")
         hidden_action = bash(home, f"gh pr $ACTION --title T --body-file {good}")
-    with then("this gate refuses it as a push inside another command, even with a report, and refuses a gh api "
-              "option it does not know"):
+        hidden_git_action = bash(home, "git $ACTION origin feature")
+    with then("this gate refuses it as a push inside another command, even with a report, refuses a gh api "
+              "option it does not know, and refuses a gh or git action that a variable fills in"):
         assert says(home, wrapped, "unreadable_push.md", why="it runs inside another command"), wrapped.reason
         assert says(home, unknown_option, "unreadable_push.md", why="gh api has an option the gate does not know"), \
             unknown_option.reason
         assert says(home, hidden_action, "unreadable_push.md",
                     why="a variable or a substitution fills in a word gh may read as its command"), hidden_action.reason
+        assert says(home, hidden_git_action, "unreadable_push.md",
+                    why="a variable or a substitution fills in a word git may read as its action or an option before "
+                        "it"), hidden_git_action.reason
 
 
 def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):

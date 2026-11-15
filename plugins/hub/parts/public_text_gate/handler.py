@@ -238,6 +238,12 @@ RELEASE_VALUE_OPTIONS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file",
                          "--discussion-category", "--notes-start-tag"}
 # Short options of git commit and git tag that take the rest of the word as their value.
 VALUE_LETTERS = set("CctSu")
+# (long options, short letters) of git commit and of git tag that take the next word as their value when it is not
+# in the same word. git commit's -S and -u, and git tag's -n, take a value only in the same word.
+COMMIT_VALUES = ({"--author", "--date", "--cleanup", "--reuse-message", "--reedit-message", "--fixup", "--squash",
+                  "--template", "--trailer", "--pathspec-from-file", "--message", "--file"}, "CctmF")
+TAG_VALUES = ({"--local-user", "--cleanup", "--format", "--sort", "--contains", "--no-contains", "--merged",
+               "--no-merged", "--points-at", "--trailer", "--message", "--file"}, "umF")
 BINARY_PEEK = 8000  # bytes; a NUL byte here marks a binary file, as in git
 # git's own options that take the next word as their value, before its action, as git.c reads them. git read
 # --super-prefix this way up to 2.39. self_protection reads this set too, so both find the same action.
@@ -1145,6 +1151,52 @@ def commit_texts(rest, command):
     return texts
 
 
+def shell_fills_in_an_option(word, value_letters=""):
+    """Whether the shell fills in a part of the word that git may read as an option or as its action, as in $FLAG,
+    $'-\\m' or -a$X. A word that starts with other text, as in v$VERSION, and a word where the shell fills in only
+    an option's value, as in --author=$NAME or, with m among value_letters, -m"$TEXT", are not."""
+    if UNREADABLE not in word:
+        return False
+    before = word.split(UNREADABLE, 1)[0]
+    if before.startswith("--"):
+        return "=" not in before
+    if before.startswith("-"):
+        return not any(letter in value_letters or not letter.isalpha() for letter in before[1:])
+    return before == ""
+
+
+def takes_next_word(word, value_options):
+    """Whether git commit or git tag takes the word after this one as the option's value."""
+    long_options, letters = value_options
+    if word.startswith("--"):
+        return word in long_options
+    if not re.match(r"-[A-Za-z]", word):
+        return False
+    for position, letter in enumerate(word[1:], 1):
+        if letter in letters:
+            return position == len(word) - 1
+        if letter in VALUE_LETTERS or not letter.isalpha():
+            return False
+    return False
+
+
+def option_filled_in(rest, value_options):
+    """Whether the shell fills in a word before -- that git commit or git tag may read as an option, such as -m or
+    -F, which would bring a message the gate does not read. An option's value is skipped."""
+    value_letters = value_options[1] + "".join(VALUE_LETTERS)
+    index = 0
+    while index < len(rest) and rest[index] != "--":
+        if shell_fills_in_an_option(rest[index], value_letters):
+            return True
+        index += 2 if takes_next_word(rest[index], value_options) else 1
+    return False
+
+
+def message_texts(rest, command, value_options):
+    """The message texts of git commit or git tag, with an unreadable one when the shell fills in an option."""
+    return commit_texts(rest, command) + ([UNREADABLE] if option_filled_in(rest, value_options) else [])
+
+
 def git_target(words, command):
     cwd = command.cwd
     index = 1
@@ -1156,6 +1208,8 @@ def git_target(words, command):
             index += 2
         elif word in GIT_VALUE_OPTIONS and index + 1 < len(words):
             index += 2
+        elif shell_fills_in_an_option(word):
+            return WRAPPED, UNREADABLE  # an option the shell fills in may take the next word, or be the action
         elif word.startswith("-"):
             index += 1
         else:
@@ -1163,9 +1217,11 @@ def git_target(words, command):
     if index >= len(words):
         return None
     action, rest = words[index], words[index + 1:]
+    if UNREADABLE in action:
+        return WRAPPED, UNREADABLE  # the shell fills in git's action, so it could be push, commit or tag
     if action == "commit":
         command.cwd, outer = cwd, command.cwd
-        texts = commit_texts(rest, command)
+        texts = message_texts(rest, command, COMMIT_VALUES)
         command.cwd = outer
         return ("commit", "\n".join(texts)) if texts else None
     if action == "push":
@@ -1179,7 +1235,7 @@ def git_target(words, command):
         return "push", pushed_commits(rest, cwd, settings_set_by_options(options), command.deadline)
     if action == "tag":
         command.cwd, outer = cwd, command.cwd
-        texts = commit_texts(rest, command)
+        texts = message_texts(rest, command, TAG_VALUES)
         command.cwd = outer
         if texts:
             return "tag", "\n".join(texts)

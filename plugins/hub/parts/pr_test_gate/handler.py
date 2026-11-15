@@ -119,6 +119,7 @@ WHY = {
     "folder": "the folder it runs in is missing or not known",
     "body": "a variable or a substitution fills in the PR body",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
+    "git_command": "a variable or a substitution fills in a word git may read as its action or an option before it",
     "search": "a search of commit messages picks the commit",
     "pr_option": "gh has an option the gate does not know, or one with no value",
     "head_repo": "it names the head's repo in a way the gate does not read",
@@ -278,6 +279,8 @@ def read_steps(line, cwd):
             command.cwd = here or cwd
             step_words = words[index:] if program == "git" else without_gh_alias(gh_words(parser, words[index:]))
             target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
+            if program == "git" and target and target[0] == parser.WRAPPED:
+                raise unreadable("git_command")
             api = program == "gh" and step_words[1:2] == ["api"]
             if not target or (target[0] not in RELEVANT and not api):
                 continue

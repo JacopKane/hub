@@ -956,6 +956,39 @@ def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home
         assert plain.ran, plain.reason
 
 
+def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    actions = ["git $(echo push) origin main", "git $ACTION origin main", "git $'\\p'ush origin main",
+               "git pu$REST origin main", "git -$OPTION push origin main", "git $OPTION commit -m Fix",
+               "git -$OPTION commit -m Fix"]
+    with when("Claude sends git with an action, or an option before it, that a substitution, a variable or a $'...' "
+              "escape that zsh reads as a plain letter fills in"):
+        results = hooks(home, tool, actions, "action")
+    with then("the gate can not tell which action runs, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    options = ["git commit $FLAG 'Fix it'", "git commit $'-\\m' 'Fix it'", "git commit -a$FLAG 'Fix it'",
+               "git commit --$OPTION 'Fix it'", "git commit -m Fix \"$FILE\"", "git tag $'-\\m' 'Fix it' v1",
+               "git tag $FLAG v1"]
+    with when("Claude commits or tags with a word before -- that the shell fills in, where git may read an option "
+              "such as -m or -F"):
+        results = hooks(home, tool, options, "option")
+    with then("the message could be text the gate never reads, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    values = ["git commit --author \"$AUTHOR\" -m Fix", "git commit --author=\"$AUTHOR\" -m Fix",
+              "git commit -m Fix -- \"$FILE\"", "git commit -am Fix --date \"$WHEN\"", "git commit -S$KEY -m Fix",
+              "git tag -u \"$KEY\" -m Fix v1", "git tag -a v$VERSION -m Fix", "git -C \"$FOLDER\" status"]
+    with when("Claude commits or tags with a clean message, where the shell fills in only an option's value, a "
+              "path after --, or a tag name after other text"):
+        results = hooks(home, tool, values, "value")
+    with then("each call runs"):
+        for line, result in results.items():
+            assert not result.refused, (line, result.reason)
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
