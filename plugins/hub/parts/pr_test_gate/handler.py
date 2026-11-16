@@ -137,6 +137,7 @@ WHY = {
     "copies": "git could not list its copies of the remote's branches",
     "ssh_host": "ssh could not say which host the remote's address names",
     "ssh_command": "the gate can not read git's ssh command, so it can not tell which host the push reaches",
+    "query": "the gate can not read the whole GraphQL query before the command runs",
 }
 GH_SSH = ("ssh",)  # gh reads a host's ssh config with plain ssh -G
 SSH_COMMAND_SETTING = "core.sshcommand"
@@ -1224,9 +1225,11 @@ def api_step(command, step, flags, answer, lookups):
         except ValueError:
             sent = None
         if not isinstance(sent, dict):
-            raise unreadable("head")
+            raise unreadable("query" if endpoint == "graphql" else "head")
         fields.update(sent_fields(sent, endpoint == "graphql"))
     if endpoint == "graphql":
+        if flags.runs(f"{PART}.report") or flags.runs(f"{PART}.body"):
+            query_read_in_full(step, gate().graphql_query_source(items, command))
         return graphql_step(fields, step, flags, answer, lookups)
     new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
     if new and method == "POST":
@@ -1325,6 +1328,18 @@ def pr_mutations(query):
     if not re.search(r"\bmutation\b", query):
         return set()
     return {name for name in PR_MUTATIONS if re.search(r"\b" + name + r"\b", query)}
+
+
+def query_read_in_full(step, source):
+    """Refuse a GraphQL call whose query the gate can not read in full. A query from a file, a heredoc or
+    $(cat file) counts only when nothing on the line can change it first, so no command runs before the step
+    and the shell fills in none of its words."""
+    if source is None:
+        raise unreadable("query")
+    if source == "file":
+        written_out(step)
+        if any(unreadable_mark() in word for word in step.words):
+            raise unreadable("query")
 
 
 def graphql_step(fields, step, flags, answer, lookups):

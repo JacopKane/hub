@@ -1587,16 +1587,42 @@ def pushes_read_in_place(steps, line):
     return [(target, UNREADABLE if target == "push" else text) for target, text in steps]
 
 
-def graphql_target(text):
-    mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", text)
-    if not mutation:
+def graphql_target(text, source):
+    """What a GraphQL call writes to, or None for a read. It is a read only when each query it may send stands
+    in the command itself and no text it sends names a mutation. A query from a file, or one the gate can not
+    read, counts as a write. A mutation the gate can not name, as in a fragment on Mutation, writes to "api"."""
+    if source == "written" and not re.search(r"\bmutation\b", text, re.I):
         return None
-    name = mutation.group(1)
+    mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", text)
+    name = mutation.group(1) if mutation else ""
     for part, target in (("Discussion", "discussion"), ("Review", "review_comment"), ("PullRequest", "pr"),
                          ("Issue", "issue"), ("Comment", "issue")):
         if part in name:
             return target
     return "api"
+
+
+def graphql_query_source(items, command):
+    """Where the queries of a gh api graphql call come from. "written" means each one stands in the command
+    itself. "file" means one comes from a file, a heredoc or $(cat file), which the gate reads now but which may
+    change before gh reads it. None means the gate can not read one in full. A field name the shell fills in may
+    be the query, and standard input counts only when it is the one heredoc on the line, set on this command."""
+    sent = [(name, *field.partition("=")[::2]) for name, field in items if name in ("--field", "--raw-field")]
+    if any(UNREADABLE in key for _name, key, _value in sent):
+        return None
+    queries = [(name == "--field" and value.startswith("@"), value) for name, key, value in sent
+               if key.split("[", 1)[0] == "query"]
+    paths = [value[1:] for from_file, value in queries if from_file]
+    paths += [path for name, path in items if name == "--input"]
+    stdin = any(path == "-" or path in STDIN_PATHS for path in paths)
+    if stdin and not (len(command.heredocs) == 1
+                      and [value for name, value in items if name is None][1:] == [PLACEHOLDER.format(0)]):
+        return None
+    written = [(value, command.expand(value)) for from_file, value in queries if not from_file]
+    texts = [command.from_file(path) for path in paths] + [expanded for _value, expanded in written]
+    if any(UNREADABLE in text or len(text.encode("utf-8")) >= MAX_TEXT for text in texts):
+        return None  # a text at MAX_TEXT may be cut short, since the gate reads no more of a file
+    return "file" if paths or any(value != expanded for value, expanded in written) else "written"
 
 
 def gh_api_items(words):
@@ -1640,16 +1666,17 @@ def gh_api_item(word, following):
     return found + [(GH_API_SHORT_VALUES[letter], following[0])], 2
 
 
-def gh_api_target(items, texts):
+def gh_api_target(items, texts, graphql_source):
     """What a gh api command writes to, or None for a read.
 
     gh sends POST when the command has a field or --input and no --method. An option gh does not
-    have counts as a write, since the gate can not tell what it does.
+    have counts as a write, since the gate can not tell what it does. graphql_source is where a
+    GraphQL call's queries come from, as graphql_query_source says.
     """
     endpoints = [value for name, value in items if name is None]
     unknown = any(name == "unknown" for name, _ in items)
     if endpoints and endpoints[0] == "graphql":
-        return graphql_target("\n".join(texts)) or ("api" if unknown else None)
+        return graphql_target("\n".join(texts), graphql_source) or ("api" if unknown else None)
     methods = [value for name, value in items if name == "--method"]
     sends = any(name in ("--field", "--raw-field", "--input") for name, _ in items)
     writes = methods[-1].upper() != "GET" if methods else sends
@@ -1734,7 +1761,9 @@ def gh_target(words, command):
             body = command.from_file(path)
             texts += [body, decoded(json_field(body, "content"))]
         texts += [UNREADABLE for name, _ in items if name == "unknown"]
-        target = gh_api_target(items, [text for text in texts if text])
+        graphql = [value for name, value in items if name is None][:1] == ["graphql"]
+        source = graphql_query_source(items, command) if graphql else None
+        target = gh_api_target(items, [text for text in texts if text], source)
         return (target, "\n".join(texts)) if target else None
     if group == "release" and rest and rest[0] == "upload":
         return "release", "\n".join(release_assets(rest[1:], command))

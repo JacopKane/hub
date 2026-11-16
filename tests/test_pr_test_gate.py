@@ -1889,6 +1889,73 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
             assert quiet(bash(home, step)), step
 
 
+QUERY_WHY = "the gate can not read the whole GraphQL query before the command runs"
+BEFORE_WHY = "another command runs before it on the same line"
+NODE_WHY = "a node id names the PR, not its number"
+
+
+def test_a_graphql_query_the_gate_can_not_read_in_full_is_judged_as_a_write(home):
+    with given("branch side pushed with no report, its next commit with a report, a good body, and a GraphQL file "
+               "that only reads"):
+        with_github(home)
+        home.git("checkout", "-q", "-b", "side", "main")
+        side = change(home, message="Start side")
+        home.git("push", "-q", "-u", "origin", "side")
+        change(home)
+        record(home)
+        good = body_file(home, CANONICAL, "good.md")
+        reads = body_file(home, "query { viewer { login } }", "reads.graphql")
+    create = ('mutation { createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", headRefName: "side", '
+              'title: "T", body: $body}) { pullRequest { number } } }')
+    ready = 'mutation { markPullRequestReadyForReview(input: {pullRequestId: "PR_kw1"}) { clientMutationId } }'
+
+    def hidden_forms(query):
+        sent = shlex.quote(json.dumps({"query": query, "variables": {"body": CANONICAL}}))
+        return {"a variable": f"Q={shlex.quote(query)}; gh api graphql -f query=\"$Q\" -F body=@{good}",
+                "a pipe": f"printf '%s' {shlex.quote(query)} | gh api graphql -F query=@- -F body=@{good}",
+                "an --input pipe": f"printf '%s' {sent} | gh api graphql --input -",
+                "a field name the shell fills in":
+                    f"K=query; gh api graphql -f \"$K\"={shlex.quote(query)} -F body=@{good}"}
+
+    def written_first(query):
+        return f"printf '%s' {shlex.quote(query)} > {reads} && gh api graphql -F query=@{reads} -F body=@{good}"
+
+    def fragment_form(query):
+        name, selection = query[len("mutation { "):-2].split("(", 1)
+        return graphql_call(f"mutation {{ ...Sent }} fragment Sent on Mutation {{ {name}({selection} }}",
+                            f"-F body=@{good}")
+    hidden = {f"{kind} by {form}": step for kind, query in (("create", create), ("ready", ready))
+              for form, step in hidden_forms(query).items()}
+    with when("Claude opens a PR at side or marks PR 7 ready through GraphQL, with the query in a variable, a "
+              "pipe or an --input pipe, or under a field name the shell fills in"):
+        results = {case: bash(home, step) for case, step in hidden.items()}
+    with then("each is refused, since the gate can not read what the query does"):
+        assert [(case, result.reason) for case, result in results.items() if not result.refused] == []
+    with when("the text gate's unreadable check is off and Claude sends the same steps"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        results = {case: bash(home, step) for case, step in hidden.items()}
+    with then("this gate refuses each one, saying it can not read the whole query"):
+        assert [(case, result.reason) for case, result in results.items()
+                if not says(home, result, "unreadable_push.md", why=QUERY_WHY)] == []
+    with when("Claude writes the mutation over the reading GraphQL file and sends that file in the same call, and "
+              "sends the mutations through a fragment on Mutation"):
+        overwritten = {kind: bash(home, written_first(query)) for kind, query in (("create", create), ("ready", ready))}
+        fragments = {kind: bash(home, fragment_form(query)) for kind, query in (("create", create), ("ready", ready))}
+    with then("the file is refused, since it may change before gh reads it, and each fragment gets the answer of "
+              "its plain mutation"):
+        for kind, result in overwritten.items():
+            assert says(home, result, "unreadable_push.md", why=BEFORE_WHY), (kind, result.reason)
+        assert says(home, fragments["create"], "no_report.md", short=side[:7], branch="side"), \
+            fragments["create"].reason
+        assert says(home, fragments["ready"], "unreadable_push.md", why=NODE_WHY), fragments["ready"].reason
+    with when("Claude reads through GraphQL with the query written out, or sent from the reading file alone"):
+        plain_reads = [bash(home, graphql_call("query { viewer { login } }")),
+                       bash(home, f"gh api graphql -F query=@{reads}")]
+    with then("each runs, since the gate reads each query in full and neither holds a mutation"):
+        for result in plain_reads:
+            assert quiet(result), result.reason
+
+
 def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_names_the_pr_or_the_body(home):
     with given("PR 7 and plain issue 12 on GitHub, and a good and a bad body"):
         with_github(home)
