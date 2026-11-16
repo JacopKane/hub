@@ -233,7 +233,13 @@ SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 REDIRECT = re.compile(r"\d*(?:[<>]{1,2}|[<>]&)")
 HEREDOC_WORD = re.compile(r"__hub_heredoc_(\d+)__")
 CAT_START = re.compile(r"\$\((?:cat\s+|<\s*)")
-OPEN_HEREDOC_EXPANSION = re.compile(r"(?<!\\)(?:\$[\w{(@*#?!$-]|`)")
+# The characters other than a letter, a digit and ( that the shell fills in after a $. zsh also fills in
+# $=name, $~name, $^name and $+name, which bash keeps as written, so the text depends on the shell.
+FILLED_AFTER_DOLLAR = "_{@*#?!$-=~^+"
+# Of those, the zsh forms that the reader with many_words judges in a command line as words the shell may change,
+# with their own note, so mark_expansions leaves them to it. A heredoc body has no such reader.
+ZSH_WORD_CHANGES = "=~^"
+OPEN_HEREDOC_EXPANSION = re.compile(r"(?<!\\)(?:\$[\w(" + re.escape(FILLED_AFTER_DOLLAR) + r"]|`)")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 # Builtins that run a script file in the current shell.
 SOURCES = {"source", "."}
@@ -938,7 +944,8 @@ def mark_expansions(line, sources=None, many_words=""):
         elif char == "$" and following == '"' and quote is None:
             index += 1  # bash reads $"..." as a plain double-quoted string
             continue
-        elif char == "$" and following and (following.isalnum() or following in "_{@*#?!$-"):
+        elif char == "$" and following and (following.isalnum() or (following in FILLED_AFTER_DOLLAR
+                                                          and following not in ZSH_WORD_CHANGES)):
             out.append(UNREADABLE)
         out.append(char)
         index += 1

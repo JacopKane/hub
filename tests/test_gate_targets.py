@@ -95,6 +95,12 @@ def test_a_public_command_whose_text_the_gate_can_not_read_is_refused_until_the_
             "open heredoc": "git commit -F - <<EOF\nFix $THING\nEOF",
             "tag in an editor": "git tag -a v1",
             "unknown gh api option": "gh api repos/o/r/issues --frobnicate -f body=hello",
+            "zsh glob fill in a heredoc": "gh pr comment 3 -F - <<EOF\nFix $~T\nEOF",
+            "zsh split fill in a heredoc": "git commit -F - <<EOF\nFix $=T\nEOF",
+            "zsh array fill in a heredoc": "git commit -F - <<EOF\nFix $^T\nEOF",
+            "zsh set test in a heredoc": "git commit -F - <<EOF\nFix $+T\nEOF",
+            "zsh fill in a cat heredoc": 'git commit -m "$(cat <<EOF\n$~T\nEOF\n)"',
+            "zsh set test in quotes": 'git commit -m "Set $+T"',
         }
         results = {name: [home.hook(tool, "PreToolUse", command) for _ in range(2)]
                    for name, command in commands.items()}
@@ -111,6 +117,7 @@ def test_a_public_command_whose_text_the_gate_can_not_read_is_refused_until_the_
             "echo $HOME | grep x",
             "bash -c 'ls -la'",
             "ls | xargs -I{} echo {}",
+            "git commit -F - <<'EOF'\nKeep $~T as it is\nEOF",
         ]
         readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
     with then("each runs with no answer"):
