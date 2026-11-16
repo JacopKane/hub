@@ -582,8 +582,6 @@ WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export",
 WRITES_ONLY_NAMED_FILES = {*WRITES_NO_FILE, "[[", "chdir", "unset", "set", "wait", "sleep", "pwd", "date", "which",
                            "type", "cat", "head", "tail", "grep", "wc", "ls", "basename", "dirname", "tee", "touch",
                            "mkdir", "rm", "fi", "done", "esac"}
-# The options before git's action that take the next word as their value
-GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
 # git actions that change only the repo's history, index or remotes, never a file in the folder
 GIT_KEEPS_FILES = {"add", "commit", "push", "fetch", "status", "diff", "log", "show", "rev-parse", "remote", "tag",
                    "config", "ls-files"}

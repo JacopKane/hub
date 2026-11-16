@@ -1406,6 +1406,13 @@ def test_a_push_or_commit_after_git_s_attr_source_option_is_read(home, tool):
                            session="commit")
     with then("the gate reads the commit message and names the path"):
         assert commit.refused and commit.findings == ["private_paths"], commit.reason
+    changed = ["git --attr-source HEAD pu{sh,ll} origin main", "git --attr-source HEAD com{mit,pare} -m x"]
+    with when("Claude runs git after --attr-source and its tree, with an action the shell may change, each in its "
+              "own session"):
+        changed_results = hooks(home, tool, changed, "changed")
+    with then("the gate finds the action past the tree, sees the shell may change it, and refuses it as unreadable"):
+        for line, result in changed_results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
 
 
 def empty_commits(home, count):
