@@ -68,16 +68,19 @@ def fake_gh(home, **config):
 
 
 def with_fake_ssh(home, **config):
-    """A fake ssh on PATH, which answers ssh -G from config and never connects, so no test reads a real ssh config."""
+    """A fake ssh on PATH, which answers ssh -G from config and never connects, so no test reads a real ssh config.
+    git's ssh command is the fake too, so nothing in a scenario can start a real ssh. It returns the fake's path."""
     folder = os.path.join(home.root, "ssh-bin")
     os.makedirs(folder, exist_ok=True)
-    shutil.copy(os.path.join(REPO, "tests", "fakes", "fake_ssh.py"), os.path.join(folder, "ssh"))
-    os.chmod(os.path.join(folder, "ssh"), 0o755)
+    fake = os.path.join(folder, "ssh")
+    shutil.copy(os.path.join(REPO, "tests", "fakes", "fake_ssh.py"), fake)
+    os.chmod(fake, 0o755)
     home.env["PATH"] = folder + os.pathsep + home.env["PATH"]
     home.env["FAKE_SSH_CONFIG"] = os.path.join(home.root, "ssh.json")
     home.env["FAKE_SSH_LOG"] = os.path.join(home.root, "ssh-calls.jsonl")
-    home.env["GIT_SSH_COMMAND"] = "false"
+    home.env["GIT_SSH_COMMAND"] = fake
     home.write_json(home.env["FAKE_SSH_CONFIG"], config)
+    return fake
 
 
 def ssh_calls(home):
@@ -1619,6 +1622,71 @@ def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_
         broken = bash(home, "git push broken feature")
     with then("the push is refused, since the alias may name GitHub"):
         assert says(home, broken, "unreadable_push.md", why=SSH_HOST_WHY), broken.reason
+
+
+SSH_COMMAND_WHY = "the gate can not read git's ssh command, so it can not tell which host the push reaches"
+
+
+def test_an_ssh_alias_is_looked_up_with_the_ssh_config_that_gits_ssh_command_names(home):
+    with given("branch feature with open PR 7 and a new commit with no report, an ssh config file that only git's "
+               "ssh command names, where alias work-only is github.com and lab-only is gitlab.com, and remotes "
+               "for both aliases"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        fake = with_fake_ssh(home)
+        work_config = os.path.join(home.root, "work.json")
+        home.write_json(work_config, {"hosts": {"work-only": "github.com", "lab-only": "gitlab.com"}})
+        with open(work_config + ".name", "w") as handle:
+            handle.write(work_config)  # so a substitution that reads it names a real config
+        ssh_user = "git" + "@"
+        home.git("remote", "add", "work", f"{ssh_user}work-only:acme/demo.git")
+        home.git("remote", "add", "lab", f"{ssh_user}lab-only:acme/demo.git")
+        del home.env["GIT_SSH_COMMAND"]  # git takes the variable over the repo's setting
+    with when("the repo's core.sshCommand passes that file to ssh with -F, and Claude pushes feature to each alias"):
+        home.git("config", "core.sshCommand", f"{fake} -F {work_config}")
+        calls_before = len(ssh_calls(home))
+        to_work, to_lab = bash(home, "git push work feature"), bash(home, "git push lab feature")
+    with then("the push to work-only is judged as the push to GitHub it is, the one to lab-only runs, and ssh -G "
+              "was given the same -F"):
+        assert says(home, to_work, "no_report.md", short=feature[:7], branch="feature"), to_work.reason
+        assert quiet(to_lab), to_lab.reason
+        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", "work-only"],
+                                                  ["-F", work_config, "-G", "--", "lab-only"]]
+    with when("the setting names ssh by its name and the file as ~/work.json"):
+        home.git("config", "core.sshCommand", "ssh -F ~/work.json")
+        calls_before = len(ssh_calls(home))
+        by_name = bash(home, "git push work feature")
+    with then("ssh on PATH is asked with ~ read as the shell reads it, and the push is refused"):
+        assert says(home, by_name, "no_report.md", short=feature[:7], branch="feature"), by_name.reason
+        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", "work-only"]]
+    with when("GIT_SSH_COMMAND sets HostName for every host in the hook's environment, then GIT_SSH_COMMAND and "
+              "git's -c option name the file for one command, while the repo's setting is plain ssh"):
+        home.git("config", "core.sshCommand", "ssh")
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -o HostName=github.com"
+        from_environment = bash(home, "git push lab feature")
+        del home.env["GIT_SSH_COMMAND"]
+        for_one_command = bash(home, f"GIT_SSH_COMMAND='{fake} -F {work_config}' git push work feature")
+        by_git_option = bash(home, f"git -c core.sshCommand='{fake} -F {work_config}' push work feature")
+        plain = bash(home, "git push work feature")
+    with then("the variable and git's -c option win over the repo's setting, as in git, so those pushes are "
+              "refused, and plain ssh, which does not know work-only, lets the last push run"):
+        assert says(home, from_environment, "no_report.md", short=feature[:7], branch="feature"), \
+            from_environment.reason
+        assert says(home, for_one_command, "no_report.md", short=feature[:7], branch="feature"), \
+            for_one_command.reason
+        assert says(home, by_git_option, "no_report.md", short=feature[:7], branch="feature"), by_git_option.reason
+        assert quiet(plain), plain.reason
+    with when("git's ssh command is another program, holds a substitution, or names a host of its own"):
+        unreadable_steps = {}
+        for case, setting in {"another program": "plink -batch",
+                              "a substitution": f"{fake} -F $(cat {work_config}.name)",
+                              "a host of its own": f"{fake} -F {work_config} jump-host"}.items():
+            home.git("config", "core.sshCommand", setting)
+            unreadable_steps[case] = bash(home, "git push work feature")
+    with then("each push is refused, since the gate can not tell which ssh config git will read"):
+        for case, result in unreadable_steps.items():
+            assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
 
 
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):

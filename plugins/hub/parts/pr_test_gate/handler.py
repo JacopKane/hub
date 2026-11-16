@@ -135,7 +135,17 @@ WHY = {
     "remote_url": "git could not say which URL the remote names",
     "copies": "git could not list its copies of the remote's branches",
     "ssh_host": "ssh could not say which host the remote's address names",
+    "ssh_command": "the gate can not read git's ssh command, so it can not tell which host the push reaches",
 }
+GH_SSH = ("ssh",)  # gh reads a host's ssh config with plain ssh -G
+SSH_COMMAND_SETTING = "core.sshcommand"
+# Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
+# can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
+SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
+SSH_CONFIG_OPTIONS = {"-F", "-o"}  # the ssh options that change the config ssh -G prints for a host
+# ssh's one-letter options, as its getopt string names them: those that take a value, and those that do not
+SSH_VALUE_LETTERS = set("BDEFIJLOPQRSWbceilmopw")
+SSH_SWITCH_LETTERS = set("1246ACGKMNTVXYafgknqstvxy")
 
 
 class Stop(Exception):
@@ -238,13 +248,14 @@ class Lookups:
             self.cache[key] = done[1].strip() if done[0] == 0 else None
         return self.cache[key]
 
-    def ssh_hostname(self, cwd, host):
+    def ssh_hostname(self, cwd, host, ssh_words=GH_SSH):
         """The host ssh connects to for a host or a Host alias, as ssh -G prints it after reading ssh's config,
-        without connecting. A lookup that fails may hide GitHub, so it stops the step."""
-        key = ("ssh", host)
+        without connecting. ssh_words are the program and the config options to ask with. A lookup that fails may
+        hide GitHub, so it stops the step."""
+        key = ("ssh", tuple(ssh_words), host)
         if key not in self.cache:
             try:
-                done = self.run(["ssh", "-G", "--", host], cwd, GIT_SECONDS)
+                done = self.run([*ssh_words, "-G", "--", host], cwd, GIT_SECONDS)
             except OSError:
                 done = None
             printed = done[1] if done and done[0] == 0 else ""
@@ -253,6 +264,13 @@ class Lookups:
             if not found:
                 raise unreadable("ssh_host")
             self.cache[key] = found[0]
+        return self.cache[key]
+
+    def git_ssh(self, cwd, options, assignments):
+        """git_ssh_words for a push, asked once for each set of git options and VAR=value words."""
+        key = ("git_ssh", cwd, tuple(options), tuple(sorted(assignments.items())))
+        if key not in self.cache:
+            self.cache[key] = git_ssh_words(cwd, options, assignments, self)
         return self.cache[key]
 
     def gh(self, cwd, *words, variables=None):
@@ -460,7 +478,9 @@ def pushed(step, lookups):
         if branch is None:
             raise unreadable("detached")
         remote = push_remote(cwd, branch, lookups)
-    repos = github_repos(cwd, remote, lookups)
+    options = step.words[1:len(step.words) - len(words)]
+    assignments = dict(word.split("=", 1) for word in step.before)
+    repos = github_repos(cwd, remote, lookups, lambda: lookups.git_ssh(cwd, options, assignments))
     if not repos:
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
@@ -469,22 +489,98 @@ def pushed(step, lookups):
             if not target.startswith("refs/") for repo in repos]
 
 
-def github_repos(cwd, remote, lookups):
+def github_repos(cwd, remote, lookups, ssh_words):
     """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
-    GitHub, or [] when none is on GitHub."""
-    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups)]
+    GitHub, or [] when none is on GitHub. ssh_words gives the ssh program and options git reaches ssh hosts with."""
+    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_words)]
     return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
-def is_a_github_url(url, cwd, lookups):
+def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
     """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
-    as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those."""
+    as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_words is
+    asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
     if GITHUB.search(url):
         return True
     host, over_ssh = url_host(url)
     if host is None:
         return False
-    return is_a_github_host(host) or (over_ssh and is_a_github_host(lookups.ssh_hostname(cwd, host)))
+    return is_a_github_host(host) or (over_ssh and is_a_github_host(lookups.ssh_hostname(cwd, host, ssh_words())))
+
+
+def git_ssh_words(cwd, options, assignments, lookups):
+    """(the ssh program, then the -F and -o options it gets) for the ssh command git runs for a push. git takes
+    GIT_SSH_COMMAND, else core.sshCommand with a git -c value first, else GIT_SSH as one word, else ssh, as git's
+    connect.c picks them, and the variables come from the hook's environment and the step's VAR=value words. A
+    command that is not ssh, or that the gate can not read, stops the step."""
+    environment = {**os.environ, **assignments}
+    sources = (lambda: environment.get("GIT_SSH_COMMAND"), lambda: one_command_ssh_command(options),
+               lambda: lookups.git(cwd, "config", "core.sshCommand"))
+    text = next((found for found in (source() for source in sources) if found is not None), None)
+    words = [environment.get("GIT_SSH", "ssh")] if text is None else shell_words(text, assignments, cwd, lookups)
+    if not words or any(unreadable_mark() in word for word in words) or os.path.basename(words[0]) != "ssh":
+        raise unreadable("ssh_command")
+    return (words[0], *ssh_config_options(words[1:]))
+
+
+def one_command_ssh_command(options):
+    """The ssh command that git's -c options set for this one command, the last one winning as in git, or None.
+    --config-env takes it from a variable, and -c with no = sets no command, so either stops the step."""
+    found, index = None, 0
+    while index < len(options):
+        option = options[index]
+        if option in gate().CONFIG_OPTIONS and index + 1 < len(options):
+            setting, index = options[index + 1], index + 2
+        elif option.startswith("--config-env="):
+            option, setting, index = "--config-env", option.split("=", 1)[1], index + 1
+        else:
+            index += 1
+            continue
+        key, equals, value = setting.partition("=")
+        if key.lower() == SSH_COMMAND_SETTING:
+            if option != "-c" or not equals:
+                raise unreadable("ssh_command")
+            found = value
+    return found
+
+
+def shell_words(text, assignments, cwd, lookups):
+    """The ssh command split into words by the shell, as git runs it with sh -c, with each $NAME and ~ filled in
+    from the push's variables. A shell mark that may run a program, a variable the shell fills in for the step
+    that the command may read, or a shell that fails stops the step."""
+    hidden_mark = unreadable_mark()
+    may_read_a_variable = "$" in text or "~" in text
+    if (SSH_COMMAND_SHELL_MARKS.search(text) or hidden_mark in text
+            or (may_read_a_variable and any(hidden_mark in value for value in assignments.values()))):
+        raise unreadable("ssh_command")
+    done = lookups.run(["/bin/sh", "-c", "printf '%s\\0' " + text, text], cwd, GIT_SECONDS, assignments)
+    if done is None:
+        raise Stop("slow.md")
+    if done[0] != 0:
+        raise unreadable("ssh_command")
+    return done[1].split("\0")[:-1]
+
+
+def ssh_config_options(options):
+    """The -F and -o options, with their values, among the options of git's ssh command, which ssh -G needs to
+    print the config that ssh will read. ssh takes the first word that is not an option as its host, so such a
+    word, or a letter ssh does not know, stops the step."""
+    kept, index = [], 0
+    while index < len(options):
+        word = options[index]
+        letters = word[1:] if word.startswith("-") and word not in ("-", "--") else ""
+        value_at = next((place for place, letter in enumerate(letters) if letter in SSH_VALUE_LETTERS), len(letters))
+        if not letters or any(letter not in SSH_SWITCH_LETTERS for letter in letters[:value_at]):
+            raise unreadable("ssh_command")
+        if value_at == len(letters):
+            index += 1
+            continue
+        option, value = "-" + letters[value_at], letters[value_at + 1:]
+        if not value and index + 1 == len(options):
+            raise unreadable("ssh_command")
+        value, index = (value, index + 1) if value else (options[index + 1], index + 2)
+        kept += [option, value] if option in SSH_CONFIG_OPTIONS else []
+    return kept
 
 
 def url_host(url):
