@@ -618,47 +618,72 @@ def redirect_targets(words):
 
 
 def names_or_hides(target, name):
-    """Whether a file name may be the file: its last part is the name or a pattern that matches it, or the shell
-    fills it in."""
-    tail = zsh_pattern(os.path.basename(widen_patterns(target).rstrip("/")))
-    return UNREADABLE in target or tail == name or (any(char in tail for char in "*?[")
-                                                   and fnmatch.fnmatchcase(name, tail))
+    """Whether a file name may be the file: the shell fills it in, or one of the names it may make is the file."""
+    return UNREADABLE in target or may_name(target, name)
 
 
 def may_write(text, name):
     """Whether a text may write the file: it names the file or redirects to a name the shell fills in."""
-    return bool(FILLED_IN_REDIRECT.search(text)) or any(
-        names_or_hides(part, name) for part in NAME_ENDS.split(widen_patterns(text)) if part)
+    return bool(FILLED_IN_REDIRECT.search(text)) or may_name(text, name)
 
 
-# A brace list or range, as in {a,b} and {1..9}, and a zsh number range, as in <1-9>
-BRACE_LIST = re.compile(r"(?<!\$)\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")
-NUMBER_RANGE = re.compile(r"<\d*-\d*>")
+def may_name(text, name):
+    """Whether one of the names in the text, as name_tails makes them, is the file or a pattern that matches it."""
+    return any(tail == name or (any(char in tail for char in "*?[") and fnmatch.fnmatchcase(name, tail))
+               for tail in name_tails(text))
 
 
-def widen_patterns(text):
-    """The text with each brace list and zsh number range as a *, which matches every name they may make. An inner
-    list goes first, so {a,{b,c}} ends as one *."""
-    widened = NUMBER_RANGE.sub("*", BRACE_LIST.sub("*", text))
-    return text if widened == text else widen_patterns(widened)
+def name_tails(text):
+    """The last part of each name in the text, as a pattern that matches every name the shell may make of it.
 
-
-def zsh_pattern(tail):
-    """A name as a pattern that matches every file zsh's EXTENDED_GLOB may make of it.
-
-    A~B matches only names A matches, so the part from a ~ after the first
-    character drops. ^X matches any name but X, so the name from its ^ on
-    becomes a *. X# repeats X any number of times, none included, so the
-    name from X on becomes a *, and X may be a [...] class. A ~ or # at the
-    start is a home folder or a comment.
+    Each word becomes name_pattern of it first, since a brace list holds
+    characters that split names, such as the comma. zsh's EXTENDED_GLOB
+    reads A~B as the names A matches, so a name drops its part from a ~
+    after its first character.
     """
-    head = tail[:1] + tail[1:].split("~", 1)[0]
-    spot = next((spot for spot, char in enumerate(head) if char == "^" or (char == "#" and spot > 0)), None)
+    spots = changed_spots(text)
+    tails = [os.path.basename(part.rstrip("/"))
+             for start, end in word_bounds(text, spots)
+             for part in NAME_ENDS.split(name_pattern(text, start, end, spots)) if part]
+    return [tail[:1] + tail[1:].split("~", 1)[0] for tail in tails]
+
+
+def changed_spots(text):
+    """The spots where the shell may change a word in the text, as changes_the_word finds them. Every character
+    counts as one outside quotes, so a quote never hides a spot, and the gate's own marks are no spots."""
+    pieces, spots = [], set()
+    for index, char in enumerate(text):
+        if char >= " " and changes_the_word(text, index, pieces):
+            spots.add(index)
+        pieces.append(char)
+    return spots
+
+
+def word_bounds(text, spots):
+    """(start, end) of each word in the text, split at blanks and at the characters that end a command or start a
+    redirect, unless the shell may change the word there, as at the < of zsh's <1-5>."""
+    ends = [index for index, char in enumerate(text) if char in " \t\n;&|<>" and index not in spots]
+    return [(start, end) for start, end in zip([0, *(index + 1 for index in ends)], [*ends, len(text)])
+            if end > start]
+
+
+def name_pattern(text, start, end, spots):
+    """The word from start to end as a pattern that matches every name the shell may make of it.
+
+    From the first spot in it where the shell may change it, other than a *,
+    ? or [ that fnmatch reads the same way, the name may go on in any way, so
+    a * stands for the rest. zsh's X# may make no X at all, so there the *
+    starts at X, which may be a [...] class. A brace list may hold a /, so a
+    spot before a / may make any last part.
+    """
+    spot = next((index for index in range(start, end) if index in spots and text[index] not in "*?["), None)
     if spot is None:
-        return head
-    repeated = spot if head[spot] == "^" else spot - 1
-    start = head.rfind("[", 0, repeated) if head[repeated] == "]" else -1
-    return head[:start if start >= 0 else repeated] + "*"
+        return text[start:end]
+    if "/" in text[spot + 1:end]:
+        return "*"
+    repeated = spot - 1 if text[spot] == "#" and spot > start else spot
+    opening = text.rfind("[", start, repeated) if text[repeated] == "]" else -1
+    return text[start:opening if opening >= 0 else repeated] + "*"
 
 
 def gets_a_filled_in_word(words):

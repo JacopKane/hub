@@ -319,6 +319,11 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "zsh repeat": "echo x | tee notess#.md && gh pr comment 5 -F notes.md",
             "zsh repeat of a class": "echo x | tee note[x]#s.md && gh pr comment 5 -F notes.md",
             "zsh except": "touch *~other.md && git commit -F msg.txt",
+            "zsh either name": "echo x | tee (notes|other).md && gh pr comment 5 -F notes.md",
+            "zsh either ending": "echo x | tee notes.(md|txt) && gh pr comment 5 -F notes.md",
+            "zsh glob flag": "echo x | tee notes.md(N) && gh pr comment 5 -F notes.md",
+            "brace list of folders": "echo x | tee {docs,.}/notes.md && gh pr comment 5 -F notes.md",
+            "nested brace list": "echo x | tee {other,{notes,x}}.md && gh pr comment 5 -F notes.md",
         }
         pattern_results = {name: home.hook(tool, "PreToolUse", command) for name, command in patterns.items()}
     with then("each is refused as unreadable too"):
@@ -329,6 +334,8 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "add then commit": "git add x && git commit -F msg.txt",
             "push then new pr": "git push origin feature && gh pr create --title T --body-file body.md",
             "a revision with a ~": "git diff HEAD~1 && git commit -F msg.txt",
+            "a revision with a ^": "git diff HEAD^ && git commit -F msg.txt",
+            "a pattern for other files": "echo x | tee other*.md && gh pr comment 5 -F notes.md",
             "tee to another file": "echo x | tee out.log && gh pr comment 5 -F notes.md",
             "test for another file": "test -f other.md && gh pr comment 5 -F notes.md",
             "errors joined to output": "git add x 2>&1 && git commit -F msg.txt",
