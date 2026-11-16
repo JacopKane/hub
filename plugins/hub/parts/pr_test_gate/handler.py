@@ -37,6 +37,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+from collections import Counter
 
 from hub import files
 
@@ -310,7 +311,9 @@ class Step:
 def read_steps(line, cwd):
     """(the parsed command, its git and gh steps that may need the gate), refusing what it can not read."""
     parser = gate()
-    named = [target for target, _text in parser.public_steps(line, cwd, log=False, read_step=step_reader(parser))
+    reads = []  # the words of each step the text gate reads and names, inside wrappers and substitutions too
+    named = [target for target, _text in parser.public_steps(line, cwd, log=False,
+                                                            read_step=noting_reads(step_reader(parser), reads))
              if target in RELEVANT | {CHECKED}]
     command = parser.Command(line, cwd, read_log=False)
     segments = command.segments()
@@ -318,7 +321,7 @@ def read_steps(line, cwd):
         if named or re.search(r"\bgit\b.*\bpush\b", command.flat):
             raise unreadable("parse")
         return command, []
-    found, here = [], cwd
+    found, found_words, here = [], [], cwd
     for position, words in enumerate(segments):
         if len(words) == 2 and words[0] == "cd" and unreadable_mark() not in words[1]:
             here = folder_after_cd(here, words[1])
@@ -339,9 +342,18 @@ def read_steps(line, cwd):
             if here is None or not os.path.isdir(here):
                 raise unreadable("folder")
             found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
-    if len(named) > len(found):
+            found_words.append(tuple(words[index:]))
+    if names_a_step_it_does_not_read(named, reads, found_words):
         raise unreadable("inside")
     return command, found
+
+
+def names_a_step_it_does_not_read(named, reads, found_words):
+    """Whether the text gate names a step this gate does not read on the line itself: a step whose program the shell
+    fills in, which the text gate names without reading it, or a step inside a wrapper or a substitution. Each step
+    the text gate reads must match a step this gate reads, word for word, so other steps beside it can not stand in
+    for it."""
+    return len(named) > len(reads) or bool(Counter(reads) - Counter(found_words))
 
 
 def read_here(program, step_words, target):
@@ -363,6 +375,16 @@ def step_reader(parser):
         checked = read_here(program, step_words, target) and target[0] not in RELEVANT
         return (CHECKED, target[1]) if checked else target
     return read_step
+
+
+def noting_reads(read_step, reads):
+    """The step reader, putting the words of each step it names for this gate into reads."""
+    def read_and_note(words, command):
+        named = read_step(words, command)
+        if named and named[0] in RELEVANT | {CHECKED}:
+            reads.append(tuple(words))
+        return named
+    return read_and_note
 
 
 def folder_after_cd(here, target):

@@ -2292,6 +2292,40 @@ def test_a_pr_body_edit_inside_a_wrapper_or_a_substitution_is_refused_as_a_step_
             assert quiet(result), (step, result.reason)
 
 
+def test_a_step_inside_another_command_is_refused_however_many_steps_stand_beside_it(home):
+    with given("PRs 5, 6 and 7 on GitHub, where PR 7's head has no report"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, heads={"5": feature, "6": feature, "7": feature})
+    hiding = ["$X gh pr edit 5 --title t gh pr edit 6 --title u; bash -c 'gh pr ready 7'",
+              "gh pr edit 5 --title t gh pr edit 6 --title u; bash -c 'gh pr ready 7'",
+              "gh pr edit 5 --title t gh pr ready 7 --undo; eval 'gh pr ready 7'",
+              "$X gh pr edit 5 --title t",
+              "$X git push origin feature gh pr edit 6 --title u"]
+    settings = {"the text gate's unreadable check off": ("off", "public_text_gate.unreadable"),
+                "public_repos_only on in a repo the profile does not mark public":
+                    ("on", "public_text_gate.public_repos_only")}
+    with when("Claude sends gh pr ready 7 inside bash -c or eval after a command that holds two gh steps, or a "
+              "command whose program the shell fills in before visible steps, with the text gate letting "
+              "unreadable steps through in each of two ways"):
+        results = {}
+        for setting, (state, flag) in settings.items():
+            home.hubctl_from_mod(state, flag)
+            results.update({(setting, step): bash(home, step) for step in hiding})
+            home.hubctl_from_mod("off" if state == "on" else "on", flag)
+    with then("this gate refuses each one as a step inside another command, since the visible steps beside it "
+              "do not stand for the step it can not see"):
+        for (setting, step), result in results.items():
+            assert says(home, result, "unreadable_push.md", why="it runs inside another command"), \
+                (setting, step, result.reason)
+    with when("Claude sends the two title edits on their own, and gh pr ready 7 as its own command"):
+        titles = bash(home, "gh pr edit 5 --title t gh pr edit 6 --title u")
+        written_out = bash(home, "gh pr ready 7")
+    with then("the title edits run and the ready step is judged on PR 7's head"):
+        assert quiet(titles), titles.reason
+        assert says(home, written_out, "no_report.md", short=feature[:7]), written_out.reason
+
+
 def failing_git(home, verb):
     """A PATH whose first git fails one verb, as a lookup can fail, and runs the real git for the rest."""
     real = shutil.which("git", path=home.env["PATH"])
