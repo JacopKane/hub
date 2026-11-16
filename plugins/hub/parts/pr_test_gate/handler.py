@@ -141,6 +141,10 @@ WHY = {
 }
 GH_SSH = ("ssh",)  # gh reads a host's ssh config with plain ssh -G
 SSH_COMMAND_SETTING = "core.sshcommand"
+SSH_VARIANT_SETTING = "ssh.variant"
+# The ssh variants git names, which pass a port another way or not at all; git reads any other value as ssh, and
+# auto as ssh too, since the gate lets only a program named ssh through
+SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
@@ -529,16 +533,17 @@ def pushed(step, lookups):
             if not target.startswith("refs/") for repo in repos]
 
 
-def github_repos(cwd, remote, lookups, ssh_words):
+def github_repos(cwd, remote, lookups, ssh_command):
     """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
-    GitHub, or [] when none is on GitHub. ssh_words gives the ssh program and options git reaches ssh hosts with."""
-    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_words)]
+    GitHub, or [] when none is on GitHub. ssh_command gives the ssh program and options git reaches ssh hosts with,
+    and git's ssh variant."""
+    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_command)]
     return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
-def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
+def is_a_github_url(url, cwd, lookups, ssh_command=lambda: (GH_SSH, "ssh")):
     """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
-    as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_words is
+    as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_command is
     asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
     if GITHUB.search(url):
         return True
@@ -546,39 +551,62 @@ def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
     if authority is None:
         return False
     return is_a_github_host(bare_host(authority)) or (over_ssh and is_a_github_host(
-        lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words(), *port_options(authority)))))
+        ssh_host_of(authority, cwd, lookups, *ssh_command())))
+
+
+def ssh_host_of(authority, cwd, lookups, ssh_words, variant):
+    """The host ssh -G names for the [user@]host[:port], asked with the ssh program and options, then the port as
+    git adds it for its ssh variant."""
+    return lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)))
 
 
 def git_ssh_words(cwd, options, assignments, lookups):
-    """(the ssh program, then the options ssh -G needs) for the ssh command git runs for a push. git takes
-    GIT_SSH_COMMAND, else core.sshCommand with a git -c value first, else GIT_SSH as one word, else ssh, as git's
-    connect.c picks them, and the variables come from the hook's environment and the step's VAR=value words. A
-    command that is not ssh, or that the gate can not read, stops the step."""
+    """((the ssh program, then the options ssh -G needs), git's ssh variant) for the ssh command git runs for a
+    push. git takes GIT_SSH_COMMAND, else core.sshCommand with a git -c value first, else GIT_SSH as one word, else
+    ssh, as git's connect.c picks them, and the variables come from the hook's environment and the step's
+    VAR=value words. A command that is not ssh, or that the gate can not read, stops the step."""
     environment = {**os.environ, **assignments}
-    sources = (lambda: environment.get("GIT_SSH_COMMAND"), lambda: one_command_ssh_command(options),
+    sources = (lambda: environment.get("GIT_SSH_COMMAND"), lambda: one_command_setting(options, SSH_COMMAND_SETTING),
                lambda: lookups.git(cwd, "config", "core.sshCommand"))
-    text = next((found for found in (source() for source in sources) if found is not None), None)
+    text = first_found(sources)
     words = [environment.get("GIT_SSH", "ssh")] if text is None else shell_words(text, assignments, cwd, lookups)
     if not words or any(unreadable_mark() in word for word in words) or os.path.basename(words[0]) != "ssh":
         raise unreadable("ssh_command")
-    return (words[0], *ssh_config_options(words[1:]))
+    return (words[0], *ssh_config_options(words[1:])), git_ssh_variant(cwd, options, environment, lookups)
 
 
-def one_command_ssh_command(options):
-    """The ssh command that git's -c options set for this one command, the last one winning as in git, or None.
-    --config-env takes it from a variable, and -c with no = sets no command, so either stops the step."""
+def git_ssh_variant(cwd, options, environment, lookups):
+    """The ssh variant git picks the port option by: GIT_SSH_VARIANT, even when empty, else ssh.variant with a git
+    -c value first, as git's connect.c reads them. A value git does not name is ssh. A value the shell fills in
+    stops the step."""
+    sources = (lambda: environment.get("GIT_SSH_VARIANT"), lambda: one_command_setting(options, SSH_VARIANT_SETTING),
+               lambda: lookups.git(cwd, "config", SSH_VARIANT_SETTING))
+    variant = first_found(sources) or "ssh"
+    if unreadable_mark() in variant:
+        raise unreadable("ssh_command")
+    return variant if variant in SSH_OTHER_VARIANTS else "ssh"
+
+
+def first_found(sources):
+    """The first value a source finds, asking each in turn until one finds one, or None."""
+    return next((found for found in (source() for source in sources) if found is not None), None)
+
+
+def one_command_setting(options, setting):
+    """The value that git's -c options give the setting for this one command, the last one winning as in git, or
+    None. --config-env takes it from a variable, and -c with no = gives no value, so either stops the step."""
     found, index = None, 0
     while index < len(options):
         option = options[index]
         if option in gate().CONFIG_OPTIONS and index + 1 < len(options):
-            setting, index = options[index + 1], index + 2
+            given, index = options[index + 1], index + 2
         elif option.startswith("--config-env="):
-            option, setting, index = "--config-env", option.split("=", 1)[1], index + 1
+            option, given, index = "--config-env", option.split("=", 1)[1], index + 1
         else:
             index += 1
             continue
-        key, equals, value = setting.partition("=")
-        if key.lower() == SSH_COMMAND_SETTING:
+        key, equals, value = given.partition("=")
+        if key.lower() == setting:
             if option != "-c" or not equals:
                 raise unreadable("ssh_command")
             found = value
@@ -659,11 +687,14 @@ def ssh_destination(authority):
     return f"{user}@{host}" if user else host
 
 
-def port_options(authority):
+def port_options(authority, variant):
     """("-p", port) when the [user@]host[:port] names a port, as git adds it after its ssh command's own options,
     or (). ssh keeps the first port it is given, so ssh -G gets them in the same order. A Match exec block on %p
-    can make the port pick the host."""
+    can make the port pick the host. git's other ssh variants pass the port as -P, which OpenSSH reads as a tag, or
+    stop, so a port with one of them stops the step."""
     port = git_port(authority)
+    if port is not None and variant != "ssh":
+        raise unreadable("ssh_command")
     return ("-p", port) if port is not None else ()
 
 

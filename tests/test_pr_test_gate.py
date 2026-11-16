@@ -1935,6 +1935,42 @@ def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_
             assert says(home, result, "unreadable_push.md", why=why), (case, result.reason)
 
 
+def test_a_push_to_an_ssh_url_with_a_port_is_refused_when_gits_ssh_variant_passes_the_port_another_way(home):
+    with given("branch feature with open PR 7 and a new commit with no report, alias tag-work that is github.com "
+               "for tag 2222, as a Match tagged block can set, and remotes for it with and without a port"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        with_fake_ssh(home, tags={"2222": {"tag-work": "github.com"}})
+        ssh_user = "git" + "@"
+        home.git("remote", "add", "port", f"ssh://{ssh_user}tag-work:2222/acme/demo.git")
+        home.git("remote", "add", "noport", f"{ssh_user}tag-work:acme/demo.git")
+    with when("git's ssh variant is plink, putty, tortoiseplink or simple, from GIT_SSH_VARIANT, git's -c option "
+              "or the repo's ssh.variant, and Claude pushes feature to the remote with a port"):
+        home.git("config", "ssh.variant", "tortoiseplink")
+        refused = {"plink by variable": bash(home, "GIT_SSH_VARIANT=plink git push port feature"),
+                   "putty by git option": bash(home, "git -c ssh.variant=putty push port feature"),
+                   "tortoiseplink by setting": bash(home, "git push port feature"),
+                   "simple by variable": bash(home, "GIT_SSH_VARIANT=simple git push port feature"),
+                   "set with no value": bash(home, "git -c ssh.variant push port feature")}
+    with then("each push is refused, since git hands that port to ssh as -P, which OpenSSH reads as a tag, or "
+              "stops, and the gate can not tell which host git's ssh reaches"):
+        for case, result in refused.items():
+            assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+    with when("GIT_SSH_VARIANT names ssh, is empty, or holds a value git does not know, over the repo's "
+              "tortoiseplink, and when the remote has no port"):
+        calls_before = len(ssh_calls(home))
+        runs = {"ssh by variable": bash(home, "GIT_SSH_VARIANT=ssh git push port feature"),
+                "empty variable": bash(home, "GIT_SSH_VARIANT= git push port feature"),
+                "unknown case": bash(home, "GIT_SSH_VARIANT=Plink git push port feature"),
+                "no port": bash(home, "git push noport feature")}
+    with then("each runs, since git passes the port with -p, as ssh -G gets it, or passes no port"):
+        for case, result in runs.items():
+            assert quiet(result), (case, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-p", "2222", "-G", "--", f"{ssh_user}tag-work"]] * 3 + \
+            [["-G", "--", f"{ssh_user}tag-work"]]
+
+
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
     with given("branch feature with open PR 7, pushed, and a new commit with no report"):
         with_github(home)
