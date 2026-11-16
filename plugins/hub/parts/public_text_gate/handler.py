@@ -1353,9 +1353,9 @@ def set_aside_heredocs(line, first=0):
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
-    gate can not tell a heredoc from a shift, its end word is not plain, or
-    its end line is missing. bash 3.2 reads a line apart when it ends a
-    $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
+    gate can not tell a heredoc from a shift or inside an array's ( ), its
+    end word is not plain, or its end line is missing. bash 3.2 reads a
+    line apart when it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
     another ) than zsh, such as a case pattern's ) or a ) inside a ${...}
     (bash_3_2_ends_elsewhere), and when a # comes right after
     the ) of an array assignment, which it reads as word text, not as a
@@ -1418,6 +1418,8 @@ def set_aside_heredocs(line, first=0):
             index += 3
             continue
         if line.startswith("<<", index):
+            if inside_an_array(stack):
+                return None  # neither shell starts a heredoc there, and bash 3.2 runs the body lines as commands
             start = heredoc_start(line, index)
             if start is None:
                 return None
@@ -1490,6 +1492,13 @@ def skipped_region(line, index, context):
 def assigns_an_array(pieces):
     """Whether a ( after the text so far opens the value of an array assignment, as in a=( or local a+=(."""
     return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
+
+
+def inside_an_array(stack):
+    """Whether the scan stands inside an array's ( ), also inside a ( ) within it, and not inside a $(...) or
+    backtick command there, which runs its own commands."""
+    commands = [context for context in reversed(stack) if context in (ARRAY, "$(", "`", "top")]
+    return commands[0] == ARRAY
 
 
 def hash_follows(line, index):

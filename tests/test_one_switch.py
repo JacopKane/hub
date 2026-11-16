@@ -743,9 +743,14 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
     after_body = ["cat <<EOF\n EOF\n'\nEOF\ngit push origin main", "cat <<A <<B\na\nA\nb'\nB\ngit push origin main",
-                  "cat <<-EOF\n\t'\n\tEOF\ngit push origin main", "bash <<'EOF'\ngit push origin main\nEOF"]
+                  "cat <<-EOF\n\t'\n\tEOF\ngit push origin main", "bash <<'EOF'\ngit push origin main\nEOF",
+                  "a=(x $(cat <<EOF\nit's\nEOF\n))\ngit push origin main",
+                  "cat <<EOF; a=(x\nit's\nEOF\ny)\ngit push origin main",
+                  "a=(x `cat <<EOF\nit's\nEOF\n`)\ngit push origin main"]
     with when("Claude pushes main after a heredoc body that holds a quote mark and a line that only looks like its "
-              "end, after two heredocs on one line, after a <<- body, or inside a body a shell runs"):
+              "end, after two heredocs on one line, after a <<- body, inside a body a shell runs, after a heredoc "
+              "in a $(...) or backtick command inside an array's ( ), or after a body that starts at a line end "
+              "inside an array's ( )"):
         results = hooks(home, tool, after_body, "after-body")
     with then("the gate ends each body only at the line that holds its own end word, reads the push and names "
               "the dash"):
@@ -764,9 +769,11 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
         assert in_sum.refused and in_sum.findings == ["dashes"], in_sum.reason
     odd = ["cat <<$END\ngit push origin main\n$END", "cat <<EOF\ngit push origin main",
            "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF",
-           "cat <<EOF; git push origin main"]
+           "cat <<EOF; git push origin main", "a=(x <<EOF\ngit push origin main\nEOF\n)",
+           "a=(x <<EOF y)\ngit push origin main\nEOF", "a=(x (y <<EOF\ngit push origin main\nEOF\n))"]
     with when("Claude writes a << whose end word holds a $, whose end line is missing, also on the last line, that "
-              "stands in a (( )) part over several lines, or whose line runs on inside quotes"):
+              "stands in a (( )) part over several lines, whose line runs on inside quotes, or that stands inside "
+              "an array's ( ), where neither shell starts a heredoc and bash 3.2 runs the body lines"):
         results = hooks(home, tool, odd, "odd")
     with then("the gate can not tell where the heredoc starts or ends, so each call is unreadable"):
         for push, result in results.items():

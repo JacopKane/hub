@@ -337,20 +337,21 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                   "bash -c 'git push origin feature'": "it runs inside another command",
                   "printf feature | xargs git push origin": "xargs or parallel fills in its words",
                   "git -C $(pwd) push origin feature": "a variable or a pattern names the branch",
-                  "git --git-dir=$(pwd)/.git push origin feature": "a variable or a pattern names the branch"}
+                  "git --git-dir=$(pwd)/.git push origin feature": "a variable or a pattern names the branch",
+                  "a=(x <<EOF\ngit push origin feature\nEOF\n)": "the line does not parse"}
     with when("Claude sends pushes whose commit the gate can not read: a variable, a detached HEAD, every branch "
               "in full or shortened, a shortened option git could read two ways, a broken quote, a step after "
-              "another command or program, a substitution, a wrapper and xargs"):
+              "another command or program, a substitution, a wrapper, xargs and a heredoc inside an array"):
         results = {form: bash(home, form) for form in unreadable}
     text_gate_first = ["git push origin $BRANCH", "bash -c 'git push origin feature'",
                        "printf feature | xargs git push origin", "git -C $(pwd) push origin feature",
                        "git --git-dir=$(pwd)/.git push origin feature", "git push --d origin feature",
                        "git push --all", "git push --mirror origin", "git push --al", "git push --mirr origin",
-                       "git push --branch origin", "git push origin 'feature"]
+                       "git push --branch origin", "git push origin 'feature",
+                       "a=(x <<EOF\ngit push origin feature\nEOF\n)"]
     with then("the text gate answers first for the variable, the wrapper, xargs, the option git could read two "
-              "ways, every branch and the broken quote, since it can not read their commits either, and every other "
-              "form is asked "
-              "to be written out as its own command"):
+              "ways, every branch, the broken quote and the heredoc inside an array, since it can not read their "
+              "commits either, and every other form is asked to be written out as its own command"):
         for form, result in results.items():
             if form in text_gate_first:
                 assert result.refused and result.findings == ["unreadable"], (form, result.reason)
