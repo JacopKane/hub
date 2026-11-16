@@ -1934,9 +1934,12 @@ def test_a_graphql_query_the_gate_can_not_read_in_full_is_judged_as_a_write(home
     with when("the text gate's unreadable check is off and Claude sends the same steps"):
         home.hubctl_from_mod("off", "public_text_gate.unreadable")
         results = {case: bash(home, step) for case, step in hidden.items()}
-    with then("this gate refuses each one, saying it can not read the whole query"):
+    with then("this gate refuses each one, saying it can not read the whole query, or naming the field name the "
+              "shell fills in"):
+        named_field = "a field name the shell fills in"
         assert [(case, result.reason) for case, result in results.items()
-                if not says(home, result, "unreadable_push.md", why=QUERY_WHY)] == []
+                if not says(home, result, "unreadable_push.md",
+                            why=API_FIELD_WHY if case.endswith(named_field) else QUERY_WHY)] == []
     with when("Claude writes the mutation over the reading GraphQL file and sends that file in the same call, and "
               "sends the mutations through a fragment on Mutation"):
         overwritten = {kind: bash(home, written_first(query)) for kind, query in (("create", create), ("ready", ready))}
@@ -2129,6 +2132,50 @@ def test_a_graphql_call_gets_the_body_check_whatever_path_or_method_names_graphq
         assert [result.reason for result in [*odd[:2], both] if not says(home, result, "unreadable_push.md",
                                                                           why=QUERY_WHY)] == []
         assert odd[2].refused and odd[2].reason == missing_part(home), odd[2].reason
+
+
+API_ENDPOINT_WHY = "a variable or a substitution fills in a word gh api may read as its endpoint"
+API_METHOD_WHY = "a variable or a substitution fills in the gh api method"
+API_FIELD_WHY = "a variable or a substitution fills in a gh api field name"
+
+
+def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is_refused(home):
+    with given("branch side pushed with no report, PR 7 on GitHub, a good and a bad body, and a GraphQL file "
+               "that sets PR 7's body"):
+        with_github(home)
+        home.git("checkout", "-q", "-b", "side", "main")
+        change(home, message="Start side")
+        home.git("push", "-q", "-u", "origin", "side")
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+        query = body_file(home, 'mutation { updatePullRequest(input: {pullRequestId: "PR_kw1", body: "A fix."}) '
+                                "{ clientMutationId } }", "edit.graphql")
+    hidden = {f'gh api "$ENDPOINT" -f head=side -f base=main -F body=@{good}': API_ENDPOINT_WHY,
+              f"gh api repos/acme/demo/$KIND -f head=side -F body=@{good}": API_ENDPOINT_WHY,
+              f"gh api $(printf repos/acme/demo/pulls) -f head=side -F body=@{good}": API_ENDPOINT_WHY,
+              f"gh api repos/acme/demo/pulls/7 $MORE -F body=@{good}": API_ENDPOINT_WHY,
+              f'gh api repos/acme/demo/pulls -X "$METHOD" -f head=side -F body=@{good}': API_METHOD_WHY,
+              f"gh api --method=$METHOD repos/acme/demo/pulls/7 -F body=@{bad}": API_METHOD_WHY,
+              f'gh api -X PATCH repos/acme/demo/pulls/7 -F "$KEY"=@{bad}': API_FIELD_WHY,
+              f'gh api -X PATCH repos/acme/demo/issues/7 -f "${{KEY}}=A fix."': API_FIELD_WHY,
+              f'gh api graphql -F "$KEY"=@{query}': API_FIELD_WHY}
+    with when("Claude opens a PR at side or edits PR 7's body through gh api, while a variable or a substitution "
+              "fills in the endpoint or a part of it, an extra word, the method, or the name of a field"):
+        results = {step: bash(home, step) for step in hidden}
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        alone = {step: bash(home, step) for step in hidden}
+    with then("each is refused, and with the text gate's unreadable check off this gate refuses each one with a "
+              "reason that names the part the shell fills in"):
+        for step, result in results.items():
+            assert result.refused, (step, result.reason)
+        for step, result in alone.items():
+            assert says(home, result, "unreadable_push.md", why=hidden[step]), (step, result.reason)
+    reads = ["gh api repos/acme/demo/pulls/7", "gh api repos/acme/demo/pulls/7 --jq '.head.ref'",
+             "gh api -X GET repos/acme/demo/pulls -f head=acme:side"]
+    with when("Claude reads PR 7 and the open PRs at side through gh api, with each part written out"):
+        read_results = {step: bash(home, step) for step in reads}
+    with then("each runs, since a read with a written out endpoint changes no PR"):
+        for step, result in read_results.items():
+            assert quiet(result), (step, result.reason)
 
 
 def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):

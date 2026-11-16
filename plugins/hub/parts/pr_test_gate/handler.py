@@ -125,6 +125,9 @@ WHY = {
     "node": "a node id names the PR, not its number",
     "head": "the PR's head branch is not named",
     "api_option": "gh api has an option the gate does not know",
+    "api_endpoint": "a variable or a substitution fills in a word gh api may read as its endpoint",
+    "api_method": "a variable or a substitution fills in the gh api method",
+    "api_field": "a variable or a substitution fills in a gh api field name",
     "folder": "the folder it runs in is missing or not known",
     "body": "a variable or a substitution fills in the PR body",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
@@ -1211,6 +1214,9 @@ def api_step(command, step, flags, answer, lookups):
     items = gate().gh_api_items(step.words[2:])
     if any(name == "unknown" for name, _ in items):
         raise unreadable("api_option")
+    hidden_part = shell_filled_api_part(items)
+    if hidden_part:
+        raise unreadable(hidden_part)
     command.cwd = step.cwd
     fields = api_fields(command, items)
     endpoints = [value for name, value in items if name is None]
@@ -1251,6 +1257,17 @@ def api_step(command, step, flags, answer, lookups):
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
     return []
+
+
+def shell_filled_api_part(items):
+    """The WHY name of the first part of a gh api call the shell fills in that decides what the call changes: a
+    word gh may read as the endpoint, the method, or a field's name. None when the shell fills in none of them."""
+    mark = unreadable_mark()
+    parts = (("api_endpoint", lambda name, _value: name is None),
+             ("api_method", lambda name, _value: name == "--method"),
+             ("api_field", lambda name, value: name in ("--field", "--raw-field") and mark in value.split("=", 1)[0]))
+    return next((why for why, is_part in parts
+                 for name, value in items if is_part(name, value) and mark in value), None)
 
 
 def sent_object(text, graphql):
