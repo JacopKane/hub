@@ -2011,6 +2011,25 @@ def test_a_graphql_query_the_gate_can_not_read_in_full_is_judged_as_a_write(home
     with then("each runs, since the gate reads each query in full and neither holds a mutation"):
         for result in plain_reads:
             assert quiet(result), result.reason
+    other = "cat <<'B' > /dev/null\n{}\nB"
+    own_heredoc = {"a read": "gh api graphql -F query=@- <<'Q'\nquery { viewer { login } }\nQ\n"
+                             + other.format(ready),
+                   "ready": f"gh api graphql -F query=@- <<'Q'\n{ready}\nQ\n"
+                            + other.format("query { viewer { login } }"),
+                   "a read on stdin": "gh api graphql -F query=@/dev/stdin <<'Q'\nquery { viewer { login } }\nQ\n"
+                                      + other.format("clean")}
+    not_its_own = {"a heredoc on another step": other.format(ready) + "\ngh api graphql -F query=@-",
+                   "a heredoc on another file descriptor": f"gh api graphql -F query=@- 3<<'Q'\n{ready}\nQ"}
+    with when("Claude sends a GraphQL query from the step's own heredoc while another heredoc stands on the line, "
+              "and from a heredoc the step does not read as its standard input"):
+        own_results = {case: bash(home, step) for case, step in own_heredoc.items()}
+        other_results = {case: bash(home, step) for case, step in not_its_own.items()}
+    with then("the gate judges the heredoc gh reads, so the reads run and ready gets the answer of its plain "
+              "mutation, and a query from a heredoc gh does not read is refused as unread"):
+        assert [case for case in ("a read", "a read on stdin") if not quiet(own_results[case])] == []
+        assert says(home, own_results["ready"], "unreadable_push.md", why=NODE_WHY), own_results["ready"].reason
+        assert [(case, result.reason) for case, result in other_results.items()
+                if not says(home, result, "unreadable_push.md", why=QUERY_WHY)] == []
 
 
 def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_names_the_pr_or_the_body(home):

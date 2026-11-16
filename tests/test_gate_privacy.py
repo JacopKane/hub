@@ -129,8 +129,11 @@ def test_merges_closes_and_graphql_mutations_are_checked(home, tool):
         close = home.hook(tool, "PreToolUse", "gh issue close 4 --comment 'See /home/sam/b.md'")
         mutation = home.hook(tool, "PreToolUse", "gh api graphql -f query='mutation { addComment(input: "
                                                  "{subjectId: \"x\", body: \"See /home/sam/c.md\"}) { clientMutationId } }'")
-    with then("each is refused for the home path"):
-        assert [merge.findings, close.findings, mutation.findings] == [["private_paths"]] * 3
+        heredoc = ("gh api graphql -F query=@- <<'Q'\nmutation { addComment(input: {subjectId: \"x\", "
+                   "body: \"See /home/sam/e.md\"}) { clientMutationId } }\nQ\ncat <<'B' > /dev/null\nclean\nB")
+        from_heredoc = home.hook(tool, "PreToolUse", heredoc)
+    with then("each is refused for the home path, also a mutation in the step's own heredoc beside another heredoc"):
+        assert [result.findings for result in (merge, close, mutation, from_heredoc)] == [["private_paths"]] * 4
     with when("a graphql query only reads, with a home path in a field or a field the shell fills in"):
         query = home.hook(tool, "PreToolUse", "gh api graphql -f query='query { viewer { login } }' -f note=/home/sam/d")
         filled = home.hook(tool, "PreToolUse", "gh api graphql -f query='query { viewer { login } }' -f note=\"$NOTE\"")

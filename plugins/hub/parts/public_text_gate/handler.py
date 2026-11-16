@@ -2146,7 +2146,7 @@ def graphql_query_source(items, command):
     """Where the queries of a gh api graphql call come from. "written" means each one stands in the command
     itself. "file" means one comes from a file, a heredoc or $(cat file), which the gate reads now but which may
     change before gh reads it. None means the gate can not read one in full. A field name the shell fills in may
-    be the query, and standard input counts only when it is the one heredoc on the line, set on this command."""
+    be the query, and standard input counts only when it is the step's own heredoc, as from_file reads it."""
     sent = [(name, *field.partition("=")[::2]) for name, field in items if name in ("--field", "--raw-field")]
     if any(UNREADABLE in key for _name, key, _value in sent):
         return None
@@ -2154,10 +2154,6 @@ def graphql_query_source(items, command):
                if key.split("[", 1)[0] == "query"]
     paths = [value[1:] for from_file, value in queries if from_file]
     paths += [path for name, path in items if name == "--input"]
-    stdin = any(path == "-" or path in STDIN_PATHS for path in paths)
-    if stdin and not (len(command.heredocs) == 1
-                      and [value for name, value in items if name is None][1:] == [PLACEHOLDER.format(0)]):
-        return None
     written = [(value, command.expand(value)) for from_file, value in queries if not from_file]
     texts = [command.from_file(path) for path in paths] + [expanded for _value, expanded in written]
     if any(UNREADABLE in text or len(text.encode("utf-8")) >= MAX_TEXT for text in texts):
