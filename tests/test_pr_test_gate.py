@@ -2007,10 +2007,13 @@ def test_a_pr_named_by_a_link_gh_decodes_gets_the_body_check_and_a_link_the_gate
     with then("each is refused as if it named a PR, since the gate can not tell which issue gh would edit"):
         for step, result in odd.items():
             assert result.refused and result.reason == missing_part(home), (step, result.reason)
-    with when("Claude edits plain issue 15 in acme/other by a link with a percent-encoded path"):
-        plain = bash(home, f"gh issue edit https://github.com/acme/other/%69ssues/15 -F {bad}")
-    with then("it runs, since gh reads the same link as plain issue 15 there"):
-        assert quiet(plain), plain.reason
+    plain_edits = [f"gh issue edit https://github.com/acme/other/%69ssues/15 -F {bad}",
+                   f"gh issue edit https://github.com:443/acme/other/issues/15 -F {bad}"]
+    with when("Claude edits plain issue 15 in acme/other by a link with a percent-encoded path, or with a port"):
+        plain = {step: bash(home, step) for step in plain_edits}
+    with then("each runs, since gh reads both links as plain issue 15 there, on the host without its port"):
+        for step, result in plain.items():
+            assert quiet(result), (step, result.reason)
 
 
 def test_a_pr_body_edit_inside_a_wrapper_or_a_substitution_is_refused_as_a_step_inside_another_command(home):
