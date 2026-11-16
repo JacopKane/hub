@@ -245,14 +245,14 @@ class Lookups:
             self.cache[key] = done[1].strip() if done[0] == 0 else None
         return self.cache[key]
 
-    def ssh_hostname(self, cwd, host, ssh_words=GH_SSH):
-        """The host ssh connects to for a host or a Host alias, as ssh -G prints it after reading ssh's config,
-        without connecting. ssh_words are the program and the config options to ask with. A lookup that fails may
-        hide GitHub, so it stops the step."""
-        key = ("ssh", tuple(ssh_words), host)
+    def ssh_hostname(self, cwd, destination, ssh_words=GH_SSH):
+        """The host ssh connects to for a [user@]host, where host may be a Host alias, as ssh -G prints it after
+        reading ssh's config, without connecting. ssh_words are the program and the config options to ask with. A
+        lookup that fails may hide GitHub, so it stops the step."""
+        key = ("ssh", tuple(ssh_words), destination)
         if key not in self.cache:
             try:
-                done = self.run([*ssh_words, "-G", "--", host], cwd, GIT_SECONDS)
+                done = self.run([*ssh_words, "-G", "--", destination], cwd, GIT_SECONDS)
             except OSError:
                 done = None
             printed = done[1] if done and done[0] == 0 else ""
@@ -520,10 +520,11 @@ def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
     asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
     if GITHUB.search(url):
         return True
-    host, over_ssh = url_host(url)
-    if host is None:
+    authority, over_ssh = url_authority(url)
+    if authority is None:
         return False
-    return is_a_github_host(host) or (over_ssh and is_a_github_host(lookups.ssh_hostname(cwd, host, ssh_words())))
+    return is_a_github_host(bare_host(authority)) or (over_ssh and is_a_github_host(
+        lookups.ssh_hostname(cwd, ssh_destination(authority), ssh_words())))
 
 
 def git_ssh_words(cwd, options, assignments, lookups):
@@ -601,16 +602,24 @@ def ssh_config_options(options):
     return kept
 
 
-def url_host(url):
-    """(the host a remote URL names, or None for a local path, whether git reaches it over ssh), as git reads a URL:
-    scheme://[user@]host[:port]/path, or [user@]host:path when a colon comes before any slash."""
+def url_authority(url):
+    """(the [user@]host[:port] part of a remote URL, or None for a local path, whether git reaches it over ssh), as
+    git reads a URL: scheme://[user@]host[:port]/path, or [user@]host:path when a colon comes before any slash."""
     scheme, separator, rest = url.partition("://")
     if separator and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
         if scheme.lower() == "file":
             return None, False
-        return bare_host(rest.split("/", 1)[0]), scheme.lower() in SSH_SCHEMES
+        return rest.split("/", 1)[0], scheme.lower() in SSH_SCHEMES
     scp_like = SCP_LIKE.match(url)
-    return (bare_host(scp_like.group(1)), True) if scp_like else (None, False)
+    return (scp_like.group(0)[:-1], True) if scp_like else (None, False)
+
+
+def ssh_destination(authority):
+    """[user@]host as git hands it to ssh, with the port and brackets gone. The URL's user stays, so ssh -G reads
+    the config for that user, as a Match user block needs."""
+    user = authority.rpartition("@")[0].lstrip("[")
+    host = bare_host(authority)
+    return f"{user}@{host}" if user else host
 
 
 def bare_host(authority):

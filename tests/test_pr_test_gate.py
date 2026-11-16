@@ -1662,11 +1662,13 @@ SSH_HOST_WHY ="ssh could not say which host the remote's address names"
 
 def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_other_hosts_stay_quiet(home):
     with given("branch feature with open PR 7 and a new commit with no report, ssh aliases github-work for "
-               "github.com and lab-work for gitlab.com, and remotes that name hosts in different ways"):
+               "github.com and lab-work for gitlab.com, alias git-work for github.com only inside a Match user git "
+               "block, and remotes that name hosts in different ways"):
         with_github(home)
         feature = pushed_branch(home)
         fake_gh(home, open={"feature": 7})
-        with_fake_ssh(home, hosts={"github-work": "github.com", "lab-work": "gitlab.com"}, fail=["broken-alias"])
+        with_fake_ssh(home, hosts={"github-work": "github.com", "lab-work": "gitlab.com"},
+                      users={"git": {"git-work": "github.com"}}, fail=["broken-alias"])
         # Joined from two parts so the shape scan does not take these addresses for email.
         ssh_user = "git" + "@"
         remotes = {"ssh443": f"ssh://{ssh_user}ssh.github.com:443/acme/demo.git",
@@ -1678,23 +1680,33 @@ def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_
                    "gitlab": "https://gitlab.com/acme/demo.git",
                    "lookalike": "https://github.com.example.org/acme/demo.git",
                    "notgithub": f"{ssh_user}notgithub.com:acme/demo.git",
-                   "broken": f"{ssh_user}broken-alias:acme/demo.git"}
+                   "broken": f"{ssh_user}broken-alias:acme/demo.git",
+                   "matched": f"{ssh_user}git-work:acme/demo.git",
+                   "matchedurl": f"ssh://{ssh_user}git-work:2222/acme/demo.git",
+                   "otheruser": "deploy" + "@" + "git-work:acme/demo.git"}
         for name, url in remotes.items():
             home.git("remote", "add", name, url)
-    on_github = ["ssh443", "www", "upper", "alias", "aliasurl"]
+    on_github = ["ssh443", "www", "upper", "alias", "aliasurl", "matched", "matchedurl"]
     with when("Claude pushes feature to each remote that reaches GitHub"):
+        calls_before = len(ssh_calls(home))
         results = {name: bash(home, f"git push {name} feature") for name in on_github}
-    with then("each is judged as the push to GitHub it is, and refused for feature's commit"):
+    with then("each is judged as the push to GitHub it is, and refused for feature's commit, and ssh is asked "
+              "with the URL's user, as git hands it over, so a Match user block counts"):
         for name, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work"]] * 2 + \
+            [["-G", "--", f"{ssh_user}git-work"]] * 2
     with when("Claude pushes feature to each remote on another host"):
         calls_before = len(ssh_calls(home))
         results = {name: bash(home, f"git push {name} feature") for name in ("lab", "gitlab", "lookalike",
-                                                                               "notgithub")}
-    with then("each runs with no answer, and ssh is asked only about the ssh addresses"):
+                                                                               "notgithub", "otheruser")}
+    with then("each runs with no answer, ssh is asked only about the ssh addresses, and git-work for another user "
+              "names itself, since the Match user git block does not apply"):
         for name, result in results.items():
             assert quiet(result), (name, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-G", "--", "lab-work"], ["-G", "--", "notgithub.com"]]
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}lab-work"],
+                                                  ["-G", "--", f"{ssh_user}notgithub.com"],
+                                                  ["-G", "--", "deploy" + "@" + "git-work"]]
     with when("ssh can not read its config for the alias a remote names"):
         broken = bash(home, "git push broken feature")
     with then("the push is refused, since the alias may name GitHub"):
@@ -1728,15 +1740,15 @@ def test_an_ssh_alias_is_looked_up_with_the_ssh_config_that_gits_ssh_command_nam
               "was given the same -F"):
         assert says(home, to_work, "no_report.md", short=feature[:7], branch="feature"), to_work.reason
         assert quiet(to_lab), to_lab.reason
-        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", "work-only"],
-                                                  ["-F", work_config, "-G", "--", "lab-only"]]
+        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", f"{ssh_user}work-only"],
+                                                  ["-F", work_config, "-G", "--", f"{ssh_user}lab-only"]]
     with when("the setting names ssh by its name and the file as ~/work.json"):
         home.git("config", "core.sshCommand", "ssh -F ~/work.json")
         calls_before = len(ssh_calls(home))
         by_name = bash(home, "git push work feature")
     with then("ssh on PATH is asked with ~ read as the shell reads it, and the push is refused"):
         assert says(home, by_name, "no_report.md", short=feature[:7], branch="feature"), by_name.reason
-        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", "work-only"]]
+        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", f"{ssh_user}work-only"]]
     with when("GIT_SSH_COMMAND sets HostName for every host in the hook's environment, then GIT_SSH_COMMAND and "
               "git's -c option name the file for one command, while the repo's setting is plain ssh"):
         home.git("config", "core.sshCommand", "ssh")

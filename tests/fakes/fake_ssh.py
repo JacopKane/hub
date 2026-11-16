@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """A stand-in for ssh in the PR test gate scenarios. It never connects.
 
-`ssh [options] -G -- <host>` prints the settings ssh would use for the host, as
-the real one does after it reads its config. The JSON file in $FAKE_SSH_CONFIG
-says which Host aliases name another host:
+`ssh [options] -G -- [user@]<host>` prints the settings ssh would use for the
+host, as the real one does after it reads its config. The JSON file in
+$FAKE_SSH_CONFIG says which Host aliases name another host:
 
 - hosts: {alias: the HostName ssh connects to}; any other host names itself
+- users: {user: {alias: HostName}}, as a Match user block, for a destination
+  that names that user before an @; it comes before hosts
 - fail: hosts whose config ssh can not read, which exit 255
 
 Two options before -G change that, as they do for the real ssh: -F <file> reads
@@ -55,8 +57,10 @@ if os.environ.get("FAKE_SSH_LOG"):
 options = words[:-3]
 read = read_options(options) if words[-3:-1] == ["-G", "--"] else None
 config = read_config(read[0] or os.environ.get("FAKE_SSH_CONFIG")) if read else {}
-if read is None or words[-1] in config.get("fail", []):
+user, _at, host = (words[-1:] or [""])[0].rpartition("@")
+if read is None or host in config.get("fail", []):
     print("ssh: could not read the config", file=sys.stderr)
     sys.exit(255)
-host = words[-1]
-print(f"host {host}\nhostname {read[1] or config.get('hosts', {}).get(host, host)}\nport 22")
+matched = config.get("users", {}).get(user, {})
+hostname = read[1] or matched.get(host) or config.get("hosts", {}).get(host, host)
+print(f"host {host}\nuser {user or 'local'}\nhostname {hostname}\nport 22")
