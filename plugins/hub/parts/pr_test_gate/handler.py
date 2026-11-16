@@ -144,7 +144,12 @@ SSH_COMMAND_SETTING = "core.sshcommand"
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
-SSH_CONFIG_OPTIONS = {"-F", "-o", "-p"}  # the ssh options that change the config ssh -G prints for a host
+# The ssh options that change the config ssh -G prints for a host: a config file or setting, the port, user, tag
+# and jump host that Match blocks and %p, %r, %j can test, and the session type that Match sessiontype tests
+SSH_CONFIG_OPTIONS = {"-F", "-o", "-p", "-l", "-P", "-J", "-W"}
+SSH_CONFIG_SWITCHES = {"N"}
+# -s makes git's remote command a subsystem name, and ssh -G can not judge a session type without that command
+SSH_UNREADABLE_SWITCHES = {"s"}
 # A port as C's strtol reads the text after a colon, which git's get_host_and_port and get_port take whole
 GIT_PORT = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+")
 PERCENT_ESCAPE = re.compile(rb"%([0-9A-Fa-f]{2})")
@@ -545,7 +550,7 @@ def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
 
 
 def git_ssh_words(cwd, options, assignments, lookups):
-    """(the ssh program, then the -F and -o options it gets) for the ssh command git runs for a push. git takes
+    """(the ssh program, then the options ssh -G needs) for the ssh command git runs for a push. git takes
     GIT_SSH_COMMAND, else core.sshCommand with a git -c value first, else GIT_SSH as one word, else ssh, as git's
     connect.c picks them, and the variables come from the hook's environment and the step's VAR=value words. A
     command that is not ssh, or that the gate can not read, stops the step."""
@@ -598,16 +603,19 @@ def shell_words(text, assignments, cwd, lookups):
 
 
 def ssh_config_options(options):
-    """The -F, -o and -p options, with their values, among the options of git's ssh command, which ssh -G needs to
-    print the config that ssh will read. ssh takes the first word that is not an option as its host, so such a
-    word, or a letter ssh does not know, stops the step."""
+    """The options of git's ssh command that change the config ssh -G prints for a host, each with its value, in
+    the order git's ssh gets them, since ssh keeps the first port, user, tag and jump host. ssh takes the first
+    word that is not an option as its host, so such a word, a letter ssh does not know, or -s stops the step."""
     kept, index = [], 0
     while index < len(options):
         word = options[index]
         letters = word[1:] if word.startswith("-") and word not in ("-", "--") else ""
         value_at = next((place for place, letter in enumerate(letters) if letter in SSH_VALUE_LETTERS), len(letters))
-        if not letters or any(letter not in SSH_SWITCH_LETTERS for letter in letters[:value_at]):
+        switches = letters[:value_at]
+        if (not letters or any(letter not in SSH_SWITCH_LETTERS for letter in switches)
+                or any(letter in SSH_UNREADABLE_SWITCHES for letter in switches)):
             raise unreadable("ssh_command")
+        kept += ["-" + letter for letter in switches if letter in SSH_CONFIG_SWITCHES]
         if value_at == len(letters):
             index += 1
             continue

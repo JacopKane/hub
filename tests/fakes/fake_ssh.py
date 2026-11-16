@@ -11,11 +11,19 @@ $FAKE_SSH_CONFIG says which Host aliases name another host:
 - fail: hosts whose config ssh can not read, which exit 255
 - ports: {port: {alias: HostName}}, as a Match exec block on %p, for the port
   ssh connects to (22 unless -p names one); it comes after users
+- tags: {tag: {alias: HostName}}, as a Match tagged block for the tag -P names
+- jumps: {jump host: {alias: HostName}}, as a Match exec block on %j for the
+  jump host -J names
+- sessions: {"none": {alias: HostName}}, as a Match sessiontype block, for -N
+  or -W, which ask for no session
+- users, tags, jumps and sessions come before ports, in that order
 
-Three options before -G change that, as they do for the real ssh: -F <file>
-reads the JSON file it names in place of $FAKE_SSH_CONFIG, -o HostName=<name>
-(or -oHostName=<name>) names the host for any alias, and -p <port> (or
--p<port>) names the port. As in the real ssh, the first -p wins.
+Options before -G change that, as they do for the real ssh: -F <file> reads
+the JSON file it names in place of $FAKE_SSH_CONFIG, -o HostName=<name> (or
+-oHostName=<name>) names the host for any alias, -p <port> names the port, -l
+<user> the user, in place of the one before the @, -P <tag> the tag and -J
+<host> the jump host. Each also comes glued, as in -p<port>. As in the real
+ssh, the first -p, -l or -P wins, and a second -J fails.
 
 Each call's words go to $FAKE_SSH_LOG, one JSON list a line. Every other call
 exits 255, as when ssh can not connect.
@@ -32,28 +40,36 @@ def read_config(path):
     return {}
 
 
+VALUE_OPTIONS = {"-F": "config_file", "-p": "port", "-l": "user", "-P": "tag", "-J": "jump", "-W": "forward"}
+
+
 def read_options(options):
-    """(the config file -F names or None, the HostName -o sets or None, the port the first -p names or None), or
-    None for any other option."""
-    config_file, hostname, port, index = None, None, None, 0
+    """{the setting each option names: config_file, hostname, port, user, tag, jump, session}, or None for any
+    other option or a second -J."""
+    read, index = {}, 0
     while index < len(options):
         option = options[index]
-        if option in ("-F", "-o", "-p") and index + 1 < len(options):
+        if option == "-N":
+            read, index = {**read, "session": "none"}, index + 1
+            continue
+        if (option in VALUE_OPTIONS or option == "-o") and index + 1 < len(options):
             value, index = options[index + 1], index + 2
-        elif option.startswith(("-o", "-p")) and len(option) > 2:
+        elif option[:2] in (*VALUE_OPTIONS, "-o") and len(option) > 2:
             option, value, index = option[:2], option[2:], index + 1
         else:
             return None
-        if option == "-F":
-            config_file = value
-        elif option == "-p":
-            port = port or value
-        else:
+        if option == "-o":
             key, _equals, setting = value.partition("=")
             if key.lower() != "hostname" or not setting:
                 return None
-            hostname = setting
-    return config_file, hostname, port
+            read = {"hostname": setting, **read}
+        elif option == "-J" and "jump" in read:
+            return None
+        elif option == "-W":
+            read = {"session": "none", **read}
+        else:
+            read = {VALUE_OPTIONS[option]: value, **read}
+    return read
 
 
 words = sys.argv[1:]
@@ -62,13 +78,15 @@ if os.environ.get("FAKE_SSH_LOG"):
         handle.write(json.dumps(words) + "\n")
 options = words[:-3]
 read = read_options(options) if words[-3:-1] == ["-G", "--"] else None
-config = read_config(read[0] or os.environ.get("FAKE_SSH_CONFIG")) if read else {}
-user, _at, host = (words[-1:] or [""])[0].rpartition("@")
+config = read_config(read.get("config_file") or os.environ.get("FAKE_SSH_CONFIG")) if read is not None else {}
+named_user, _at, host = (words[-1:] or [""])[0].rpartition("@")
 if read is None or host in config.get("fail", []):
     print("ssh: could not read the config", file=sys.stderr)
     sys.exit(255)
-port = read[2] or "22"
-matched = config.get("users", {}).get(user, {})
-on_port = config.get("ports", {}).get(port, {})
-hostname = read[1] or matched.get(host) or on_port.get(host) or config.get("hosts", {}).get(host, host)
+port, user = read.get("port", "22"), read.get("user", named_user)
+blocks = [config.get(name, {}).get(key, {}) for name, key in
+          (("users", user), ("tags", read.get("tag")), ("jumps", read.get("jump")),
+           ("sessions", read.get("session")), ("ports", port))]
+hostname = read.get("hostname") or next((block[host] for block in blocks if host in block),
+                                        config.get("hosts", {}).get(host, host))
 print(f"host {host}\nuser {user or 'local'}\nhostname {hostname}\nport {port}")

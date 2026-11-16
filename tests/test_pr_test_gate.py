@@ -1876,6 +1876,65 @@ def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to
                                                   ["-G", "--", f"{ssh_user}%67ithub.com"]]
 
 
+def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_gits_ssh_command_names(home):
+    with given("branch feature with open PR 7 and a new commit with no report, and aliases that are github.com only "
+               "for user alice, tag t1, jump host jump1 or no session, as Match user, Match tagged, Match exec on "
+               "%j and Match sessiontype blocks can set"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        fake = with_fake_ssh(home, users={"alice": {"user-work": "github.com"}},
+                             tags={"t1": {"tag-work": "github.com"}}, jumps={"jump1": {"jump-work": "github.com"}},
+                             sessions={"none": {"session-work": "github.com"}})
+        ssh_user = "git" + "@"
+        for name in ("user", "tag", "jump", "session"):
+            home.git("remote", "add", name, f"{ssh_user}{name}-work:acme/demo.git")
+    with when("git's ssh command names that user, tag, jump host or no session, alone or glued, and Claude pushes "
+              "feature to the alias it changes"):
+        on_github = {"user": ("-l alice", "user"), "glued user": ("-lalice", "user"), "tag": ("-P t1", "tag"),
+                     "jump": ("-J jump1", "jump"), "no session": ("-N", "session"),
+                     "stdio forward": ("-W github.com:22", "session"), "switch then tag": ("-NPt1", "tag"),
+                     "identity then user": ("-i id_work -l alice", "user")}
+        calls_before = len(ssh_calls(home))
+        results = {case: bash(home, f"GIT_SSH_COMMAND='{fake} {options}' git push {remote} feature")
+                   for case, (options, remote) in on_github.items()}
+    with then("each is judged as the push to GitHub it is, and ssh -G gets those options in the order git runs "
+              "ssh with them"):
+        for case, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (case, result.reason)
+        assert ssh_calls(home)[calls_before:] == [
+            ["-l", "alice", "-G", "--", f"{ssh_user}user-work"], ["-l", "alice", "-G", "--", f"{ssh_user}user-work"],
+            ["-P", "t1", "-G", "--", f"{ssh_user}tag-work"], ["-J", "jump1", "-G", "--", f"{ssh_user}jump-work"],
+            ["-N", "-G", "--", f"{ssh_user}session-work"],
+            ["-W", "github.com:22", "-G", "--", f"{ssh_user}session-work"],
+            ["-N", "-P", "t1", "-G", "--", f"{ssh_user}tag-work"],
+            ["-l", "alice", "-G", "--", f"{ssh_user}user-work"]]
+    with when("the command names another user or tag first, or an option that changes nothing ssh -G prints"):
+        elsewhere = {"first user wins": ("-l bob -l alice", "user"), "first tag wins": ("-P t2 -P t1", "tag"),
+                     "identity only": ("-i id_work -l bob", "user")}
+        calls_before = len(ssh_calls(home))
+        results = {case: bash(home, f"GIT_SSH_COMMAND='{fake} {options}' git push {remote} feature")
+                   for case, (options, remote) in elsewhere.items()}
+    with then("each runs, since ssh keeps the first user and tag, as git's ssh would"):
+        for case, result in results.items():
+            assert quiet(result), (case, result.reason)
+        assert ssh_calls(home)[calls_before:] == [
+            ["-l", "bob", "-l", "alice", "-G", "--", f"{ssh_user}user-work"],
+            ["-P", "t2", "-P", "t1", "-G", "--", f"{ssh_user}tag-work"],
+            ["-l", "bob", "-G", "--", f"{ssh_user}user-work"]]
+    with when("the command names two jump hosts, which ssh refuses, or a subsystem, which ssh -G can not judge "
+              "without the command git sends"):
+        unreadable_steps = {case: (bash(home, f"GIT_SSH_COMMAND='{fake} {options}' git push {remote} feature"), why)
+                            for case, (options, remote, why) in {
+                                "two jump hosts": ("-J jump2 -J jump1", "jump", SSH_HOST_WHY),
+                                "subsystem": ("-s", "session", SSH_COMMAND_WHY),
+                                "subsystem glued": ("-Ns", "session", SSH_COMMAND_WHY)}.items()}
+    with then("each push is refused, since ssh -G fails as git's ssh would, or the gate can not tell which host "
+              "git's ssh reaches"):
+        for case, (result, why) in unreadable_steps.items():
+            assert says(home, result, "unreadable_push.md", why=why), (case, result.reason)
+
+
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
     with given("branch feature with open PR 7, pushed, and a new commit with no report"):
         with_github(home)
