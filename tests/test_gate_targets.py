@@ -858,3 +858,35 @@ def test_a_substitution_past_the_gates_reading_depth_is_refused_whatever_it_name
         past = home.hook(tool, "PreToolUse", substitutions(5, "date"))
     with then("it is refused as unreadable, since the gate can not tell what the deepest one runs"):
         assert past.findings == ["unreadable"]
+
+
+def test_a_program_the_shell_fills_in_after_a_wrapper_is_judged_like_one_with_no_wrapper(home, tool):
+    with given("hub is installed with the gate at warn, and self_protection off, so the gates alone answer"):
+        home.install()
+        home.hubctl_from_mod("off", "self_protection")
+    with when("Claude runs a program a variable fills in after env, sudo, nice or command"):
+        wrapped = {
+            "env": "env $CMD",
+            "sudo with an option": "sudo -u root $CMD push",
+            "nice and sudo": "nice -n 5 sudo -u root ${TOOL} pr comment 3",
+            "command": "command $CMD",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in wrapped.items()}
+    with then("each is refused as unreadable, as it is with no wrapper"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in wrapped}
+    with when("the user turns off every target"):
+        for target in ["commit", "push", "pr", "issue", "review_comment", "release", "gist", "tag",
+                       "discussion", "commit_comment", "contents", "api"]:
+            home.hubctl_from_mod("off", f"{GATE}.targets.{target}")
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in wrapped.items()}
+    with then("in Claude Code the PR test gate refuses each, since the program may be git or gh; Cursor has no "
+              "PR test gate, so there each runs"):
+        refused_by_the_pr_gate = {name: result.refused and "it runs inside another command" in result.reason
+                                  for name, result in results.items()}
+        assert refused_by_the_pr_gate == {name: tool == "claude_code" for name in wrapped}
+        assert all(result.ran for result in results.values()) == (tool == "cursor")
+    with when("the user turns off the PR test gate too"):
+        home.hubctl_from_mod("off", "pr_test_gate")
+    with then("each runs, because nothing it could publish is checked"):
+        assert all(home.hook(tool, "PreToolUse", command).ran for command in wrapped.values())

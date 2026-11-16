@@ -2579,6 +2579,25 @@ def test_a_step_inside_another_command_is_refused_however_many_steps_stand_besid
         assert quiet(titles), titles.reason
         assert quiet(visible_program), visible_program.reason
         assert says(home, written_out, "no_report.md", short=feature[:7]), written_out.reason
+    with when("self_protection is off, so the gates alone answer, and Claude sends a program the shell fills in "
+              "after a wrapper such as env, sudo, nice, command or exec, with the text gate letting unreadable "
+              "steps through in each of two ways, and a wrapped program whose folder alone a variable fills in"):
+        home.hubctl_from_mod("off", "self_protection")
+        wrapped = ["env $CMD pr ready 7", "sudo -u root $CMD push origin feature",
+                   "nice -n 5 ${X}it push origin feature", "command $CMD", "env A=b timeout 5 $CMD",
+                   "nohup exec $CMD"]
+        wrapped_results = {}
+        for setting, (state, flag) in settings.items():
+            home.hubctl_from_mod(state, flag)
+            wrapped_results.update({(setting, step): bash(home, step) for step in wrapped})
+            home.hubctl_from_mod("off" if state == "on" else "on", flag)
+        wrapped_visible = bash(home, 'env -u X sudo -u root "$VENV/bin/pytest" -q')
+    with then("this gate refuses each wrapped hidden program as a step inside another command, since it may be "
+              "git or gh, and the wrapped visible program runs"):
+        for (setting, step), result in wrapped_results.items():
+            assert says(home, result, "unreadable_push.md", why="it runs inside another command"), \
+                (setting, step, result.reason)
+        assert quiet(wrapped_visible), wrapped_visible.reason
 
 
 def failing_git(home, verb):

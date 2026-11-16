@@ -394,8 +394,9 @@ def folder_after_cd(here, target):
 
 def may_push_or_open_a_pr(line, cwd):
     """Whether the gate reads the line. It does when the line does not parse, when git or gh is in its text or
-    parsed words (so g''it counts), when the shell fills in a program's name, whole or in part, as in $CMD or
-    ${X}it, since that may be git or gh, or when the text gate finds a public step inside it, as in bash -c."""
+    parsed words (so g''it counts), when the shell fills in a program's name, whole or in part, as in $CMD,
+    ${X}it or env $CMD, since that may be git or gh, or when the text gate finds a public step inside it, as in
+    bash -c."""
     parser = gate()
     segments = parser.Command(line, cwd, read_log=False).segments()
     words = [word for segment in segments or [] for word in segment]
@@ -405,10 +406,10 @@ def may_push_or_open_a_pr(line, cwd):
 
 
 def fills_in_the_program(words):
-    """Whether the shell fills in the name of the program a simple command runs, whole or in part. A variable
-    that names only its folder, as in "$VENV/bin/pytest", leaves the name in view."""
-    program = next((word for word in words if not ASSIGNMENT.match(word)), "")
-    return unreadable_mark() in os.path.basename(program)
+    """Whether the shell fills in the name of the program a simple command runs, whole or in part, also after a
+    wrapper such as env, sudo or nice. The text gate's program_spot finds that program. A variable that names only
+    its folder, as in "$VENV/bin/pytest", leaves the name in view."""
+    return gate().program_spot(words)[1]
 
 
 def gh_words(parser, words):
