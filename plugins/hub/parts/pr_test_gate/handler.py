@@ -1073,7 +1073,7 @@ def api_step(command, step, flags, answer, lookups):
             sent = None
         if not isinstance(sent, dict):
             raise unreadable("head")
-        fields.update({key: str(value) for key, value in sent.items()})
+        fields.update(sent_fields(sent, endpoint == "graphql"))
     if endpoint == "graphql":
         return graphql_step(fields, step, flags, answer, lookups)
     new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
@@ -1099,6 +1099,31 @@ def api_step(command, step, flags, answer, lookups):
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
     return []
+
+
+def sent_fields(sent, graphql):
+    """The fields an --input file sends, named as gh's -f fields name them. A GraphQL file's variables count as
+    fields too, as gh sends every -f field of a GraphQL call as a variable."""
+    variables = sent.get("variables") if graphql else None
+    if isinstance(variables, str):
+        try:
+            variables = json.loads(variables)
+        except ValueError:
+            variables = None
+    return {**flat_fields(sent), **(flat_fields(variables) if isinstance(variables, dict) else {})}
+
+
+def flat_fields(sent, prefix=""):
+    """An object's values by gh's key[subkey] names, as -f pr[body]=x writes them. A value that is not text
+    stays JSON text."""
+    return dict(pair for key, value in sent.items()
+                for pair in flat_pairs(f"{prefix}[{key}]" if prefix else key, value))
+
+
+def flat_pairs(name, value):
+    if isinstance(value, dict):
+        return flat_fields(value, name).items()
+    return [(name, value if isinstance(value, str) else json.dumps(value))]
 
 
 def may_be_a_pr(step, issue_path, lookups):
@@ -1133,7 +1158,9 @@ def graphql_step(fields, step, flags, answer, lookups):
     written_out(step)
     body = graphql_value(query, "body", fields)
     if "createPullRequest" not in names:
-        body_stop(body, step.cwd, flags, answer)
+        in_input = input_bodies(query, fields) if flags.runs(f"{PART}.body") else []
+        for text in ([] if body is None else [body]) + in_input:
+            body_stop(text, step.cwd, flags, answer)
         return []
     body_stop(body or "", step.cwd, flags, answer)
     if not flags.runs(f"{PART}.report"):
@@ -1145,6 +1172,17 @@ def graphql_step(fields, step, flags, answer, lookups):
     head_node = graphql_value(query, "headRepositoryId", fields)
     head_place = base_place if head_node is None else node_place(head_node, step)
     return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), (head_place, base_place), lookups)
+
+
+def input_bodies(query, fields):
+    """The bodies an updatePullRequest sets inside an input object variable, such as -f pr[body]=x for input: $pr.
+    An input object the call does not send, or a field name the shell fills in, may hold a body."""
+    names = re.findall(r"\bupdatePullRequest\s*\(\s*input\s*:\s*\$(\w+)", query)
+    if names and any(unreadable_mark() in key for key in fields):
+        raise unreadable("body")
+    if any(not any(key.startswith(name + "[") for key in fields) for name in names):
+        raise unreadable("body")
+    return [fields[name + "[body]"] for name in names if name + "[body]" in fields]
 
 
 def graphql_value(query, key, fields):

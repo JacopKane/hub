@@ -1810,6 +1810,36 @@ def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_na
     with then("each runs, since the good body has its tested part and issue 12 is not a PR"):
         for case, result in {**fine, **plain}.items():
             assert quiet(result), (case, result.reason)
+    by_input = "mutation($pr: UpdatePullRequestInput!) { updatePullRequest(input: $pr) { clientMutationId } }"
+    by_body = ('mutation($text: String) { updatePullRequest(input: {pullRequestId: "PR_kw1", body: $text}) '
+               "{ clientMutationId } }")
+
+    def sent_file(query, variables, name):
+        return body_file(home, json.dumps({"query": query, "variables": variables}), name)
+
+    def object_edits(body, name):
+        return {"by -f fields": graphql_call(by_input, shlex.quote("pr[pullRequestId]=PR_kw1"),
+                                             "-F", shlex.quote(f"pr[body]=@{body_file(home, body, name + '.md')}")),
+                "by an --input object": "gh api graphql --input "
+                                        + sent_file(by_input, {"pr": {"pullRequestId": "PR_kw1", "body": body}},
+                                                    name + "-object.json"),
+                "by an --input variable": "gh api graphql --input "
+                                          + sent_file(by_body, {"text": body}, name + "-variable.json")}
+    with when("Claude edits PR 7's body through GraphQL with the body inside the input object, by -f fields or "
+              "an --input file, or as a variable the --input file sets"):
+        bad_objects = {case: bash(home, step) for case, step in object_edits(NO_PART, "bad-object").items()}
+        good_objects = {case: bash(home, step) for case, step in object_edits(CANONICAL, "good-object").items()}
+        title_only = bash(home, graphql_call(by_input, shlex.quote("pr[pullRequestId]=PR_kw1"),
+                                             "-f", shlex.quote("pr[title]=New title")))
+        no_input = bash(home, graphql_call(by_input))
+    with then("a body with no tested part is refused with pr-check's sentence, a good body and a title edit run, "
+              "and an input object the call does not send is refused, since it may hold a body"):
+        for case, result in bad_objects.items():
+            assert result.refused and result.reason == missing_part(home), (case, result.reason)
+        for case, result in {**good_objects, "title only": title_only}.items():
+            assert quiet(result), (case, result.reason)
+        assert says(home, no_input, "unreadable_push.md", why="a variable or a substitution fills in the PR body"), \
+            no_input.reason
     with when("gh can not reach GitHub, and Claude edits issue 12's body to the bad one"):
         fake_gh(home, fail=True)
         unknown = bash(home, issue_edits["by owner and name"].format(number=12, body=bad))
