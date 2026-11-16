@@ -1191,9 +1191,10 @@ def closing(line, start, brackets="()", commands=False, cases=True, braces=True)
     ends nothing (case_step), unless cases is False. A $((...)) sum, a ((...)) and a ${...} hold no
     comment. With braces False a ${...} is plain text, so each ( and ) in it counts. With brackets="{}" it finds
     the } that closes a {.
-    bash 3.2 reads a quote mark in such a comment inside "$(...)" or <(...)
-    as a quote and stops with a syntax error, so it runs no command that
-    this reading misses.
+    bash 3.2 reads some of these forms differently from zsh. It stops with a
+    syntax error at a quote mark in such a comment inside "$(...)" or <(...).
+    Inside "$(...)" it can end the substitution at another ), such as the )
+    of a case pattern (bash_3_2_end).
     """
     stack = ["$(" if commands else "{" if brackets == "{}" else "(("]
     index, word, last, last_starts = start + 1, False, "", True
