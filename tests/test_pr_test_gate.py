@@ -1719,7 +1719,7 @@ def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_
         for name, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
         assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work"]] * 2 + \
-            [["-G", "--", f"{ssh_user}git-work"]] * 2
+            [["-G", "--", f"{ssh_user}git-work"], ["-p", "2222", "-G", "--", f"{ssh_user}git-work"]]
     with when("Claude pushes feature to each remote on another host"):
         calls_before = len(ssh_calls(home))
         results = {name: bash(home, f"git push {name} feature") for name in ("lab", "gitlab", "lookalike",
@@ -1800,6 +1800,41 @@ def test_an_ssh_alias_is_looked_up_with_the_ssh_config_that_gits_ssh_command_nam
     with then("each push is refused, since the gate can not tell which ssh config git will read"):
         for case, result in unreadable_steps.items():
             assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+
+
+def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
+    with given("branch feature with open PR 7 and a new commit with no report, alias port-work that is github.com "
+               "only on port 2222, as a Match exec block on %p can set, and remotes that reach port-work on "
+               "different ports"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        fake = with_fake_ssh(home, ports={"2222": {"port-work": "github.com"}})
+        ssh_user = "git" + "@"
+        remotes = {"url": f"ssh://{ssh_user}port-work:2222/acme/demo.git",
+                   "bracketed": f"[{ssh_user}port-work:2222]:acme/demo.git",
+                   "otherport": f"ssh://{ssh_user}port-work:2223/acme/demo.git",
+                   "noport": f"{ssh_user}port-work:acme/demo.git"}
+        for name, url in remotes.items():
+            home.git("remote", "add", name, url)
+    with when("Claude pushes feature to each remote"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in remotes}
+    with then("the pushes on port 2222 are judged as the pushes to GitHub they are, the others run, and ssh -G "
+              "gets each URL's port with -p, as git passes it"):
+        for name in ("url", "bracketed"):
+            assert says(home, results[name], "no_report.md", short=feature[:7], branch="feature"), \
+                (name, results[name].reason)
+        for name in ("otherport", "noport"):
+            assert quiet(results[name]), (name, results[name].reason)
+        assert ssh_calls(home)[calls_before:] == [["-p", "2222", "-G", "--", f"{ssh_user}port-work"]] * 2 + \
+            [["-p", "2223", "-G", "--", f"{ssh_user}port-work"], ["-G", "--", f"{ssh_user}port-work"]]
+    with when("git's ssh command names port 2223 itself and Claude pushes to the remote on port 2222"):
+        own_port = bash(home, f"GIT_SSH_COMMAND='{fake} -p 2223' git push url feature")
+    with then("ssh -G gets the command's port first and the URL's after it, in the order git runs ssh, and ssh "
+              "keeps the first one, so the push runs"):
+        assert quiet(own_port), own_port.reason
+        assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work"]
 
 
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):

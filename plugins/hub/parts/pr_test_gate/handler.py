@@ -78,7 +78,8 @@ HEAD_ON_NODE = ("query($id: ID!, $ref: String!) { node(id: $id) { ... on Reposit
 DEFAULT_ON_NODE = "query($id: ID!) { node(id: $id) { ... on Repository { defaultBranchRef { name } } } }"
 GITHUB = re.compile(r"(?:^|[@/])github\.com(?:[:/]|$)", re.I)
 SSH_SCHEMES = {"ssh", "git+ssh", "ssh+git"}  # the URL schemes git reaches over ssh
-SCP_LIKE = re.compile(r"(?:[^@/:]*@)?(\[[^\]/]*\]|[^:/]+):")  # [user@]host:path, where host may be [host:port]
+# [user@]host:path, where host may be [host:port], or [user@host:port]:path, as git's host_end reads a [ first
+SCP_LIKE = re.compile(r"(?:\[[^\]/]*\]|(?:[^@/:]*@)?(?:\[[^\]/]*\]|[^:/]+)):")
 CONFIG_VARIABLE = re.compile(r"GIT_CONFIG(?:_[A-Z0-9_]+)?=")
 PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror)|branch\..+\.(merge|remote))$"
 # The words Go's strconv.ParseBool reads as true, which gh uses for a value such as --undo=true
@@ -143,7 +144,9 @@ SSH_COMMAND_SETTING = "core.sshcommand"
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
-SSH_CONFIG_OPTIONS = {"-F", "-o"}  # the ssh options that change the config ssh -G prints for a host
+SSH_CONFIG_OPTIONS = {"-F", "-o", "-p"}  # the ssh options that change the config ssh -G prints for a host
+# A port as C's strtol reads the text after a colon, which git's get_host_and_port and get_port take whole
+GIT_PORT = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+")
 # ssh's one-letter options, as its getopt string names them: those that take a value, and those that do not
 SSH_VALUE_LETTERS = set("BDEFIJLOPQRSWbceilmopw")
 SSH_SWITCH_LETTERS = set("1246ACGKMNTVXYafgknqstvxy")
@@ -537,7 +540,7 @@ def is_a_github_url(url, cwd, lookups, ssh_words=lambda: GH_SSH):
     if authority is None:
         return False
     return is_a_github_host(bare_host(authority)) or (over_ssh and is_a_github_host(
-        lookups.ssh_hostname(cwd, ssh_destination(authority), ssh_words())))
+        lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words(), *port_options(authority)))))
 
 
 def git_ssh_words(cwd, options, assignments, lookups):
@@ -594,7 +597,7 @@ def shell_words(text, assignments, cwd, lookups):
 
 
 def ssh_config_options(options):
-    """The -F and -o options, with their values, among the options of git's ssh command, which ssh -G needs to
+    """The -F, -o and -p options, with their values, among the options of git's ssh command, which ssh -G needs to
     print the config that ssh will read. ssh takes the first word that is not an option as its host, so such a
     word, or a letter ssh does not know, stops the step."""
     kept, index = [], 0
@@ -633,6 +636,30 @@ def ssh_destination(authority):
     user = authority.rpartition("@")[0].lstrip("[")
     host = bare_host(authority)
     return f"{user}@{host}" if user else host
+
+
+def port_options(authority):
+    """("-p", port) when the [user@]host[:port] names a port, as git adds it after its ssh command's own options,
+    or (). ssh keeps the first port it is given, so ssh -G gets them in the same order. A Match exec block on %p
+    can make the port pick the host."""
+    port = git_port(authority)
+    return ("-p", port) if port is not None else ()
+
+
+def git_port(authority):
+    """The port git hands ssh for [user@]host[:port], as connect.c finds it: after the first colon behind a
+    [bracketed] part, else after the first colon of the host with its brackets gone."""
+    start = authority.find("@[") + 1
+    close = authority.find("]", start + 1) if authority[start:start + 1] == "[" else -1
+    if close < 0:
+        return port_after_colon(authority)
+    return port_after_colon(authority[close + 1:]) or port_after_colon(authority[:start] + authority[start + 1:close])
+
+
+def port_after_colon(text):
+    """The text after the first colon when all of it is a port from 0 to 65535 as strtol reads it, else None."""
+    value = text.partition(":")[2]
+    return value if ":" in text and GIT_PORT.fullmatch(value) and 0 <= int(value) < 65536 else None
 
 
 def bare_host(authority):

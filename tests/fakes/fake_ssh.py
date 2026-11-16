@@ -9,10 +9,13 @@ $FAKE_SSH_CONFIG says which Host aliases name another host:
 - users: {user: {alias: HostName}}, as a Match user block, for a destination
   that names that user before an @; it comes before hosts
 - fail: hosts whose config ssh can not read, which exit 255
+- ports: {port: {alias: HostName}}, as a Match exec block on %p, for the port
+  ssh connects to (22 unless -p names one); it comes after users
 
-Two options before -G change that, as they do for the real ssh: -F <file> reads
-the JSON file it names in place of $FAKE_SSH_CONFIG, and -o HostName=<name> (or
--oHostName=<name>) names the host for any alias.
+Three options before -G change that, as they do for the real ssh: -F <file>
+reads the JSON file it names in place of $FAKE_SSH_CONFIG, -o HostName=<name>
+(or -oHostName=<name>) names the host for any alias, and -p <port> (or
+-p<port>) names the port. As in the real ssh, the first -p wins.
 
 Each call's words go to $FAKE_SSH_LOG, one JSON list a line. Every other call
 exits 255, as when ssh can not connect.
@@ -30,24 +33,27 @@ def read_config(path):
 
 
 def read_options(options):
-    """(the config file -F names or None, the HostName -o sets or None), or None for any other option."""
-    config_file, hostname, index = None, None, 0
+    """(the config file -F names or None, the HostName -o sets or None, the port the first -p names or None), or
+    None for any other option."""
+    config_file, hostname, port, index = None, None, None, 0
     while index < len(options):
         option = options[index]
-        if option in ("-F", "-o") and index + 1 < len(options):
+        if option in ("-F", "-o", "-p") and index + 1 < len(options):
             value, index = options[index + 1], index + 2
-        elif option.startswith("-o") and len(option) > 2:
-            value, index = option[2:], index + 1
+        elif option.startswith(("-o", "-p")) and len(option) > 2:
+            option, value, index = option[:2], option[2:], index + 1
         else:
             return None
         if option == "-F":
             config_file = value
+        elif option == "-p":
+            port = port or value
         else:
             key, _equals, setting = value.partition("=")
             if key.lower() != "hostname" or not setting:
                 return None
             hostname = setting
-    return config_file, hostname
+    return config_file, hostname, port
 
 
 words = sys.argv[1:]
@@ -61,6 +67,8 @@ user, _at, host = (words[-1:] or [""])[0].rpartition("@")
 if read is None or host in config.get("fail", []):
     print("ssh: could not read the config", file=sys.stderr)
     sys.exit(255)
+port = read[2] or "22"
 matched = config.get("users", {}).get(user, {})
-hostname = read[1] or matched.get(host) or config.get("hosts", {}).get(host, host)
-print(f"host {host}\nuser {user or 'local'}\nhostname {hostname}\nport 22")
+on_port = config.get("ports", {}).get(port, {})
+hostname = read[1] or matched.get(host) or on_port.get(host) or config.get("hosts", {}).get(host, host)
+print(f"host {host}\nuser {user or 'local'}\nhostname {hostname}\nport {port}")
