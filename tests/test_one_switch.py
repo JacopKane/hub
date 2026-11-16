@@ -1008,6 +1008,45 @@ def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(hom
             assert result.ran and result.output == {}, (line, result.reason)
 
 
+def test_a_bracket_inside_a_brace_that_bash_3_2_ends_a_substitution_at_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    early = ["echo \"$(echo ${x:-a) echo '$(git push origin main)' b})\"",
+             "echo \"$(echo ${x:-a) echo \";git push origin main;\" b})\"",
+             "echo \"${y:-$(echo ${x:-a) echo '$(git push origin main)' b})}\"",
+             "cat <<EOF\n$(echo ${x:-a) echo '$(git push origin main)' b})\nEOF",
+             "echo \"$(echo ${x/a)/b} '$(git push origin main)' c)\"",
+             "echo \"$(echo ${x:-a) echo \";$STEP;\" b})\""]
+    with when("Claude runs a ${...} that holds a ) inside a $(...) in double quotes, in a ${...} or in a heredoc "
+              "body, with a push or a word the shell fills in quoted after that ), each in its own session"):
+        results = hooks(home, tool, early, "early")
+    with then("bash 3.2 ends that $(...) at the ) inside the ${...} and runs the text after it, while zsh reads it "
+              "as quoted text, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    with when("Claude runs a ${...} that holds a ( inside a $(...) in double quotes, and pushes main after its )"):
+        later = home.hook(tool, "PreToolUse", "echo \"$(echo ${x:-(}) '$(git push origin main)' c)\"",
+                          session="later")
+    with then("zsh ends the $(...) at that ) and runs the push, while bash 3.2 reads the push as part of the "
+              "$(...), so the gate names the dash and finds the line unreadable"):
+        assert later.refused and later.findings == ["unreadable", "dashes"], later.reason
+    alike = ["echo \"$(echo ${x:-HEAD} '(a)')\"; git push origin main", "echo $(echo ${x:-a) b}); git push origin main"]
+    with when("Claude pushes main after a ${...} with no bracket in a quoted $(...), or after a ${...} with a ) in "
+              "a $(...) outside quotes"):
+        results = hooks(home, tool, alike, "alike")
+    with then("bash 3.2 ends the first where zsh does and can not run the second at all, so the gate reads the push, "
+              "names the dash and finds nothing unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (line, result.reason)
+    plain = ["echo \"$(git rev-parse ${ref:-HEAD})\"", "echo \"$(echo ${x:-(a)} b)\""]
+    with when("Claude runs a ${...} with no bracket, or with a ( and its ), inside a $(...) in double quotes"):
+        results = hooks(home, tool, plain, "plain")
+    with then("both shells end the $(...) at the same ), so each call runs"):
+        for line, result in results.items():
+            assert result.ran and result.output == {}, (line, result.reason)
+
+
 def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
