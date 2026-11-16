@@ -319,6 +319,10 @@ def record_run(options, kind):
     base, files = None, []
     if kind == "texts":
         name = base_name(options.base)
+        # The base comes from origin's local copy, so a code file is refused before anything runs, with no
+        # network call. The gate never trusts this commit. For each step it counts the changes again from the
+        # commit GitHub has for the base branch in the PR's repo, so a stale origin, or a fork as origin, can
+        # not make a texts report count.
         sha = git(root, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}")
         refuse_if(None if sha else f"origin/{name} does not exist. Fetch it, or name the branch the PR goes into.")
         files = changed_since(root, sha, head)
