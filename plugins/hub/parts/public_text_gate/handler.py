@@ -735,8 +735,9 @@ def skipped_region(line, index, context):
 
 def opens_a_substitution(pieces):
     """Whether a ( after the text so far opens <(...), >(...) or zsh's =(...), whose ) the shell keeps in the word."""
-    last = pieces[-1] if pieces else ""
-    return last in ("<", ">") or (last == "=" and starts_a_word(pieces[:-1]))
+    found = last_pieces(pieces, 2)
+    last, before = (found[0] if found else ""), found[1:]
+    return last in ("<", ">") or (last == "=" and starts_a_word(before))
 
 
 def comment_end(line, index, context):
@@ -898,9 +899,18 @@ def starts_a_word(pieces):
     in ;# or |#, but not after an escaped character such as \\; or after a
     WordPart, such as the ) that ends $(...).
     """
-    last = pieces[-1] if pieces else " "
+    last = (last_pieces(pieces, 1) or [" "])[0]
     return not (isinstance(last, WordPart) or last.startswith("\\")) and (
         last[-1].isspace() or last[-1] in ";&|()<>")
+
+
+def last_pieces(pieces, count):
+    """The last count pieces of the text so far that are not empty, the newest first.
+
+    A backslash and line end that a scan joins leave an empty piece, and the
+    shell drops both characters, so the text before them is what counts.
+    """
+    return list(itertools.islice((piece for piece in reversed(pieces) if piece), count))
 
 
 def ends_in_a_pipe_or_list(pieces):

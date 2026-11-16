@@ -859,6 +859,23 @@ def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
 
 
+def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_backslash(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    joined = ["printf '[%s]' 'a'\\\n#b\ngit push origin main", "echo $((1))\\\n#b\ngit push origin main",
+              "\\\n#x\ngit push origin main", "echo a \\\n# don't\ngit push origin main",
+              "echo a;\\\n# don't\ngit push origin main", "echo a >\\\n(true)#x <<EOF\nit's\nEOF\ngit push origin main"]
+    with when("Claude pushes main on the line after a # that follows a backslash and line end, where the text before "
+              "the backslash is a closing quote, a $((...)) sum, the line start, a blank, a ; or a > that the joined "
+              "line turns into >(...), each in its own session"):
+        results = hooks(home, tool, joined, "joined")
+    with then("the shell joins the lines, so the # goes with the text before the backslash, and the gate reads the "
+              "push and names the dash without an error"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
