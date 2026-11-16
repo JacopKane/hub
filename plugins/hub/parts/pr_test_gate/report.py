@@ -98,20 +98,20 @@ def problem(report, cwd, sha, run_git, bases=None):
     if report.get("version") != 1 or report.get("kind") not in ("code", "texts"):
         return "report_unreadable.md", {}
     if report.get("clean") is not True:
-        return "dirty.md", {}
+        return "dirty.md", {"verb": "texts" if report["kind"] == "texts" else "run"}
     if report["kind"] == "texts":
         return texts_problem(report, cwd, sha, run_git, bases)
     scenarios = report.get("scenarios") or []
     if not scenarios:
-        return "failed.md", {"which": "no scenario was recorded"}
+        return "failed.md", {"which": "no scenario was recorded", "verb": "run"}
     which = failing(scenarios)
     if which is not None:
-        return "failed.md", {"which": which}
+        return "failed.md", {"which": which, "verb": "run"}
     smoke = report.get("smoke")
     if not isinstance(smoke, dict) or ("command" not in smoke and not str(smoke.get("none") or "").strip()):
         return "no_smoke.md", {}
     if "command" in smoke and smoke.get("exit") != 0:
-        return "failed.md", {"which": smoke["command"]}
+        return "failed.md", {"which": smoke["command"], "verb": "run"}
     if not report.get("not_tested"):
         return "no_not_tested.md", {}
     return None
@@ -120,7 +120,7 @@ def problem(report, cwd, sha, run_git, bases=None):
 def texts_problem(report, cwd, sha, run_git, bases=None):
     which = failing(report.get("checks") or [])
     if which is not None:
-        return "failed.md", {"which": which}
+        return "failed.md", {"which": which, "verb": "texts"}
     if not report.get("not_tested"):
         return "no_not_tested.md", {}
     base_branch = report["base"].get("branch") if isinstance(report.get("base"), dict) else None
@@ -324,6 +324,10 @@ def record_run(options, kind):
         # commit GitHub has for the base branch in the PR's repo, so a stale origin, or a fork as origin, can
         # not make a texts report count.
         sha = git(root, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}")
+        no_origin = not sha and "origin" not in (git(root, "remote") or "origin").splitlines()
+        refuse_if(f"pr-tested texts reads the base from origin/{name}, and this repo has no remote named origin. "
+                  f"Add the PR's repo as origin and fetch {name}, or record the scenarios with pr-tested run."
+                  if no_origin else None)
         refuse_if(None if sha else f"origin/{name} does not exist. Fetch it, or name the branch the PR goes into.")
         files = changed_since(root, sha, head)
         refuse_if(f"git could not list the files changed since origin/{name}." if files is None else None)

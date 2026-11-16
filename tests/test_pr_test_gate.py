@@ -241,7 +241,7 @@ def test_a_push_to_a_branch_with_an_open_pr_needs_a_passing_report_for_that_exac
     with when("a report is recorded whose scenarios failed"):
         record(home, scenarios=[{"command": "pytest -q tests", "exit": 1, "seconds": 2.0, "tail": "1 failed"}])
     with then("the push is refused and names the failing step"):
-        assert says(home, bash(home, "git push"), "failed.md", short=changed[:7], which="pytest -q tests")
+        assert says(home, bash(home, "git push"), "failed.md", short=changed[:7], which="pytest -q tests", verb="run")
 
 
 def test_a_new_line_ends_a_push_or_ready_step_as_the_shell_ends_it_unless_quotes_or_a_backslash_carry_it_on(home):
@@ -1186,8 +1186,8 @@ def test_a_texts_report_counts_only_while_the_branch_changes_nothing_but_text_fi
     with when("a texts report has a failing check"):
         home.git("reset", "-q", "--hard", "HEAD~1")
         texts_report(home, checks=[{"command": "make texts", "exit": 2, "seconds": 1.0, "tail": "bad"}])
-    with then("the push is refused and names the check"):
-        assert says(home, bash(home, "git push"), "failed.md", which="make texts")
+    with then("the push is refused, names the check, and says to record a texts run again"):
+        assert says(home, bash(home, "git push"), "failed.md", which="make texts", verb="texts")
     with when("the texts report passes, but PR 9 goes into release, not main"):
         texts_report(home)
         home.git("push", "-q", "origin", "main:release")
@@ -1284,7 +1284,7 @@ def test_a_broken_or_partial_report_is_refused_with_what_it_lacks(home):
                     handle.write('{"version": 1, "kind": ')
         with then(f"the push is refused with {name}"):
             result = bash(home, "git push")
-            assert says(home, result, name, short=sha[:7]), (name, fields, result.reason)
+            assert says(home, result, name, short=sha[:7], verb="run"), (name, fields, result.reason)
     with when("the smoke run has a reason why there is none"):
         record(home, smoke={"none": "the repo has no smoke run"})
     with then("the push runs"):

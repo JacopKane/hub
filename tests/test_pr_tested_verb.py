@@ -119,7 +119,7 @@ def test_it_refuses_what_it_can_not_vouch_for_and_records_a_failing_scenario_as_
         assert report["scenarios"][1]["tail"] == "boom"
         assert report["smoke"] == {"none": "the repo has no smoke run"}
         assert "failed" in failed.stdout
-        assert says(home, bash(home, "git push"), "failed.md", which="printf 'boom\\n'; exit 3")
+        assert says(home, bash(home, "git push"), "failed.md", which="printf 'boom\\n'; exit 3", verb="run")
         assert pr_tested(home, "show").stdout.strip() == f"{feature[:7]} on feature: code report, 2 runs, " \
                                                       "does not pass (failed)"
 
@@ -152,6 +152,15 @@ def test_a_texts_run_records_its_base_and_refuses_a_code_file(home):
         missing = pr_tested(home, "texts", "--base", "nowhere", "--not-tested", LEFT_OUT)
     with then("it is refused and names it"):
         assert missing.returncode == 1 and "origin/nowhere" in missing.stderr, missing.stderr
+    with when("the repo has no remote named origin, only the same GitHub repo under another name"):
+        home.git("remote", "rename", "origin", "github")
+        no_origin = pr_tested(home, "texts", "--base", "main", "--not-tested", LEFT_OUT)
+        home.git("remote", "rename", "github", "origin")
+    with then("it is refused, says that texts reads the base from a remote named origin, and writes no report"):
+        assert no_origin.returncode == 1, no_origin.stderr
+        assert "no remote named origin" in no_origin.stderr and "Fetch it" not in no_origin.stderr, \
+            no_origin.stderr
+        assert not os.path.exists(os.path.join(reports_folder(home), code + ".json"))
     with when("the branch with its code file is pushed, and Claude records a texts run against that pushed branch"):
         home.git("push", "-q", "origin", "words")
         itself = pr_tested(home, "texts", "--base", "words", "--not-tested", LEFT_OUT)
@@ -178,7 +187,7 @@ def test_a_scenario_or_texts_check_that_changes_the_tree_or_commits_while_it_run
     with then("the report says the tree was not clean, the run fails, and the gate refuses the push as dirty"):
         assert edited.returncode == 1
         assert report_of(home, feature)["clean"] is False
-        assert says(home, bash(home, "git push"), "dirty.md")
+        assert says(home, bash(home, "git push"), "dirty.md", verb="run")
     with when("the change is undone and a scenario commits while it runs"):
         home.git("checkout", "--", "app.py")
         os.remove(os.path.join(reports_folder(home), feature + ".json"))
@@ -198,7 +207,7 @@ def test_a_scenario_or_texts_check_that_changes_the_tree_or_commits_while_it_run
     with then("the texts report says the tree was not clean, the run fails, and the gate refuses the push as dirty"):
         assert texts.returncode == 1
         assert report_of(home, words)["clean"] is False
-        assert says(home, bash(home, "git push -u origin words"), "dirty.md")
+        assert says(home, bash(home, "git push -u origin words"), "dirty.md", verb="texts")
 
 
 def test_reports_land_in_the_common_folder_whole_and_old_ones_are_pruned(home):
