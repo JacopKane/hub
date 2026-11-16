@@ -1849,6 +1849,39 @@ def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_na
         assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
 
 
+def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):
+    with given("PR 7 and plain issue 12 on GitHub, plain issue 15 only in acme/other, and a good and a bad body"):
+        with_github(home)
+        fake_gh(home, issues=[12, "acme/other#15", "github.com/acme/other#15"])
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+    pr_edits = [f"gh issue edit 7 --body-file {bad}", f"gh issue edit '#7' -F {bad}", "gh issue edit 7 -b 'A fix.'",
+                f"gh issue edit https://github.com/acme/demo/pull/7 --body-file={bad}",
+                f"gh issue edit 12 7 --title T -F{bad}", f"gh -R acme/demo issue edit 7 -F {bad}",
+                f"gh issue edit 7 --add-label bug --body-file {bad}"]
+    with when("Claude edits PR 7's body to one with no tested part with gh issue edit, which gh sends to the PR "
+              "when the number is a PR, by number, #number or URL, with other numbers or flags"):
+        results = {step: bash(home, step) for step in pr_edits}
+    with then("each is refused with pr-check's sentence, after gh says 7 is a PR"):
+        for step, result in results.items():
+            assert result.refused and result.reason == missing_part(home), (step, result.reason)
+        assert ["api", "repos/{owner}/{repo}/issues/7", "--jq", 'has("pull_request")'] in gh_calls(home)
+    quiet_steps = [f"gh issue edit 7 --body-file {good}", f"gh issue edit 12 --body-file {bad}",
+                   "gh issue edit 7 --title 'All tests pass'", f"gh issue comment 7 --body-file {bad}",
+                   f"gh issue edit 15 -R acme/other -F {bad}",
+                   f"gh issue edit https://github.com/acme/other/issues/15 -F {bad}"]
+    with when("Claude gives PR 7 a good body, gives plain issue 12 the bad one, edits only PR 7's title, comments "
+              "on PR 7, and edits plain issue 15 in acme/other by -R or by URL"):
+        quiet_results = {step: bash(home, step) for step in quiet_steps}
+    with then("each runs, since only a PR's body gets the check and a comment does not change the body"):
+        for step, result in quiet_results.items():
+            assert quiet(result), (step, result.reason)
+    with when("gh can not reach GitHub, and Claude edits issue 12's body to the bad one"):
+        fake_gh(home, fail=True)
+        unknown = bash(home, f"gh issue edit 12 --body-file {bad}")
+    with then("it is refused, since 12 may be a PR"):
+        assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
+
+
 def failing_git(home, verb):
     """A PATH whose first git fails one verb, as a lookup can fail, and runs the real git for the rest."""
     real = shutil.which("git", path=home.env["PATH"])

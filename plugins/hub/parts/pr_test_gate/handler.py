@@ -56,8 +56,8 @@ EVERY_BRANCH = ("--all", "--mirror")
 BRANCH_PREFIXES = ("refs/heads/", "heads/")
 # The flags that let gh fill the body from the commits or a web form
 FILLS = ("fill", "fill-first", "fill-verbose", "web")
-# gh's flags for pr create and pr edit, as gh defines them: {long name: (short letter, whether it takes a value)}.
-# Every pr command also has -R or --repo, and --help.
+# gh's flags for pr create, pr edit and issue edit, as gh defines them: {long name: (short letter, whether it
+# takes a value)}. Every pr and issue command also has -R or --repo, and --help.
 GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
 GH_PR_FLAGS = {
     "create": {"draft": ("d", False), "title": ("t", True), "body": ("b", True), "body-file": ("F", True),
@@ -70,6 +70,10 @@ GH_PR_FLAGS = {
              "milestone": ("m", True), "remove-milestone": ("", False),
              **{f"{change}-{what}": ("", True) for change in ("add", "remove")
                 for what in ("assignee", "label", "project", "reviewer")}},
+    "issue edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True),
+                   "milestone": ("m", True), "remove-milestone": ("", False),
+                   **{f"{change}-{what}": ("", True) for change in ("add", "remove")
+                      for what in ("assignee", "label", "project")}},
 }
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
@@ -305,7 +309,8 @@ def read_steps(line, cwd):
             if program == "git" and target and target[0] == parser.WRAPPED:
                 raise unreadable("git_command")
             api = program == "gh" and step_words[1:2] == ["api"]
-            if not target or (target[0] not in RELEVANT and not api):
+            issue_edit = program == "gh" and step_words[1:3] == ["issue", "edit"]  # may edit a PR's body
+            if not target or (target[0] not in RELEVANT and not api and not issue_edit):
                 continue
             if any(os.path.basename(before) in parser.FEEDERS for before in words[:index]):
                 raise unreadable("feeder")
@@ -966,6 +971,15 @@ def pr_step(command, step, flags, answer, lookups):
         for body in bodies:
             body_stop(body, step.cwd, flags, answer)
         return []
+    if action == ["issue", "edit"] and flags.runs(f"{PART}.body"):
+        values, positional = gh_pr_flags(gate().without_redirects(rest), "issue edit")
+        bodies = bodies_of(command, step, values)
+        places = [issue_place(word, values.get("repo", ()), step) for word in positional] if bodies else []
+        if any(place and may_be_a_pr(step, *place, lookups) for place in places):
+            written_out(step)
+            for body in bodies:
+                body_stop(body, step.cwd, flags, answer)
+        return []
     if action == ["pr", "ready"] and flags.runs(f"{PART}.report"):
         words = gate().without_redirects(rest)
         if undoes_ready(words):
@@ -1096,7 +1110,7 @@ def api_step(command, step, flags, answer, lookups):
             written_out(step)
             body_stop(fields["body"], step.cwd, flags, answer)
     if (re.fullmatch(REPO_PATH + r"/issues/\d+", endpoint) and method != "GET" and "body" in fields
-            and flags.runs(f"{PART}.body") and may_be_a_pr(step, endpoint, lookups)):
+            and flags.runs(f"{PART}.body") and may_be_a_pr(step, endpoint, gh_repo_place(step)[2], lookups)):
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
     return []
@@ -1127,14 +1141,26 @@ def flat_pairs(name, value):
     return [(name, value if isinstance(value, str) else json.dumps(value))]
 
 
-def may_be_a_pr(step, issue_path, lookups):
+def may_be_a_pr(step, issue_path, variables, lookups):
     """Whether an issue that an issues endpoint names may be a PR, since GitHub's REST API counts every PR as an
     issue and edits its body there too. Only GitHub's answer that it is a plain issue says no."""
     if unreadable_mark() in issue_path:
         return True
-    output, _why = lookups.gh(step.cwd, "api", issue_path, "--jq", 'has("pull_request")',
-                              variables=gh_repo_place(step)[2])
+    output, _why = lookups.gh(step.cwd, "api", issue_path, "--jq", 'has("pull_request")', variables=variables)
     return (output or "").strip() != "false"
+
+
+def issue_place(word, repo_values, step):
+    """(the issues endpoint, the variables gh runs with) for an issue or PR that gh issue names by number, #number or
+    URL, read as gh reads it, or None for a word gh refuses. A URL names its own repo, as in gh."""
+    link = re.match(r"https?://([^/?#]+)/([^/?#]+)/([^/?#]+)/(?:issues|pull)/(\d+)", word, re.I)
+    if link:
+        host, owner, name, number = link.groups()
+        return f"repos/{owner}/{name}/issues/{int(number)}", {"GH_REPO": f"{host}/{owner}/{name}"}
+    number = re.fullmatch(r"#?\+?(\d+)", word)
+    if number:
+        return f"repos/{{owner}}/{{repo}}/issues/{int(number.group(1))}", gh_repo_place(step, repo_values)[2]
+    return None
 
 
 def api_path(endpoint):
