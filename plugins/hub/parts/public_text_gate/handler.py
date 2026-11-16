@@ -30,6 +30,7 @@ person who sets out to get around it.
 """
 import base64
 import binascii
+import fnmatch
 import functools
 import glob
 import hashlib
@@ -345,7 +346,7 @@ GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None, read_step=None, many_words=""):
+    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None, read_step=None, many_words="", outer=()):
         """Each line is its own command, since the shell runs a tool call's command as a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
@@ -354,6 +355,8 @@ class Command:
         Its git calls end by deadline, a time.monotonic() value, or TEXT_SECONDS from now.
         read_step names each git or gh step, as step_target does when it is not given.
         many_words is put where mark_expansions says, to show where the shell may give more words than one.
+        outer holds the text of each line around this one, without this one, such as the line whose substitution or
+        heredoc script this command is, so the gate sees what those lines may write.
         """
         self.cwd = cwd
         self.read_log = parent.read_log if parent else read_log
@@ -363,6 +366,7 @@ class Command:
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
         self.at = None  # the number of the segment whose step the gate reads, which public_steps sets
+        self.outer = parent.outer + (parent.whole().replace(line, " ", 1),) if parent else tuple(outer)
 
         found = set_aside_heredocs(line, len(self.heredocs))
         self.unreadable = found is None  # the gate can not tell where a heredoc starts or ends
@@ -391,7 +395,7 @@ class Command:
             for index, body in enumerate(self.heredocs):
                 if name == PLACEHOLDER.format(index):
                     return body
-            return read_file(name, self.cwd)
+            return self.file_text(name)
 
         value = CAT_FILE.sub(cat, value)
         for index, body in enumerate(self.heredocs):
@@ -402,7 +406,54 @@ class Command:
         """The text of a message file, where - or /dev/stdin means the step's standard input."""
         if path == "-" or path in STDIN_PATHS:
             return self.standard_input()
-        return read_file(path, self.cwd)
+        return self.file_text(path)
+
+    def file_text(self, path, reader=None):
+        """A file's text as reader, read_file by default, reads it now, or UNREADABLE when the line may write the
+        file first."""
+        return UNREADABLE if path and self.may_write_first(path) else (reader or read_file)(path, self.cwd)
+
+    def may_write_first(self, path):
+        """Whether the line may write the file before or while the step at self.at reads it.
+
+        The gate reads the file as it is before the line runs. So the file
+        counts as written when the step's own redirects write it, when
+        another step that may run first or at the same time names it, when a
+        substitution other than a plain $(cat file) names it, or when a line
+        around this one names it. A redirect to a name the shell fills in may
+        write it too, and so may any of those steps that gets a word the shell
+        fills in, unless its program writes no file. Only a step joined to
+        this one by ;, && or || runs after it, and only on a line with no loop
+        or group.
+        """
+        segments = self.segments()
+        if self.at is None or segments is None or self.at >= len(segments):
+            return True
+        name = os.path.basename(os.path.expanduser(path).rstrip("/"))
+        others = [segment for spot, segment in enumerate(segments)
+                  if spot != self.at and not runs_after(segments, self.at, spot)]
+        scripts = [script for segment in others if runs_a_script(segment)
+                   for script in map(self.heredoc_script, segment) if script is not None]
+        sources = [source for source in self.sources if not reads_only(source, name)]
+        texts = [*(self.with_scripts(" ".join(segment)) for segment in others), *sources, *self.outer]
+        return (any(names_or_hides(target, name) for target in redirect_targets(segments[self.at]))
+                or any(may_write(text, name) for text in texts)
+                or any(map(gets_a_filled_in_word, others))
+                or any(self.script_gets_a_filled_in_word(text) for text in [*scripts, *sources, *self.outer]))
+
+    def script_gets_a_filled_in_word(self, text):
+        """Whether a step in the text gets a word the shell fills in and may write a file with it, or the gate can
+        not split the text into steps."""
+        segments = Command(text, self.cwd).segments()
+        return segments is None or any(map(gets_a_filled_in_word, segments))
+
+    def with_scripts(self, text):
+        """The text with each heredoc's script put back where the heredoc stands."""
+        return HEREDOC_WORD.sub(lambda match: self.heredoc_script(match.group(0)) or "", text)
+
+    def whole(self):
+        """The line as the shell runs it, heredoc scripts included."""
+        return self.with_scripts(self.flat)
 
     def standard_input(self):
         """The heredoc the step at self.at reads as its standard input, or UNREADABLE when the gate can not tell.
@@ -434,7 +485,7 @@ class Command:
             words = list(lexer)
         except ValueError:
             return None
-        found, groups, piped = [], [], self.fed
+        found, groups, piped, grouped = [], [], self.fed, False
 
         def start():
             segment = Segment()
@@ -447,6 +498,9 @@ class Command:
                 if current:
                     found.append(current)
                     piped = False
+                if found:
+                    found[-1].ends += word
+                grouped = grouped or bool(re.search(r"[(){}]", word))
                 for operator in re.findall(r"\|\||&&|\|&|;;|[;&|(){}]", word):
                     if operator in ("(", "{"):
                         groups.append(piped or any(groups))
@@ -462,12 +516,81 @@ class Command:
                 current.append(word)
         if current:
             found.append(current)
+        grouped = grouped or any(segment[0] in LOOP_WORDS for segment in found)
+        for segment in found:
+            segment.grouped = grouped
         return found
 
 
 class Segment(list):
-    """The words of one simple command. fed is True when a pipe gives it its standard input."""
+    """The words of one simple command. fed is True when a pipe gives it its standard input. ends holds the
+    operators that follow it, and grouped is True when its line has a loop or a group, which may run a step again
+    or out of order."""
     fed = False
+    ends = ""
+    grouped = False
+
+
+# Words that start a loop or a function, whose steps may run again after a later step on the line
+LOOP_WORDS = {"for", "while", "until", "select", "do", "done", "function"}
+# The operators after which the next step starts only when the one before has ended
+IN_TURN = {";", "&&", "||", "\n"}
+# A redirect that writes, with its target when the same word holds it
+OUTPUT_REDIRECT = re.compile(r"&?>>?\|?(.*)$")
+# A redirect whose target the shell fills in, in a line's text
+FILLED_IN_REDIRECT = re.compile(r">>?\|?\s*['\"]?[^\s;&|]*[\x00$`]")
+# The characters that end a file name in a line's text
+NAME_ENDS = re.compile(r"[\s;&|()<>=`'\"\\${}@:,\x00-\x06]+")
+# Programs that write no file, whatever words the shell fills in for them. Any other program may write a file a
+# filled-in word names, so the gate does not list the programs that write.
+WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export", "cd", "pushd", "popd"}
+
+
+def runs_after(segments, at, spot):
+    """Whether the step at spot starts only after the step at at has ended, every time it runs."""
+    between = "".join(segment.ends for segment in segments[at:spot])
+    operators = set(re.findall(r"\|\||&&|\|&|;;|[;&|(){}\n]", between))
+    return spot > at and not segments[at].grouped and bool(operators) and operators <= IN_TURN
+
+
+def redirect_targets(words):
+    """The targets of the redirects in the words that write, each written in the same word or the next one."""
+    return [match.group(1) or following
+            for word, following in zip(words, [*words[1:], ""])
+            for match in [OUTPUT_REDIRECT.search(word)] if match]
+
+
+def names_or_hides(target, name):
+    """Whether a file name may be the file: its last part is the name or a pattern that matches it, or the shell
+    fills it in."""
+    tail = os.path.basename(target.rstrip("/"))
+    return UNREADABLE in target or tail == name or (any(char in tail for char in "*?[")
+                                                   and fnmatch.fnmatchcase(name, tail))
+
+
+def may_write(text, name):
+    """Whether a text may write the file: it names the file or redirects to a name the shell fills in."""
+    return bool(FILLED_IN_REDIRECT.search(text)) or any(
+        names_or_hides(part, name) for part in NAME_ENDS.split(text) if part)
+
+
+def gets_a_filled_in_word(words):
+    """Whether a program that may write files gets a word the shell fills in, as in cp a "$NAME". Assignments
+    before the program write no file."""
+    command = list(itertools.dropwhile(lambda word: re.match(r"[A-Za-z_]\w*=", word), words))
+    return (bool(command) and os.path.basename(command[0]) not in WRITES_NO_FILE
+            and any(UNREADABLE in word for word in command))
+
+
+def runs_a_script(words):
+    """Whether a step runs a script, so the heredoc it reads is a script whose steps may write files."""
+    return any(os.path.basename(word).casefold() in {*SHELLS, *SOURCES, "eval"} for word in words)
+
+
+def reads_only(source, name):
+    """Whether a substitution only prints the file, as $(cat notes.md) or $(< notes.md) do."""
+    match = re.fullmatch(r"\s*(?:cat\s+|<\s*)(['\"]?)([^)'\"\s]+)\1\s*", source)
+    return bool(match) and os.path.basename(match.group(2).rstrip("/")) == name
 
 
 # A standard input redirect in a word, which is a heredoc's placeholder or a <. Digits before it name the file
@@ -2020,7 +2143,7 @@ def release_assets(rest, command):
             # expand the pattern as the shell would
             matches = sorted(glob.glob(os.path.join(command.cwd, os.path.expanduser(path))))
         texts.append(command.expand(label))
-        texts += [asset_text(match, command.cwd) for match in matches] or [asset_text(path, command.cwd)]
+        texts += [command.file_text(match, asset_text) for match in matches] or [command.file_text(path, asset_text)]
     return texts
 
 
@@ -2144,6 +2267,7 @@ def wrapped_steps(words, index, command, depth, first=False):
     if how == "file":
         return [(WRAPPED, UNREADABLE)] if hidden(script) else []  # the shell fills in which file runs
     script = command.expand(script)  # $(cat file) and heredoc bodies
+    outer = command.outer + (command.whole().replace(script, " ", 1),)  # what the rest of the line may write
     sources = quiet_sources(script, command) if first else None
     if sources is not None and depth <= 3:
         # the whole script is what a tool prints, as in eval "$(ssh-agent -s)".
@@ -2151,11 +2275,11 @@ def wrapped_steps(words, index, command, depth, first=False):
         return [(target, UNREADABLE) for source in sources
                 for target, _text in public_steps(source, command.cwd, depth + 1, script=True,
                                                   log=command.read_log, deadline=command.deadline,
-                                                  read_step=command.read_step)]
+                                                  read_step=command.read_step, outer=outer)]
     if hidden(script) or depth > 3:
         return [(WRAPPED, UNREADABLE)]
     steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first,
-                         log=command.read_log, deadline=command.deadline, read_step=command.read_step)
+                         log=command.read_log, deadline=command.deadline, read_step=command.read_step, outer=outer)
     return steps if how == "input" else [(target, UNREADABLE) for target, _text in steps]
 
 
@@ -2275,7 +2399,7 @@ def step_target(words, command):
 
 
 def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True, deadline=None,
-                 read_step=None):
+                 read_step=None, outer=()):
     """[(target, text)] for each step in the command line that makes text public.
 
     That includes the steps inside every $(...) and backtick pair, such as
@@ -2284,9 +2408,10 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     shell that is the call's first command is. With log False, a push is
     named with no text, so a caller that needs only the steps runs no git.
     Every git call ends by deadline, as Command takes it. A caller may name the steps its own way with read_step,
-    which reads the steps inside wrappers and substitutions too.
+    which reads the steps inside wrappers and substitutions too. outer holds the lines around a script, as Command
+    takes it.
     """
-    command = Command(line, cwd, parent, read_log=log, deadline=deadline, read_step=read_step)
+    command = Command(line, cwd, parent, read_log=log, deadline=deadline, read_step=read_step, outer=outer)
     segments = command.segments()
     if segments is None:
         # The shell may run any line when the gate can not tell where a heredoc ends. bash also runs the lines before

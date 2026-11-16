@@ -700,7 +700,7 @@ def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub
     with then("each is refused, since the gate can not check a body it can not read, and the push into the "
               "missing folder is refused by this gate as one whose folder it can not find"):
         for name, result in hidden.items():
-            assert says(home, result, "unreadable_push.md", why="a variable or a substitution fills in the PR body"), \
+            assert says(home, result, "unreadable_push.md", why=BODY_WHY), \
                 (name, result.reason)
         assert says(home, pushed_into_missing, "unreadable_push.md",
                     why="the folder it runs in is missing or not known"), pushed_into_missing.reason
@@ -714,7 +714,8 @@ def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub
 
 
 MAX_TEXT = 200_000  # the most the gates read of one file, as the text gate's handler says
-BODY_WHY = "a variable or a substitution fills in the PR body"
+BODY_WHY = ("it can not read the PR body that gh will send, such as a body a variable or a substitution fills in, "
+            "or a file that is missing, too long or that the line may write first")
 
 
 def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
@@ -735,6 +736,16 @@ def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
         other_heredoc = bash(home, f"gh pr edit 7 --body-file - <<'A'\n{NO_PART}A\ncat <<'B' > /dev/null\n{CANONICAL}B")
     with then("the gate judges only the heredoc gh reads, so the missing part is refused"):
         assert other_heredoc.refused and other_heredoc.reason == missing_part(home), other_heredoc.reason
+    with when("the line may write the body file while gh reads it or before"):
+        written = {
+            "redirect on the step": f"gh pr edit 7 --body-file {good} > {good}",
+            "tee after": f"gh pr edit 7 --body-file {good} | tee {good}",
+            "in the background": f"gh pr edit 7 --body-file {good} & printf x > {good}",
+        }
+        written_results = {name: bash(home, line) for name, line in written.items()}
+    with then("each is refused, since the gate reads the file only as it is before the line runs"):
+        assert {name: says(home, result, "unreadable_push.md", why=BODY_WHY)
+                for name, result in written_results.items()} == {name: True for name in written}
     with when("Claude edits the body from the file that holds the whole body"):
         whole = bash(home, f"gh pr edit 7 --body-file {good}")
     with then("it runs"):
@@ -2039,7 +2050,7 @@ def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_na
             assert result.refused and result.reason == missing_part(home), (case, result.reason)
         for case, result in {**good_objects, "title only": title_only}.items():
             assert quiet(result), (case, result.reason)
-        assert says(home, no_input, "unreadable_push.md", why="a variable or a substitution fills in the PR body"), \
+        assert says(home, no_input, "unreadable_push.md", why=BODY_WHY), \
             no_input.reason
     with when("gh can not reach GitHub, and Claude edits issue 12's body to the bad one"):
         fake_gh(home, fail=True)

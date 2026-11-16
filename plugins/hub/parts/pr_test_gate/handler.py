@@ -114,7 +114,8 @@ WHY = {
     "api_input": "a variable or a substitution fills in the gh api input file",
     "api_input_json": "the gate can not read a JSON object from the gh api input",
     "folder": "the folder it runs in is missing or not known",
-    "body": "a variable or a substitution fills in the PR body",
+    "body": "it can not read the PR body that gh will send, such as a body a variable or a substitution fills in, "
+            "or a file that is missing, too long or that the line may write first",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
     "search": "a search of commit messages picks the commit",
     "pr_option": "gh has an option the gate does not know, or one with no value",
@@ -320,7 +321,7 @@ def read_steps(line, cwd):
             program = os.path.basename(word)
             if program not in ("git", "gh"):
                 continue
-            command.cwd = here or cwd
+            command.cwd, command.at = here or cwd, position  # the step whose files and standard input it reads
             step_words = words[index:] if program == "git" else without_gh_alias(gh_words(parser, words[index:]))
             target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
             if program == "git" and target and target[0] == parser.WRAPPED:

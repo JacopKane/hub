@@ -220,6 +220,60 @@ def test_a_body_read_from_standard_input_is_the_heredoc_the_step_itself_reads(ho
         assert private.findings == ["private_paths"]
 
 
+def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable(home, tool):
+    with given("hub is installed, with clean notes files on disk"):
+        home.install()
+        write(home, "notes.md", "Nothing private here\n")
+        write(home, "notes.json", '{"body": "Nothing private here"}')
+    with when("something on the line may write the file before or while the step reads it"):
+        commands = {
+            "redirect earlier": "printf 'See /home/sam/a.md' > notes.md; gh pr comment 3 -F notes.md",
+            "heredoc into the file": "cat > notes.md <<'A'\nSee /home/sam/a.md\nA\ngh pr comment 3 -F notes.md",
+            "append": "echo x >> notes.md && git commit -F notes.md",
+            "tee": "echo x | tee notes.md && gh pr comment 3 -F notes.md",
+            "copy": "cp other.md notes.md && gh pr comment 3 --body-file notes.md",
+            "copy to a filled-in name": 'cp other.md "$NAME" && gh pr comment 3 --body-file notes.md',
+            "any program with a filled-in name": 'python3 make.py "$NAME"; gh pr comment 3 -F notes.md',
+            "filled-in name in a script": "bash <<'S'\ncp other.md \"$NAME\"\nS\ngh pr comment 3 -F notes.md",
+            "glob": "printf x > note*.md; gh pr comment 3 -F notes.md",
+            "full path": f"printf x > {home.work}/notes.md; gh pr comment 3 -F notes.md",
+            "shell fills in the target": 'printf x > "$OUT"; gh pr comment 3 -F notes.md',
+            "redirect on the step": "gh pr comment 3 -F notes.md > notes.md",
+            "tee after": "gh pr comment 3 -F notes.md | tee notes.md",
+            "in the background": "gh pr comment 3 -F notes.md & printf x > notes.md",
+            "loop": "for n in 1 2; do gh pr comment 3 -F notes.md; printf x > notes.md; done",
+            "substitution in the step": 'gh pr comment "$(printf x > notes.md; echo 3)" -F notes.md',
+            "cat after a write": 'printf x > notes.md; git commit -m "$(cat notes.md)"',
+            "step in a substitution": 'printf x > notes.md; echo "$(gh pr comment 3 -F notes.md)"',
+            "script after a write": "printf x > notes.md\nbash <<'S'\ngh pr comment 3 -F notes.md\nS",
+            "write in the script": "bash <<'S'\nprintf x > notes.md\ngh pr comment 3 -F notes.md\nS",
+            "gist": "printf x > notes.md; gh gist create notes.md",
+            "release asset": "printf x > notes.md; gh release upload v1 notes.md",
+            "api field file": "printf x > notes.md; gh api repos/o/r/issues -F body=@notes.md",
+            "api input": "printf x > notes.json; gh api repos/o/r/issues --input notes.json",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
+    with then("each is refused as unreadable, since the gate reads the file only as it is before the line runs"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in commands}
+    with when("the line writes the file only after the step, writes another file, or only reads it"):
+        readable = [
+            "gh pr comment 3 -F notes.md && rm notes.md",
+            "gh pr comment 3 -F notes.md; printf x > notes.md",
+            "printf x > other.md; gh pr comment 3 -F notes.md",
+            "printf x > notes.md.bak; gh pr comment 3 -F notes.md",
+            "git add -A && git commit -F notes.md",
+            "gh pr comment 3 -F notes.md 2>&1",
+            "gh pr comment 3 -F notes.md > out.log",
+            'gh pr comment 3 --body "$(cat notes.md)"',
+            'echo "Posting to $PR"; gh pr comment 3 -F notes.md',
+            "cat > other.md <<EOF\nHello $USER\nEOF\ngh pr comment 3 -F notes.md",
+        ]
+        readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
+    with then("each runs with no answer"):
+        assert [result.output for result in readable_results] == [{}] * len(readable)
+
+
 def test_a_wrapped_shell_or_eval_whose_script_the_shell_fills_in_counts_as_unreadable(home, tool):
     with given("hub is installed with the gate at warn, and a script file that posts a comment"):
         home.install()
