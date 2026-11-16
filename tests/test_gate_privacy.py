@@ -131,10 +131,11 @@ def test_merges_closes_and_graphql_mutations_are_checked(home, tool):
                                                  "{subjectId: \"x\", body: \"See /home/sam/c.md\"}) { clientMutationId } }'")
     with then("each is refused for the home path"):
         assert [merge.findings, close.findings, mutation.findings] == [["private_paths"]] * 3
-    with when("a graphql query only reads"):
+    with when("a graphql query only reads, with a home path in a field or a field the shell fills in"):
         query = home.hook(tool, "PreToolUse", "gh api graphql -f query='query { viewer { login } }' -f note=/home/sam/d")
-    with then("it runs"):
-        assert query.ran and query.output == {}
+        filled = home.hook(tool, "PreToolUse", "gh api graphql -f query='query { viewer { login } }' -f note=\"$NOTE\"")
+    with then("each runs, since the gate reads the whole query and it names no mutation"):
+        assert [(result.ran, result.output) for result in (query, filled)] == [(True, {})] * 2
 
 
 def test_a_graphql_mutation_is_checked_whatever_path_or_method_names_graphql(home, tool):

@@ -2120,8 +2120,7 @@ def graphql_target(text, source):
     """What a GraphQL call writes to, or None for a read. It is a read only when each query it may send stands
     in the command itself and no text it sends names a mutation. A query from a file, or one the gate can not
     read, counts as a write. A mutation the gate can not name, as in a fragment on Mutation, writes to "api"."""
-    # Text the shell fills in counts as a write too, even when each query stands in the command.
-    if source == "written" and UNREADABLE not in text and not re.search(r"\bmutation\b", text, re.I):
+    if source == "written" and not re.search(r"\bmutation\b", text, re.I):
         return None
     mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", text)
     name = mutation.group(1) if mutation else ""
