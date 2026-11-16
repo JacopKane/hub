@@ -683,15 +683,26 @@ def set_aside_heredocs(line, first=0):
     return "".join(out), bodies
 
 
+# The marks the shell reads as one even when a backslash and line end split them: each start the scan joins after.
+JOINED_MARKS = ((1, ("$", "<", "(")), (2, ("$(", "<<")))
+
+
 def joined_after(line, index):
-    """The line with each backslash and line end in the two places after index taken out, as the shell joins
-    the lines, so a <<, <<< or $( split over two lines reads whole. The character at index is not a backslash."""
-    for spot in (index + 1, index + 2):
-        if line[spot - 1:spot] == "\\":
-            break  # this backslash keeps the next character as it is
-        while line.startswith("\\\n", spot):
-            line = line[:spot] + line[spot + 2:]
-    return line
+    """The line with each backslash and line end taken out that splits a <<, <<<, <<-, $(, $((, ${, $' or ((
+    starting at index, as the shell joins the lines, so the mark reads whole.
+
+    Only these marks are joined here, since the scan reads every other
+    backslash itself. A # that opens a comment and a quote that opens a
+    string keep a backslash and line end right after them, as the shell keeps
+    them. The character at index is not a backslash.
+    """
+    joined = line
+    for offset, starts in JOINED_MARKS:
+        if joined[index:index + offset] not in starts:
+            break
+        while joined.startswith("\\\n", index + offset):
+            joined = joined[:index + offset] + joined[index + offset + 2:]
+    return joined
 
 
 def skipped_region(line, index, context):

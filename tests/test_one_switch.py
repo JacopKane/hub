@@ -804,6 +804,33 @@ def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joi
             assert result.refused and result.findings == ["unreadable"], (line, result.reason)
 
 
+def test_a_backslash_right_after_a_comment_or_an_opening_quote_joins_no_lines(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    after_comment = ["true #\\\ngit push origin main", "#x\\\ngit push origin main", "# \\\ngit push origin main",
+                     "true &&\n#\\\ngit push origin main", "echo a;#\\\ngit push origin main"]
+    with when("Claude pushes main on the line after a short comment that ends in a backslash, each in its own "
+              "session"):
+        results = hooks(home, tool, after_comment, "after-comment")
+    with then("the comment ends at its line end, as the shell ends it, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude commits with a single-quoted message whose first letter ends a line with a backslash and "
+              "whose next line names a private path"):
+        quoted = home.hook(tool, "PreToolUse", "git commit -m 'a\\\n/Users/sam/notes'", session="quoted")
+    with then("single quotes keep the backslash and the line end, so the gate reads the path and names it"):
+        assert quoted.refused and quoted.findings == ["private_paths"], quoted.reason
+    with when("Claude commits with a $'...' message that opens with a backslash at a line end"):
+        dollar_quoted = home.hook(tool, "PreToolUse", "git commit -m $'\\\nFix it'", session="dollar-quoted")
+    with then("bash keeps that backslash and zsh drops it, so the commit is unreadable"):
+        assert dollar_quoted.refused and dollar_quoted.findings == ["unreadable"], dollar_quoted.reason
+    with when("Claude pushes main with a remote written as a $'...' string whose $ ends a line"):
+        split_quote = home.hook(tool, "PreToolUse", "git push $\\\n'origin' main", session="split-quote")
+    with then("the shell joins the $ and the quote, so the gate reads the push and names the dash"):
+        assert split_quote.refused and split_quote.findings == ["dashes"], split_quote.reason
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
