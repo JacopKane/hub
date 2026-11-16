@@ -943,7 +943,7 @@ def short_gh_flags(word, words, index, known):
 
 def bodies_of(command, step, values):
     """The bodies a gh pr step may send, '' for one gh fills in. gh reads --body-file over --body, so both count."""
-    command.cwd = step.cwd
+    command.cwd, command.at = step.cwd, len(step.earlier)
     filled = [""] if any(values.get(name, ["false"])[-1] in TRUE_WORDS for name in FILLS) else []
     texts = [command.expand(values["body"][-1])] if "body" in values else []
     paths = [command.from_file(values["body-file"][-1])] if "body-file" in values else []
@@ -1230,7 +1230,7 @@ def api_step(command, step, flags, answer, lookups):
     hidden_part = shell_filled_api_part(items)
     if hidden_part:
         raise unreadable(hidden_part)
-    command.cwd = step.cwd
+    command.cwd, command.at = step.cwd, len(step.earlier)
     fields = api_fields(command, items)
     endpoints = [value for name, value in items if name is None]
     endpoint = api_path(endpoints[0]) if endpoints else ""

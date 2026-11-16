@@ -362,6 +362,7 @@ class Command:
         self.heredocs = parent.heredocs if parent else []
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
+        self.at = None  # the number of the segment whose step the gate reads, which public_steps sets
 
         found = set_aside_heredocs(line, len(self.heredocs))
         self.unreadable = found is None  # the gate can not tell where a heredoc starts or ends
@@ -398,10 +399,24 @@ class Command:
         return value
 
     def from_file(self, path):
-        """The text of a message file, where - or /dev/stdin means the heredoc bodies, or a pipe when there are none."""
+        """The text of a message file, where - or /dev/stdin means the step's standard input."""
         if path == "-" or path in STDIN_PATHS:
-            return "\n".join(self.heredocs) if self.heredocs else UNREADABLE
+            return self.standard_input()
         return read_file(path, self.cwd)
+
+    def standard_input(self):
+        """The heredoc the step at self.at reads as its standard input, or UNREADABLE when the gate can not tell.
+
+        The step reads the heredoc of its own last standard input redirect. A
+        pipe, a file, a here-string or no redirect at all gives it text the
+        gate does not see, and so does a heredoc on another step or on
+        another file descriptor.
+        """
+        segments = self.segments()
+        if self.at is None or segments is None or self.at >= len(segments):
+            return UNREADABLE
+        found = last_standard_input(segments[self.at])
+        return UNREADABLE if found is None or found >= len(self.heredocs) else self.heredocs[found]
 
     def segments(self):
         """The simple commands in the line, each as a list of words, or None when the line does not parse
@@ -453,6 +468,22 @@ class Command:
 class Segment(list):
     """The words of one simple command. fed is True when a pipe gives it its standard input."""
     fed = False
+
+
+# A standard input redirect in a word, which is a heredoc's placeholder or a <. Digits before it name the file
+# descriptor it opens when they start the word. A <( opens a process substitution, which names a file and is not a
+# redirect.
+STDIN_REDIRECT = re.compile(r"(\d*)(?:__hub_heredoc_(\d+)__|<(?!\())")
+
+
+def last_standard_input(words):
+    """The number of the heredoc that the last standard input redirect in the words opens, or None when another
+    redirect does or none is there. Digits open another file descriptor only when they start the word, as in
+    3<<'A', and 0 is standard input."""
+    feeds = [int(match.group(2)) if match.group(2) else None
+             for word in words for match in STDIN_REDIRECT.finditer(word)
+             if (match.group(1) if match.start() == 0 else "") in ("", "0")]
+    return feeds[-1] if feeds else None
 
 
 def mark_expansions(line, sources=None, many_words=""):
@@ -2268,6 +2299,7 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     steps = [(WRAPPED, UNREADABLE)] if apart else []
     marked = marked_reader(line, cwd, len(segments))
     for position, words in enumerate(segments):
+        command.at = position
         spot, program_is_hidden = program_spot(words)
         if program_is_hidden:
             steps.append((WRAPPED, UNREADABLE))  # the shell fills in the program, so it could be any step

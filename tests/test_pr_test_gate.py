@@ -731,6 +731,10 @@ def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
         too_long = bash(home, f"gh pr edit 7 --body-file {long}")
     with then("it is refused, since the gate never reads the text past the limit"):
         assert says(home, too_long, "unreadable_push.md", why=BODY_WHY), too_long.reason
+    with when("Claude edits the body from a heredoc with no tested part, and a whole body stands in another heredoc"):
+        other_heredoc = bash(home, f"gh pr edit 7 --body-file - <<'A'\n{NO_PART}A\ncat <<'B' > /dev/null\n{CANONICAL}B")
+    with then("the gate judges only the heredoc gh reads, so the missing part is refused"):
+        assert other_heredoc.refused and other_heredoc.reason == missing_part(home), other_heredoc.reason
     with when("Claude edits the body from the file that holds the whole body"):
         whole = bash(home, f"gh pr edit 7 --body-file {good}")
     with then("it runs"):

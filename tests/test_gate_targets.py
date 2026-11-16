@@ -187,6 +187,39 @@ def test_a_file_longer_than_the_gate_reads_counts_as_unreadable_and_one_at_the_l
         assert binary.output == {}
 
 
+def test_a_body_read_from_standard_input_is_the_heredoc_the_step_itself_reads(home, tool):
+    with given("hub is installed, with a clean notes file"):
+        home.install()
+        write(home, "notes.md", "Nothing private here\n")
+    with when("the step that reads its standard input gets it from a pipe, another file descriptor, a file or a "
+              "pipe from cat, while a clean heredoc stands elsewhere on the line"):
+        commands = {
+            "pipe": "echo 'See /home/sam/a.md' | gh pr comment 3 -F -\ncat <<'B' > /dev/null\nclean\nB",
+            "other descriptor": "gh pr comment 3 -F - 3<<'A'\nclean\nA",
+            "file after the heredoc": "gh pr comment 3 -F - <<'A' < notes.md\nclean\nA",
+            "cat into a pipe": "cat <<'A' | gh pr comment 3 -F -\nclean\nA",
+            "dev stdin": "echo 'See /home/sam/a.md' | git commit -F /dev/stdin\ncat <<'B' > /dev/null\nclean\nB",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
+    with then("each is refused as unreadable, since the gate can not tell what the step reads"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in commands}
+    with when("the step reads a clean heredoc of its own, and a private heredoc stands before it or on another step"):
+        readable = {
+            "two heredocs": "gh pr comment 3 -F - <<'A' <<'B'\nSee /home/sam/a.md\nA\nclean\nB",
+            "another step": "cat <<'A' > /dev/null; gh pr comment 3 -F - <<'B'\nSee /home/sam/a.md\nA\nclean\nB",
+            "standard input by number": "gh pr comment 3 -F - 0<<'A'\nclean\nA",
+        }
+        readable_results = {name: home.hook(tool, "PreToolUse", command) for name, command in readable.items()}
+    with then("each runs, since the step reads only its own last heredoc"):
+        assert {name: result.output for name, result in readable_results.items()} == {name: {} for name in readable}
+    with when("the step's own heredoc holds a home path"):
+        private = home.hook(tool, "PreToolUse", "cat <<'A' > /dev/null; gh pr comment 3 -F - <<'B'\nclean\nA\n"
+                                                "See /home/sam/b.md\nB")
+    with then("it is refused for the home path"):
+        assert private.findings == ["private_paths"]
+
+
 def test_a_wrapped_shell_or_eval_whose_script_the_shell_fills_in_counts_as_unreadable(home, tool):
     with given("hub is installed with the gate at warn, and a script file that posts a comment"):
         home.install()
