@@ -1450,7 +1450,7 @@ def test_neither_a_model_nor_a_repos_settings_file_can_turn_the_gate_off(home):
 # Review 7b: what gh really sends, where the PR opens and which remote a push reaches
 
 
-def tested_and_untested(home):
+def branches_tested_and_untested(home):
     """Branches tested, with a passing report, and untested, with none, both pushed; tested is checked out."""
     with_github(home)
     home.git("checkout", "-q", "-b", "untested", "main")
@@ -1465,7 +1465,7 @@ def tested_and_untested(home):
 
 def test_gh_pr_create_and_edit_words_are_read_the_way_gh_reads_its_flags(home):
     with given("branch tested with a report and branch untested with none, both pushed, and a good and a bad body"):
-        _tested, untested = tested_and_untested(home)
+        _tested, untested = branches_tested_and_untested(home)
         good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
         good_here = os.path.relpath(good, home.work)  # a title the text gate does not read as a private path
     hidden_heads = [f"gh pr create --head untested --title --head=tested --body-file {good}",
