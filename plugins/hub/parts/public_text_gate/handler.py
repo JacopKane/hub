@@ -1705,7 +1705,7 @@ def read_file(path, cwd):
 def read_bytes(path, cwd):
     """The first MAX_TEXT bytes of a regular file and one more, so a caller can tell a longer file, or None when the
     gate can not read it before the command runs."""
-    if UNREADABLE in path or path in STDIN_PATHS:
+    if UNREADABLE in path or names_standard_input(path):
         return None
     full = os.path.join(cwd, os.path.expanduser(path))
     if UNREADABLE in full:  # a relative path in a folder the shell fills in
@@ -2444,18 +2444,55 @@ def reads_hidden_script(words, spot, command):
     program = os.path.basename(words[spot]).casefold()  # macOS runs BASH as bash
     following = words[spot + 1] if spot + 1 < len(words) else ""
     if program in SOURCES:
-        return following in STDIN_PATHS or following.startswith("/dev/fd/")
+        return hides_the_script(following, words, command)
     if program not in SHELLS:
         return False
     if any(os.path.basename(word) in FEEDERS for word in words[:spot]):
         return True
     how, script = shell_script(words[spot + 1:], command, files=True) or (None, None)
     if how == "file":
-        return script in STDIN_PATHS or script.startswith("/dev/fd/")
+        return hides_the_script(script, words, command)
     if how == "input":
         return script is None
     return how is None and (getattr(words, "fed", False)
                             or any(re.match(r"\d*<(?!<)", word) for word in words[spot + 1:]))
+
+
+def hides_the_script(path, words, command):
+    """Whether the script file a shell or source reads may be its standard input or another stream.
+
+    That is a path that names standard input in any spelling, or, when a
+    pipe, a redirect or a heredoc feeds the step, any path other than a
+    regular file that the line may not write or move first. So bash stdin
+    after cd /dev, which reads the heredoc as its script, counts too.
+    """
+    return names_standard_input(path) or (is_fed(words) and not is_settled_file(path, words, command))
+
+
+def names_standard_input(path):
+    """Whether a path names standard input, also when spelt another way, as /Dev/stdin on a disk that ignores case,
+    //dev/fd/0 or /dev/./stdin are."""
+    plain = folded_name(os.path.normpath(path))
+    plain = "/" + plain.lstrip("/") if plain.startswith("/") else plain  # //dev is /dev
+    return plain in STDIN_PATHS or plain.startswith("/dev/fd/")
+
+
+def is_fed(words):
+    """Whether a pipe, a < redirect, a here-string or a heredoc gives the step input, on any file descriptor."""
+    return getattr(words, "fed", False) or any(STDIN_REDIRECT.search(word) for word in words)
+
+
+def is_settled_file(path, words, command):
+    """Whether a path is a regular file in the line's folder that no step may write, or move the reader away from,
+    before the step at command.at reads it."""
+    if UNREADABLE in path:
+        return False
+    try:
+        regular = stat.S_ISREG(os.stat(os.path.join(command.cwd, os.path.expanduser(path))).st_mode)
+    except OSError:
+        regular = False
+    return (regular and not command.may_write_first(path)
+            and not command.may_move_first(path, by_the_step=False) and not moved_by_a_wrapper(words))
 
 
 def wrapped_steps(words, index, command, depth, first=False):

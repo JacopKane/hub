@@ -606,11 +606,14 @@ def test_a_program_name_that_a_substitution_prints_is_unreadable(home, tool):
 
 
 def test_a_script_that_a_shell_reads_from_a_pipe_or_standard_input_is_unreadable(home, tool):
-    with given("hub is installed with the gate at warn, self_protection off, and a script file in the repo"):
+    with given("hub is installed with the gate at warn, self_protection off, and script files in the repo, one of "
+               "them named stdin"):
         home.install()
         home.hubctl_from_mod("off", "self_protection")
         write(home, "run.sh", "make test\n")
-    with when("a shell or source reads its script from a pipe, a < redirect, -s, /dev/stdin or xargs"):
+        write(home, "stdin", "make test\n")  # after a cd to /dev, the name is standard input instead
+    with when("a shell or source reads its script from a pipe, a < redirect, -s, /dev/stdin or xargs, also when "
+              "the path spells standard input another way"):
         commands = {
             "pipe": "printf 'make test' | bash",
             "pipe with no spaces": "printf 'make test'|bash",
@@ -630,6 +633,21 @@ def test_a_script_that_a_shell_reads_from_a_pipe_or_standard_input_is_unreadable
             "xargs": "echo run.sh | xargs bash",
             "xargs fills in a script": "find . -name '*.txt' | xargs -I{} sh -c 'echo {}'",
             "in a heredoc script": "bash <<'EOF'\nprintf 'make test' | bash\nEOF",
+            "standard input in capitals": "bash /Dev/fd/0 <<'EOF'\nmake test\nEOF",
+            "/dev/stdin in capitals": "bash /DEV/STDIN <<'EOF'\nmake test\nEOF",
+            "two slashes at the start": "bash //dev/fd/0 <<'EOF'\nmake test\nEOF",
+            "a dot folder in the path": "bash /dev/./fd/0 <<'EOF'\nmake test\nEOF",
+            "two slashes inside": "bash /dev//stdin <<'EOF'\nmake test\nEOF",
+            "up a folder and back": "bash /usr/../dev/stdin <<'EOF'\nmake test\nEOF",
+            "a relative path after cd": "cd /dev && bash stdin <<'EOF'\nmake test\nEOF",
+            "another descriptor after cd": "cd /dev/fd && bash 3 3<<'EOF'\nmake test\nEOF",
+            "source in capitals": "source /Dev/stdin <<'EOF'\nmake test\nEOF",
+            "a pipe into a missing script": "printf 'make test' | bash missing.sh",
+            "a pipe into a script the line writes first": "printf 'make' > run.sh; printf x | bash run.sh",
+            "a wrapper that moves the shell": "env -C /dev bash stdin <<'EOF'\nmake test\nEOF",
+            "no input, in capitals": "bash /DEV/STDIN",
+            "no input, two slashes": "sh //dev/fd/0",
+            "no input, a dot folder": "source /dev/./stdin",
         }
         results = {name: [home.hook(tool, "PreToolUse", command) for _ in range(2)]
                    for name, command in commands.items()}
@@ -640,7 +658,7 @@ def test_a_script_that_a_shell_reads_from_a_pipe_or_standard_input_is_unreadable
         readable = ["printf a | sh -c 'wc -l'", "echo x | bash run.sh", "ls | grep bash", "cat run.sh | grep sh",
                     "bash <<'EOF'\necho hi\nEOF", "make test || echo failed", "(make test)||(echo failed)",
                     "npm test 2>&1 | tail -20", "find . -name '*.py' | xargs grep -n TODO",
-                    'while read line; do echo "$line"; done < run.sh']
+                    'while read line; do echo "$line"; done < run.sh', "bash run.sh <<'EOF'\ninput\nEOF"]
         readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
     with then("each runs with no answer"):
         assert [result.output for result in readable_results] == [{}] * len(readable)
