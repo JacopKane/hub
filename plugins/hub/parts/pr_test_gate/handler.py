@@ -152,8 +152,11 @@ SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
 # and jump host that Match blocks and %p, %r, %j can test, and the session type that Match sessiontype tests
 SSH_CONFIG_OPTIONS = {"-F", "-o", "-p", "-l", "-P", "-J", "-W"}
 SSH_CONFIG_SWITCHES = {"N"}
-# -s makes git's remote command a subsystem name, and ssh -G can not judge a session type without that command
+# -s makes git's remote command a subsystem name, a session the gate keeps refused
 SSH_UNREADABLE_SWITCHES = {"s"}
+# The git push options that name the program git runs on the remote; the last one wins, as in git
+RECEIVE_PACK_OPTIONS = {"--receive-pack", "--exec"}
+RECEIVE_PACK = "git-receive-pack"  # the program git runs on the remote for a push when nothing names another
 # A port as C's strtol reads the text after a colon, which git's get_host_and_port and get_port take whole
 GIT_PORT = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+")
 PERCENT_ESCAPE = re.compile(rb"%([0-9A-Fa-f]{2})")
@@ -262,14 +265,15 @@ class Lookups:
             self.cache[key] = done[1].strip() if done[0] == 0 else None
         return self.cache[key]
 
-    def ssh_hostname(self, cwd, destination, ssh_words=GH_SSH):
+    def ssh_hostname(self, cwd, destination, ssh_words=GH_SSH, remote_command=()):
         """The host ssh connects to for a [user@]host, where host may be a Host alias, as ssh -G prints it after
-        reading ssh's config, without connecting. ssh_words are the program and the config options to ask with. A
-        lookup that fails may hide GitHub, so it stops the step."""
-        key = ("ssh", tuple(ssh_words), destination)
+        reading ssh's config, without connecting. ssh_words are the program and the config options to ask with, and
+        remote_command the command the session runs, as git sends it, since Match command and Match sessiontype
+        blocks read it. A lookup that fails may hide GitHub, so it stops the step."""
+        key = ("ssh", tuple(ssh_words), destination, tuple(remote_command))
         if key not in self.cache:
             try:
-                done = self.run([*ssh_words, "-G", "--", destination], cwd, GIT_SECONDS)
+                done = self.run([*ssh_words, "-G", "--", destination, *remote_command], cwd, GIT_SECONDS)
             except OSError:
                 done = None
             printed = done[1] if done and done[0] == 0 else ""
@@ -524,7 +528,8 @@ def pushed(step, lookups):
         remote = push_remote(cwd, branch, lookups)
     options = step.words[1:len(step.words) - len(words)]
     assignments = dict(word.split("=", 1) for word in step.before)
-    repos = github_repos(cwd, remote, lookups, lambda: lookups.git_ssh(cwd, options, assignments))
+    repos = github_repos(cwd, remote, lookups, lambda: (*lookups.git_ssh(cwd, options, assignments),
+                                                        receive_pack_program(cwd, remote, words[1:], lookups)))
     if not repos:
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
@@ -536,28 +541,83 @@ def pushed(step, lookups):
 def github_repos(cwd, remote, lookups, ssh_command):
     """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
     GitHub, or [] when none is on GitHub. ssh_command gives the ssh program and options git reaches ssh hosts with,
-    and git's ssh variant."""
+    git's ssh variant, and the program git runs on the remote."""
     urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_command)]
     return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
-def is_a_github_url(url, cwd, lookups, ssh_command=lambda: (GH_SSH, "ssh")):
+def is_a_github_url(url, cwd, lookups, ssh_command=lambda: (GH_SSH, "ssh", None)):
     """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
     as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_command is
-    asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
+    asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either. gh asks ssh about a
+    host with no remote command, so by default none is sent."""
     if GITHUB.search(url):
         return True
     authority, over_ssh = url_authority(url)
     if authority is None:
         return False
     return is_a_github_host(bare_host(authority)) or (over_ssh and is_a_github_host(
-        ssh_host_of(authority, cwd, lookups, *ssh_command())))
+        ssh_host_of(url, authority, cwd, lookups, *ssh_command())))
 
 
-def ssh_host_of(authority, cwd, lookups, ssh_words, variant):
-    """The host ssh -G names for the [user@]host[:port], asked with the ssh program and options, then the port as
-    git adds it for its ssh variant."""
-    return lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)))
+def ssh_host_of(url, authority, cwd, lookups, ssh_words, variant, program):
+    """The host ssh -G names for the [user@]host[:port] of the URL, asked with the ssh program and options, then
+    the port as git adds it for its ssh variant, then the command git sends: the program and the URL's path in
+    single quotes, as one word. A program of None sends no command."""
+    remote_command = () if program is None else (f"{program} {git_quoted(git_ssh_path(url))}",)
+    return lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)),
+                                remote_command)
+
+
+def receive_pack_program(cwd, remote, rest, lookups):
+    """The program git runs on the remote for a push: the last --receive-pack or --exec of git push, which
+    --no-receive-pack clears, else the remote word's first remote.<word>.receivepack setting, else
+    git-receive-pack, as git's push and remote.c pick it. A value the shell fills in stops the step."""
+    shared = gate()
+    items = shared.push_items(shared.without_redirects(rest))
+    given = next((value for option, value in reversed(list(items)) if option in RECEIVE_PACK_OPTIONS), False)
+    if given is False:
+        setting = first_receive_pack_setting(cwd, remote, lookups)
+        return RECEIVE_PACK if setting is None else setting
+    if unreadable_mark() in given:
+        raise unreadable("word")
+    return given
+
+
+def first_receive_pack_setting(cwd, remote, lookups):
+    """The first remote.<remote>.receivepack value, which git keeps when there are more, or None. The remote's
+    name is compared whole, as git does. A setting with no value stops the step."""
+    listed = lookups.git(cwd, "config", "-z", "--get-regexp", r"^remote\..*\.receivepack$") or ""
+    entries = (entry.partition("\n") for entry in listed.split("\0") if entry)
+    found = [(newline, value) for key, newline, value in entries if key[len("remote."):-len(".receivepack")] == remote]
+    if not found:
+        return None
+    newline, value = found[0]
+    if not newline:
+        raise unreadable("ssh_command")
+    return value
+
+
+def git_ssh_path(url):
+    """The path git sends in its remote command for an ssh URL, as connect.c's parse_connect_url finds it: from
+    the first / after the host of a scheme:// URL, decoded once first, or else the text after the first colon
+    after the host. Both look for that mark after a [bracketed] part, and git drops the first character when the
+    second is ~, so /~alice/x is sent as ~alice/x. A URL with no path stops the step, as git stops there too."""
+    scheme, separator, rest = url.partition("://")
+    over_url = bool(separator) and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme) is not None
+    text, mark = (git_url_decode(rest), "/") if over_url else (url, ":")
+    start = text.find("@[") + 1
+    close = text.find("]", start + 1) if text[start:start + 1] == "[" else -1
+    at = text.find(mark, max(close, 0))
+    if at < 0:
+        raise unreadable("remote_url")
+    path = text[at + 1:] if mark == ":" else text[at:]
+    return path[1:] if path[1:2] == "~" else path
+
+
+def git_quoted(text):
+    """The text in single quotes as git's sq_quote_buf writes it, with ' and ! each closed out and escaped."""
+    return "'" + text.replace("'", "'\\''").replace("!", "'\\!'") + "'"
 
 
 def git_ssh_words(cwd, options, assignments, lookups):

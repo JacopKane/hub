@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A stand-in for ssh in the PR test gate scenarios. It never connects.
 
-`ssh [options] -G -- [user@]<host>` prints the settings ssh would use for the
-host, as the real one does after it reads its config. The JSON file in
+`ssh [options] -G -- [user@]<host> [command]` prints the settings ssh would
+use for the host, as the real one does after it reads its config. The JSON file in
 $FAKE_SSH_CONFIG says which Host aliases name another host:
 
 - hosts: {alias: the HostName ssh connects to}; any other host names itself
@@ -15,8 +15,11 @@ $FAKE_SSH_CONFIG says which Host aliases name another host:
 - jumps: {jump host: {alias: HostName}}, as a Match exec block on %j for the
   jump host -J names
 - sessions: {"none": {alias: HostName}}, as a Match sessiontype block, for -N
-  or -W, which ask for no session
-- users, tags, jumps and sessions come before ports, in that order
+  or -W, which ask for no session; "exec" stands for a call with a command and
+  neither of them
+- commands: {pattern: {alias: HostName}}, as a Match command block, for a call
+  whose command, its words joined by spaces, the glob pattern matches
+- users, tags, jumps, sessions and commands come before ports, in that order
 
 Options before -G change that, as they do for the real ssh: -F <file> reads
 the JSON file it names in place of $FAKE_SSH_CONFIG, -o HostName=<name> (or
@@ -28,6 +31,7 @@ ssh, the first -p, -l or -P wins, and a second -J fails.
 Each call's words go to $FAKE_SSH_LOG, one JSON list a line. Every other call
 exits 255, as when ssh can not connect.
 """
+import fnmatch
 import json
 import os
 import sys
@@ -76,17 +80,22 @@ words = sys.argv[1:]
 if os.environ.get("FAKE_SSH_LOG"):
     with open(os.environ["FAKE_SSH_LOG"], "a") as handle:
         handle.write(json.dumps(words) + "\n")
-options = words[:-3]
-read = read_options(options) if words[-3:-1] == ["-G", "--"] else None
+asks_config = next((index for index in range(len(words) - 2) if words[index:index + 2] == ["-G", "--"]), None)
+options, after = (words[:asks_config], words[asks_config + 2:]) if asks_config is not None else ([], [])
+read = read_options(options) if asks_config is not None else None
 config = read_config(read.get("config_file") or os.environ.get("FAKE_SSH_CONFIG")) if read is not None else {}
-named_user, _at, host = (words[-1:] or [""])[0].rpartition("@")
+named_user, _at, host = (after[:1] or [""])[0].rpartition("@")
+command = " ".join(after[1:])
 if read is None or host in config.get("fail", []):
     print("ssh: could not read the config", file=sys.stderr)
     sys.exit(255)
 port, user = read.get("port", "22"), read.get("user", named_user)
-blocks = [config.get(name, {}).get(key, {}) for name, key in
-          (("users", user), ("tags", read.get("tag")), ("jumps", read.get("jump")),
-           ("sessions", read.get("session")), ("ports", port))]
+session = read.get("session") or ("exec" if command else None)
+by_command = next((hosts for pattern, hosts in config.get("commands", {}).items()
+                   if command and fnmatch.fnmatchcase(command, pattern)), {})
+blocks = [*(config.get(name, {}).get(key, {}) for name, key in
+            (("users", user), ("tags", read.get("tag")), ("jumps", read.get("jump")), ("sessions", session))),
+          by_command, config.get("ports", {}).get(port, {})]
 hostname = read.get("hostname") or next((block[host] for block in blocks if host in block),
                                         config.get("hosts", {}).get(host, host))
 print(f"host {host}\nuser {user or 'local'}\nhostname {hostname}\nport {port}")

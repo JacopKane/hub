@@ -1682,6 +1682,9 @@ def test_a_push_is_judged_by_an_open_pr_in_the_repo_it_goes_to_as_well_as_in_ghs
 
 
 SSH_HOST_WHY ="ssh could not say which host the remote's address names"
+# The command git sends over ssh for a push to acme/demo.git, by a user@host:path address or an ssh:// URL
+SCP_PUSH_COMMAND = "git-receive-pack 'acme/demo.git'"
+URL_PUSH_COMMAND = "git-receive-pack '/acme/demo.git'"
 
 
 def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_other_hosts_stay_quiet(home):
@@ -1718,8 +1721,11 @@ def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_
               "with the URL's user, as git hands it over, so a Match user block counts"):
         for name, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work"]] * 2 + \
-            [["-G", "--", f"{ssh_user}git-work"], ["-p", "2222", "-G", "--", f"{ssh_user}git-work"]]
+        assert ssh_calls(home)[calls_before:] == [
+            ["-G", "--", f"{ssh_user}github-work", SCP_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}github-work", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}git-work", SCP_PUSH_COMMAND],
+            ["-p", "2222", "-G", "--", f"{ssh_user}git-work", URL_PUSH_COMMAND]]
     with when("Claude pushes feature to each remote on another host"):
         calls_before = len(ssh_calls(home))
         results = {name: bash(home, f"git push {name} feature") for name in ("lab", "gitlab", "lookalike",
@@ -1728,9 +1734,9 @@ def test_a_push_to_any_github_host_name_or_an_ssh_alias_of_github_is_judged_and_
               "names itself, since the Match user git block does not apply"):
         for name, result in results.items():
             assert quiet(result), (name, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}lab-work"],
-                                                  ["-G", "--", f"{ssh_user}notgithub.com"],
-                                                  ["-G", "--", "deploy" + "@" + "git-work"]]
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}lab-work", SCP_PUSH_COMMAND],
+                                                  ["-G", "--", f"{ssh_user}notgithub.com", SCP_PUSH_COMMAND],
+                                                  ["-G", "--", "deploy" + "@" + "git-work", SCP_PUSH_COMMAND]]
     with when("ssh can not read its config for the alias a remote names"):
         broken = bash(home, "git push broken feature")
     with then("the push is refused, since the alias may name GitHub"):
@@ -1764,15 +1770,17 @@ def test_an_ssh_alias_is_looked_up_with_the_ssh_config_that_gits_ssh_command_nam
               "was given the same -F"):
         assert says(home, to_work, "no_report.md", short=feature[:7], branch="feature"), to_work.reason
         assert quiet(to_lab), to_lab.reason
-        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", f"{ssh_user}work-only"],
-                                                  ["-F", work_config, "-G", "--", f"{ssh_user}lab-only"]]
+        assert ssh_calls(home)[calls_before:] == [
+            ["-F", work_config, "-G", "--", f"{ssh_user}work-only", SCP_PUSH_COMMAND],
+            ["-F", work_config, "-G", "--", f"{ssh_user}lab-only", SCP_PUSH_COMMAND]]
     with when("the setting names ssh by its name and the file as ~/work.json"):
         home.git("config", "core.sshCommand", "ssh -F ~/work.json")
         calls_before = len(ssh_calls(home))
         by_name = bash(home, "git push work feature")
     with then("ssh on PATH is asked with ~ read as the shell reads it, and the push is refused"):
         assert says(home, by_name, "no_report.md", short=feature[:7], branch="feature"), by_name.reason
-        assert ssh_calls(home)[calls_before:] == [["-F", work_config, "-G", "--", f"{ssh_user}work-only"]]
+        assert ssh_calls(home)[calls_before:] == [
+            ["-F", work_config, "-G", "--", f"{ssh_user}work-only", SCP_PUSH_COMMAND]]
     with when("GIT_SSH_COMMAND sets HostName for every host in the hook's environment, then GIT_SSH_COMMAND and "
               "git's -c option name the file for one command, while the repo's setting is plain ssh"):
         home.git("config", "core.sshCommand", "ssh")
@@ -1827,14 +1835,17 @@ def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
                 (name, results[name].reason)
         for name in ("otherport", "noport"):
             assert quiet(results[name]), (name, results[name].reason)
-        assert ssh_calls(home)[calls_before:] == [["-p", "2222", "-G", "--", f"{ssh_user}port-work"]] * 2 + \
-            [["-p", "2223", "-G", "--", f"{ssh_user}port-work"], ["-G", "--", f"{ssh_user}port-work"]]
+        assert ssh_calls(home)[calls_before:] == [
+            ["-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-p", "2222", "-G", "--", f"{ssh_user}port-work", SCP_PUSH_COMMAND],
+            ["-p", "2223", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}port-work", SCP_PUSH_COMMAND]]
     with when("git's ssh command names port 2223 itself and Claude pushes to the remote on port 2222"):
         own_port = bash(home, f"GIT_SSH_COMMAND='{fake} -p 2223' git push url feature")
     with then("ssh -G gets the command's port first and the URL's after it, in the order git runs ssh, and ssh "
               "keeps the first one, so the push runs"):
         assert quiet(own_port), own_port.reason
-        assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work"]
+        assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]
 
 
 def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to(home):
@@ -1862,8 +1873,8 @@ def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to
               "the user, host and port, and ssh -G is asked about the decoded alias and port"):
         for name, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work"],
-                                                  ["-p", "2222", "-G", "--", f"{ssh_user}port-work"]]
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work", URL_PUSH_COMMAND],
+                                                  ["-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]]
     with when("Claude pushes feature to a URL escaped twice, one with %00, which git leaves as it is, and an "
               "address in the user@host:path form, which git does not decode"):
         calls_before = len(ssh_calls(home))
@@ -1871,9 +1882,9 @@ def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to
     with then("each runs, and ssh -G is asked about the host as git hands it to ssh"):
         for name, result in results.items():
             assert quiet(result), (name, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}%67ithub.com"],
-                                                  ["-G", "--", f"{ssh_user}github.com%00x"],
-                                                  ["-G", "--", f"{ssh_user}%67ithub.com"]]
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}%67ithub.com", URL_PUSH_COMMAND],
+                                                  ["-G", "--", f"{ssh_user}github.com%00x", URL_PUSH_COMMAND],
+                                                  ["-G", "--", f"{ssh_user}%67ithub.com", SCP_PUSH_COMMAND]]
 
 
 def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_gits_ssh_command_names(home):
@@ -1903,12 +1914,10 @@ def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_
         for case, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (case, result.reason)
         assert ssh_calls(home)[calls_before:] == [
-            ["-l", "alice", "-G", "--", f"{ssh_user}user-work"], ["-l", "alice", "-G", "--", f"{ssh_user}user-work"],
-            ["-P", "t1", "-G", "--", f"{ssh_user}tag-work"], ["-J", "jump1", "-G", "--", f"{ssh_user}jump-work"],
-            ["-N", "-G", "--", f"{ssh_user}session-work"],
-            ["-W", "github.com:22", "-G", "--", f"{ssh_user}session-work"],
-            ["-N", "-P", "t1", "-G", "--", f"{ssh_user}tag-work"],
-            ["-l", "alice", "-G", "--", f"{ssh_user}user-work"]]
+            [*options, "-G", "--", f"{ssh_user}{alias}", SCP_PUSH_COMMAND] for options, alias in (
+                (["-l", "alice"], "user-work"), (["-l", "alice"], "user-work"), (["-P", "t1"], "tag-work"),
+                (["-J", "jump1"], "jump-work"), (["-N"], "session-work"), (["-W", "github.com:22"], "session-work"),
+                (["-N", "-P", "t1"], "tag-work"), (["-l", "alice"], "user-work"))]
     with when("the command names another user or tag first, or an option that changes nothing ssh -G prints"):
         elsewhere = {"first user wins": ("-l bob -l alice", "user"), "first tag wins": ("-P t2 -P t1", "tag"),
                      "identity only": ("-i id_work -l bob", "user")}
@@ -1919,11 +1928,11 @@ def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_
         for case, result in results.items():
             assert quiet(result), (case, result.reason)
         assert ssh_calls(home)[calls_before:] == [
-            ["-l", "bob", "-l", "alice", "-G", "--", f"{ssh_user}user-work"],
-            ["-P", "t2", "-P", "t1", "-G", "--", f"{ssh_user}tag-work"],
-            ["-l", "bob", "-G", "--", f"{ssh_user}user-work"]]
-    with when("the command names two jump hosts, which ssh refuses, or a subsystem, which ssh -G can not judge "
-              "without the command git sends"):
+            ["-l", "bob", "-l", "alice", "-G", "--", f"{ssh_user}user-work", SCP_PUSH_COMMAND],
+            ["-P", "t2", "-P", "t1", "-G", "--", f"{ssh_user}tag-work", SCP_PUSH_COMMAND],
+            ["-l", "bob", "-G", "--", f"{ssh_user}user-work", SCP_PUSH_COMMAND]]
+    with when("the command names two jump hosts, which ssh refuses, or a subsystem, a session the gate keeps "
+              "refused"):
         unreadable_steps = {case: (bash(home, f"GIT_SSH_COMMAND='{fake} {options}' git push {remote} feature"), why)
                             for case, (options, remote, why) in {
                                 "two jump hosts": ("-J jump2 -J jump1", "jump", SSH_HOST_WHY),
@@ -1967,8 +1976,93 @@ def test_a_push_to_an_ssh_url_with_a_port_is_refused_when_gits_ssh_variant_passe
     with then("each runs, since git passes the port with -p, as ssh -G gets it, or passes no port"):
         for case, result in runs.items():
             assert quiet(result), (case, result.reason)
-        assert ssh_calls(home)[calls_before:] == [["-p", "2222", "-G", "--", f"{ssh_user}tag-work"]] * 3 + \
-            [["-G", "--", f"{ssh_user}tag-work"]]
+        assert ssh_calls(home)[calls_before:] == [
+            ["-p", "2222", "-G", "--", f"{ssh_user}tag-work", URL_PUSH_COMMAND]] * 3 + \
+            [["-G", "--", f"{ssh_user}tag-work", SCP_PUSH_COMMAND]]
+
+
+def test_an_ssh_alias_is_looked_up_with_the_remote_command_git_sends_for_the_push(home):
+    with given("branch feature with open PR 7 and a new commit with no report, alias exec-work that is github.com "
+               "for any session with a command, as a Match sessiontype exec block can set, alias cmd-work that is "
+               "github.com for the exact commands git sends for some paths, and alias pack-work that is github.com "
+               "only for the receive-pack program custom-pack, as Match command blocks can set"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        cmd_work = {"cmd-work": "github.com"}
+        with_fake_ssh(home, sessions={"exec": {"exec-work": "github.com"}}, commands={
+            "git-receive-pack 'acme/demo.git'": cmd_work, "git-receive-pack '/acme/demo.git'": cmd_work,
+            "git-receive-pack '~alice/acme/demo.git'": cmd_work,
+            "git-receive-pack '/it'\\''s'\\!'/acme/demo.git'": cmd_work,
+            "git-receive-pack 'acme/%41.git'": cmd_work,
+            "custom-pack 'acme/demo.git'": {"pack-work": "github.com"}})
+        ssh_user = "git" + "@"
+        remotes = {"exec": f"{ssh_user}exec-work:acme/demo.git", "scp": f"{ssh_user}cmd-work:acme/demo.git",
+                   "url": f"ssh://{ssh_user}cmd-work/acme/demo.git",
+                   "home": f"ssh://{ssh_user}cmd-work/~alice/acme/demo.git",
+                   "scphome": f"{ssh_user}cmd-work:x~alice/acme/demo.git",
+                   "quoted": f"ssh://{ssh_user}cmd-work/it%27s!/acme/demo.git",
+                   "packset": f"{ssh_user}pack-work:acme/demo.git", "packplain": f"{ssh_user}pack-work:acme/demo.git",
+                   "packother": f"{ssh_user}pack-work:acme/demo.git", "packfirst": f"{ssh_user}pack-work:acme/demo.git",
+                   "nopath": f"ssh://{ssh_user}pack-work", "scppercent": f"{ssh_user}cmd-work:acme/%41.git"}
+        for name, url in remotes.items():
+            home.git("remote", "add", name, url)
+        for name, programs in {"packset": ("custom-pack", "other-pack"), "packother": ("other-pack",),
+                               "packfirst": ("other-pack", "custom-pack")}.items():
+            for program in programs:
+                home.git("config", "--add", f"remote.{name}.receivepack", program)
+        home.git("config", f"remote.{ssh_user}pack-work:acme/demo.git.receivepack", "custom-pack")
+    with when("Claude pushes feature to each remote on exec-work and cmd-work"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature")
+                   for name in ("exec", "scp", "url", "home", "scphome", "quoted")}
+    with then("each is judged as the push to GitHub it is, and ssh -G gets git-receive-pack and the path as git "
+              "sends them: decoded, without the slash before a ~, after git's cut at a ~ in the second place, and "
+              "quoted the way git quotes ' and !"):
+        for name, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
+        assert [call[2:] for call in ssh_calls(home)[calls_before:]] == [
+            [f"{ssh_user}exec-work", "git-receive-pack 'acme/demo.git'"],
+            [f"{ssh_user}cmd-work", "git-receive-pack 'acme/demo.git'"],
+            [f"{ssh_user}cmd-work", "git-receive-pack '/acme/demo.git'"],
+            [f"{ssh_user}cmd-work", "git-receive-pack '~alice/acme/demo.git'"],
+            [f"{ssh_user}cmd-work", "git-receive-pack '~alice/acme/demo.git'"],
+            [f"{ssh_user}cmd-work", "git-receive-pack '/it'\\''s'\\!'/acme/demo.git'"]]
+    with when("custom-pack is the remote's first receivepack setting, git push's --receive-pack or --exec, the "
+              "last of the two, the option over another setting, or the setting of the URL Claude pushes to"):
+        refused = {"first setting": bash(home, "git push packset feature"),
+                   "push option": bash(home, "git push --receive-pack=custom-pack packplain feature"),
+                   "exec option": bash(home, "git push --exec custom-pack packplain feature"),
+                   "last option wins": bash(home, "git push --receive-pack=other-pack --exec=custom-pack "
+                                                  "packplain feature"),
+                   "option over setting": bash(home, "git push --receive-pack=custom-pack packother feature"),
+                   "url word setting": bash(home, f"git push {ssh_user}pack-work:acme/demo.git feature")}
+    with then("each push is judged as the push to GitHub it is"):
+        for case, result in refused.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (case, result.reason)
+    with when("the program is git's own, the option is turned off again, or custom-pack is only a later setting"):
+        calls_before = len(ssh_calls(home))
+        runs = {"default program": bash(home, "git push packplain feature"),
+                "option turned off": bash(home, "git push --receive-pack=custom-pack --no-receive-pack "
+                                                "packplain feature"),
+                "later setting": bash(home, "git push packfirst feature")}
+    with then("each runs, since git keeps a remote's first receivepack setting, and ssh -G gets the program git "
+              "would run"):
+        for case, result in runs.items():
+            assert quiet(result), (case, result.reason)
+        assert [call[-1] for call in ssh_calls(home)[calls_before:]] == [
+            "git-receive-pack 'acme/demo.git'"] * 2 + ["other-pack 'acme/demo.git'"]
+    with when("the remote's URL has no path, so git can not build its command"):
+        no_path = bash(home, "git push nopath feature")
+    with then("the push is refused, since the gate can not ask ssh about the session git would open"):
+        assert says(home, no_path, "unreadable_push.md", why=REMOTE_URL_WHY), no_path.reason
+    with when("the scp-like remote's path holds %41, which git sends as it stands, not as A"):
+        calls_before = len(ssh_calls(home))
+        percent = bash(home, "git push scppercent feature")
+    with then("ssh -G gets the path undecoded, so cmd-work is github.com, and the push is refused as one whose repo "
+              "name the gate can not read"):
+        assert [call[-1] for call in ssh_calls(home)[calls_before:]] == ["git-receive-pack 'acme/%41.git'"]
+        assert says(home, percent, "unreadable_push.md", why=REMOTE_URL_WHY), percent.reason
 
 
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
