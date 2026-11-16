@@ -1021,7 +1021,9 @@ def new_pr(step, head, named_head, named_base, places, lookups):
     (the head's repo, the base's repo). A head that is named is read on GitHub, since gh then pushes nothing. With
     no head named, gh pushes nothing when its local copy of a GitHub branch is at HEAD, and opens the PR at the
     commit GitHub has for that branch, so each such copy must match GitHub. Otherwise gh asks where to push HEAD,
-    or stops when it can not ask, as in a command run without a terminal, and the local head is judged."""
+    or stops when it can not ask, as in a command run without a terminal, and the local head is judged. One answer
+    gh offers skips the push and opens the PR at the commit GitHub already has. Asking needs a terminal, and the
+    Bash tool has none."""
     head_place, base_place = places
     branch = head.split(":", 1)[-1]
     commit = (github_head(step.cwd, head, head_place, lookups) if named_head

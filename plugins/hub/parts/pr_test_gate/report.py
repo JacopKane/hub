@@ -5,6 +5,10 @@ common git folder under pr-test-reports, so every worktree of the repo sees
 it. When a commit has no report of its own, a report for a commit with the
 same tree counts, so a reworded commit keeps its report.
 
+pr-tested texts and show judge a texts report against origin's copy of the
+base branch. The gate judges it against the commit GitHub has for that
+branch, so a report that passes here may still not pass the gate.
+
 The gate imports this file by path. Its git calls go through the gate's
 run_git, which keeps them inside the hook's time. Run as a script, the file
 is hub's pr-tested command, which records a report.
