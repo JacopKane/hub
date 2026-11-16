@@ -130,6 +130,8 @@ WHY = {
     "api_endpoint": "a variable or a substitution fills in a word gh api may read as its endpoint",
     "api_method": "a variable or a substitution fills in the gh api method",
     "api_field": "a variable or a substitution fills in a gh api field name",
+    "api_input": "a variable or a substitution fills in the gh api input file",
+    "api_input_json": "the gate can not read a JSON object from the gh api input",
     "folder": "the folder it runs in is missing or not known",
     "body": "a variable or a substitution fills in the PR body",
     "gh_command": "a variable or a substitution fills in a word gh may read as its command",
@@ -1286,11 +1288,13 @@ def api_step(command, step, flags, answer, lookups):
 
 def shell_filled_api_part(items):
     """The WHY name of the first part of a gh api call the shell fills in that decides what the call changes: a
-    word gh may read as the endpoint, the method, or a field's name. None when the shell fills in none of them."""
+    word gh may read as the endpoint, the method, a field's name, or the input file that holds the fields. None
+    when the shell fills in none of them."""
     mark = unreadable_mark()
     parts = (("api_endpoint", lambda name, _value: name is None),
              ("api_method", lambda name, _value: name == "--method"),
-             ("api_field", lambda name, value: name in ("--field", "--raw-field") and mark in value.split("=", 1)[0]))
+             ("api_field", lambda name, value: name in ("--field", "--raw-field") and mark in value.split("=", 1)[0]),
+             ("api_input", lambda name, _value: name == "--input"))
     return next((why for why, is_part in parts
                  for name, value in items if is_part(name, value) and mark in value), None)
 
@@ -1302,7 +1306,7 @@ def sent_object(text, graphql):
     except ValueError:
         sent = None
     if not isinstance(sent, dict):
-        raise unreadable("query" if graphql else "head")
+        raise unreadable("query" if graphql else "api_input_json")
     return sent
 
 

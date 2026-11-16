@@ -2137,6 +2137,8 @@ def test_a_graphql_call_gets_the_body_check_whatever_path_or_method_names_graphq
 API_ENDPOINT_WHY = "a variable or a substitution fills in a word gh api may read as its endpoint"
 API_METHOD_WHY = "a variable or a substitution fills in the gh api method"
 API_FIELD_WHY = "a variable or a substitution fills in a gh api field name"
+API_INPUT_WHY = "a variable or a substitution fills in the gh api input file"
+API_INPUT_JSON_WHY = "the gate can not read a JSON object from the gh api input"
 
 
 def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is_refused(home):
@@ -2149,6 +2151,7 @@ def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is
         good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
         query = body_file(home, 'mutation { updatePullRequest(input: {pullRequestId: "PR_kw1", body: "A fix."}) '
                                 "{ clientMutationId } }", "edit.graphql")
+        listed = body_file(home, '[{"head": "side", "base": "main"}]', "list.json")
     hidden = {f'gh api "$ENDPOINT" -f head=side -f base=main -F body=@{good}': API_ENDPOINT_WHY,
               f"gh api repos/acme/demo/$KIND -f head=side -F body=@{good}": API_ENDPOINT_WHY,
               f"gh api $(printf repos/acme/demo/pulls) -f head=side -F body=@{good}": API_ENDPOINT_WHY,
@@ -2157,7 +2160,8 @@ def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is
               f"gh api --method=$METHOD repos/acme/demo/pulls/7 -F body=@{bad}": API_METHOD_WHY,
               f'gh api -X PATCH repos/acme/demo/pulls/7 -F "$KEY"=@{bad}': API_FIELD_WHY,
               f'gh api -X PATCH repos/acme/demo/issues/7 -f "${{KEY}}=A fix."': API_FIELD_WHY,
-              f'gh api graphql -F "$KEY"=@{query}': API_FIELD_WHY}
+              f'gh api graphql -F "$KEY"=@{query}': API_FIELD_WHY,
+              'gh api repos/acme/demo/pulls --input "$REQUEST"': API_INPUT_WHY}
     with when("Claude opens a PR at side or edits PR 7's body through gh api, while a variable or a substitution "
               "fills in the endpoint or a part of it, an extra word, the method, or the name of a field"):
         results = {step: bash(home, step) for step in hidden}
@@ -2169,6 +2173,15 @@ def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is
             assert result.refused, (step, result.reason)
         for step, result in alone.items():
             assert says(home, result, "unreadable_push.md", why=hidden[step]), (step, result.reason)
+    unread_inputs = ["gh api repos/acme/demo/pulls --input missing.json",
+                     f"gh api repos/acme/demo/pulls --input {listed}", f"gh api repos/acme/demo/pulls --input {good}"]
+    with when("Claude opens a PR at side through gh api --input with a file that is missing, holds a list, or "
+              "holds text that is not JSON, with the text gate's unreadable check still off"):
+        input_results = {step: bash(home, step) for step in unread_inputs}
+    with then("each is refused with a reason that says the gate can not read the input, not that the head is "
+              "not named"):
+        assert [(step, result.reason) for step, result in input_results.items()
+                if not says(home, result, "unreadable_push.md", why=API_INPUT_JSON_WHY)] == []
     reads = ["gh api repos/acme/demo/pulls/7", "gh api repos/acme/demo/pulls/7 --jq '.head.ref'",
              "gh api -X GET repos/acme/demo/pulls -f head=acme:side"]
     with when("Claude reads PR 7 and the open PRs at side through gh api, with each part written out"):
