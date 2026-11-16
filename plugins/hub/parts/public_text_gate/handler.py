@@ -168,6 +168,12 @@ PUSH_NOTES = {LONG_PUSH: LONG_PUSH_NOTE, UNTRACKED_PUSH: UNTRACKED_PUSH_NOTE, SL
 # git commit -m x "$FILE". It holds UNREADABLE, so it is refused like one, with its own note.
 GIT_WORD = UNREADABLE + "\x06"
 MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE}
+# Added only when a reader asks for it, as the PR test gate does. It goes before each spot the shell may fill in
+# with several words or with none: an expansion outside double quotes, which bash splits and both shells drop when
+# it is empty, and "$@", an array or zsh's (f) flag inside them. The text gate's own reading never holds it.
+MANY_WORDS = "\x07"
+EXPANSION_START = re.compile(r"`|\$[\w({@*#?!$=~^-]")  # zsh's $=name, $~name and $^name split or glob the value
+QUOTED_WORD_LIST = re.compile(r"\$(?:@|\{\(|\{[^}]*@|[A-Za-z_]\w*\[@\])")  # "$@", "${a[@]}", "$a[@]", "${(f)a}"
 # The setup tools whose output may be the whole script for eval or a shell, as
 # in eval "$(ssh-agent -s)". Any other source could print a public command.
 # The name has no folder, other than the two that Homebrew's install steps
@@ -294,7 +300,7 @@ GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None, read_step=None):
+    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None, read_step=None, many_words=""):
         """Each line is its own command, since the shell runs a tool call's command as a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
@@ -302,6 +308,7 @@ class Command:
         Without read_log, a push names its step but not the commits it sends.
         Its git calls end by deadline, a time.monotonic() value, or TEXT_SECONDS from now.
         read_step names each git or gh step, as step_target does when it is not given.
+        many_words is put where mark_expansions says, to show where the shell may give more words than one.
         """
         self.cwd = cwd
         self.read_log = parent.read_log if parent else read_log
@@ -322,7 +329,7 @@ class Command:
                     body = UNREADABLE + body  # the shell fills in this body at run time
             self.heredocs.append(body)
         self.fed = getattr(line, "fed", False)  # a process substitution's command reads the pipe that >(...) gets
-        self.flat = end_lines(mark_expansions(text, self.sources))
+        self.flat = end_lines(mark_expansions(text, self.sources, many_words))
 
     def heredoc_script(self, word):
         """The script a heredoc holds, when the word is where the heredoc stood, or None."""
@@ -403,7 +410,7 @@ class Segment(list):
     fed = False
 
 
-def mark_expansions(line, sources=None):
+def mark_expansions(line, sources=None, many_words=""):
     """The line with UNREADABLE before each $VAR, ${...}, $(...) and backtick the shell would fill in.
 
     Single quotes and a backslash keep a $ as it is, and $(cat file) is read
@@ -418,9 +425,13 @@ def mark_expansions(line, sources=None):
     brackets, spaces and quotes never split the command. A $'...' string
     becomes the text the shell makes of it, in plain single quotes, because
     the gate's lexer does not know its escapes.
+    Given many_words, that mark also goes before each spot that may give the
+    shell more words than one, or none, as gives_many_words finds them.
     """
     out, index, quote = [], 0, None
     while index < len(line):
+        if many_words and gives_many_words(line, index, quote):
+            out.append(many_words)
         char = line[index]
         following = line[index + 1] if index + 1 < len(line) else ""
         if quote is None and following == "(" and (char in "<>" or (char == "=" and (
@@ -576,6 +587,15 @@ def one_word(text, quote):
     """
     kept = "'" + text.replace("'", "'\\''") + "'"
     return '"' + kept + '"' if quote == '"' else kept
+
+
+def gives_many_words(line, index, quote):
+    """Whether the expansion at index may give the shell several words or none. Outside quotes that is any
+    expansion, since bash splits it and both shells drop it when it is empty. Inside double quotes it is "$@", an
+    array such as "${a[@]}" or zsh's "$a[@]", and zsh flags such as "${(f)a}", which give one word per item."""
+    if quote is None:
+        return bool(EXPANSION_START.match(line, index))
+    return quote == '"' and bool(QUOTED_WORD_LIST.match(line, index))
 
 
 class Source(str):

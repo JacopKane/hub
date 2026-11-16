@@ -29,6 +29,7 @@ Errors are not caught here, because hub's dispatcher refuses PR steps on any err
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -142,6 +143,8 @@ WHY = {
     "ssh_host": "ssh could not say which host the remote's address names",
     "ssh_command": "the gate can not read git's ssh command, so it can not tell which host the push reaches",
     "query": "the gate can not read the whole GraphQL query before the command runs",
+    "split": "the shell may split a variable or a substitution outside double quotes into several words or drop "
+             "it when empty, and \"$@\" or an array gives one word per item",
 }
 GH_SSH = ("ssh",)  # gh reads a host's ssh config with plain ssh -G
 SSH_COMMAND_SETTING = "core.sshcommand"
@@ -1579,6 +1582,24 @@ def check(command_line, cwd, flags, answer):
     if report_on:
         for branch, commit, here, bases, place in needed:
             report_stop(branch, commit, here, bases, place, lookups)
+    if any(map(shell_may_split(command_line, cwd), steps)):
+        raise unreadable("split")
+
+
+def shell_may_split(line, cwd):
+    """Whether the shell may give a step on the line more words or fewer than the gate reads, because a word of the
+    step's simple command holds a spot the shell may split or drop. A VAR=value word before the program does not
+    count, since the shell keeps it whole. Every other spot the gate reads as one word, so it may have judged words
+    gh or git never get."""
+    parser = gate()
+    marked = parser.Command(line, cwd, read_log=False, many_words=parser.MANY_WORDS).segments() or []
+
+    def splits(step):
+        position = len(step.earlier)
+        words = marked[position] if position < len(marked) else [parser.MANY_WORDS]
+        leading = len(list(itertools.takewhile(ASSIGNMENT.match, words[:len(step.before)])))
+        return any(parser.MANY_WORDS in word for word in words[leading:])
+    return splits
 
 
 def handle(event, hook_input, flags, answer):

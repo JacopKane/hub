@@ -2178,6 +2178,45 @@ def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is
             assert quiet(result), (step, result.reason)
 
 
+SPLIT_WHY = ("the shell may split a variable or a substitution outside double quotes into several words or drop "
+             "it when empty, and \"$@\" or an array gives one word per item")
+
+
+def test_a_step_with_a_word_the_shell_may_split_or_drop_is_refused_and_a_quoted_one_is_read(home):
+    with given("branch feature with open PR 7 and a passing report for its new commit, and a title file whose "
+               "text holds another option"):
+        with_github(home)
+        pushed_branch(home)
+        record(home)
+        fake_gh(home, open={"feature": 7})
+        title = os.path.relpath(body_file(home, "x --body y", "title.txt"), home.work)
+    splitting = ["gh pr edit 7 --title $T", "gh pr edit 7 --title=$T", "gh pr edit 7 --title x${T}",
+                 'gh pr edit 7 --title "$@"', 'gh pr edit 7 --title "${A[@]}"', 'gh pr edit 7 --title "$A[@]"',
+                 'gh pr edit 7 --title "${(f)T}"', "gh pr edit 7 --title $=T", f"gh pr edit 7 --title $(cat {title})",
+                 "gh pr edit 7 --title $(printf x)", f"gh pr edit 7 --title `cat {title}`",
+                 "gh api -X PATCH repos/acme/demo/pulls/7 -f title=$T",
+                 "git push -o $OPTION origin feature"]
+    with when("Claude edits PR 7's title or pushes feature while a variable, a substitution, \"$@\" or an array "
+              "may give gh or git more words than the gate reads"):
+        default = {step: bash(home, step) for step in splitting}
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        alone = {step: bash(home, step) for step in splitting}
+    with then("each is refused, and with the text gate's unreadable check off this gate refuses each one with a "
+              "reason that says the shell may split the word"):
+        assert [step for step, result in default.items() if not result.refused] == []
+        assert [(step, result.reason) for step, result in alone.items()
+                if not says(home, result, "unreadable_push.md", why=SPLIT_WHY)] == []
+    one_word = ['gh pr edit 7 --title "$T"', 'gh pr edit 7 --title "a $T b"', 'gh pr edit 7 --title "$*"',
+                'gh pr edit 7 --title "${A[1]}"', f'gh pr edit 7 --title "$(cat {title})"',
+                'NOTE=$T gh pr edit 7 --title "$T"', "gh pr edit 7 --title '$T'", "gh pr edit 7 --title \\$T",
+                'gh api -X PATCH repos/acme/demo/pulls/7 -f title="$T"', "git push origin feature"]
+    with when("Claude sends the same steps with each variable in double quotes, in a VAR=value word before the "
+              "program, or written out as text"):
+        quoted = {step: bash(home, step) for step in one_word}
+    with then("each runs, since the shell gives gh or git exactly the words the gate reads"):
+        assert [(step, result.reason) for step, result in quoted.items() if not quiet(result)] == []
+
+
 def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):
     with given("PR 7 and plain issue 12 on GitHub, plain issue 15 only in acme/other, and a good and a bad body"):
         with_github(home)
