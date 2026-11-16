@@ -126,7 +126,8 @@ WHY = {
     "search": "a search of commit messages picks the commit",
     "pr_option": "gh has an option the gate does not know, or one with no value",
     "head_repo": "it names the head's repo in a way the gate does not read",
-    "draft": "gh api may change the PR's draft state, which the gate reads only from gh pr ready",
+    "draft": "GitHub's REST update for a PR takes no draft field and can not change the draft state, so use "
+             "gh pr ready or gh pr ready --undo instead",
     "remote_url": "git could not say which URL the remote names",
     "copies": "git could not list its copies of the remote's branches",
     "ssh_host": "ssh could not say which host the remote's address names",

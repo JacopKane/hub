@@ -1711,7 +1711,8 @@ def test_a_new_pr_with_no_head_named_is_judged_at_the_commit_github_has_when_gh_
 
 
 HEAD_REPO_WHY = "it names the head's repo in a way the gate does not read"
-DRAFT_WHY = "gh api may change the PR's draft state, which the gate reads only from gh pr ready"
+DRAFT_WHY = ("GitHub's REST update for a PR takes no draft field and can not change the draft state, so use "
+             "gh pr ready or gh pr ready --undo instead")
 REMOTE_URL_WHY = "git could not say which URL the remote names"
 
 
@@ -1751,7 +1752,8 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
               "gh api -X PATCH repositories/123/pulls/7 -F draft=false"]
     with when("Claude changes PR 7's draft state through gh api, by owner and name or by numeric id"):
         results = {step: bash(home, step) for step in drafts}
-    with then("each is refused, since the gate reads a PR becoming ready only from gh pr ready"):
+    with then("each is refused with a reason that says GitHub's REST update can not change the draft state "
+              "and names gh pr ready instead"):
         for step, result in results.items():
             assert says(home, result, "unreadable_push.md", why=DRAFT_WHY), (step, result.reason)
     create = graphql_call('mutation { createPullRequest(input: {repositoryId: "R_base", headRepositoryId: "R_head", '
