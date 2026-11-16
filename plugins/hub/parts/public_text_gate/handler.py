@@ -106,6 +106,11 @@ UNTRACKED_PUSH_NOTE = ("hub can not see which commits this remote already has, b
                        "it first, as in git remote add backup <url> and then git fetch backup. Then push to backup.")
 SLOW_PUSH_NOTE = ("git did not list the commits of this push in time, so hub could not check them. Send the command "
                   "again. If it is still slow, push fewer commits at a time.")
+GIT_WORD_NOTE = ("A variable or a substitution fills in a word that git may read as its action or as an option, such "
+                 "as \"$FILE\" in git commit -m x \"$FILE\" or \"$TAG\" in git tag \"$TAG\". The shell fills in that "
+                 "word only when the command runs, so hub can not tell what git will publish. It stops the command "
+                 "even when the value is safe. Write the word in full, as in git commit -m x notes.md or git tag "
+                 "v1.2.0, and send the command again.")
 TARGET_NAMES = {"commit": "commit", "push": "push", "tag": "tag", "pr": "PR text", "issue": "issue text",
                 "review_comment": "review comment", "release": "release", "gist": "gist",
                 "discussion": "discussion", "commit_comment": "commit comment", "contents": "file write",
@@ -157,6 +162,10 @@ LONG_PUSH = UNREADABLE + "\x03"
 UNTRACKED_PUSH = UNREADABLE + "\x04"
 SLOW_PUSH = UNREADABLE + "\x05"
 PUSH_NOTES = {LONG_PUSH: LONG_PUSH_NOTE, UNTRACKED_PUSH: UNTRACKED_PUSH_NOTE, SLOW_PUSH: SLOW_PUSH_NOTE}
+# Put where the shell fills in a word that git may read as its action or as an option, such as "$FILE" in
+# git commit -m x "$FILE". It holds UNREADABLE, so it is refused like one, with its own note.
+GIT_WORD = UNREADABLE + "\x06"
+MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE}
 # The setup tools whose output may be the whole script for eval or a shell, as
 # in eval "$(ssh-agent -s)". Any other source could print a public command.
 # The name has no folder, other than the two that Homebrew's install steps
@@ -1194,8 +1203,8 @@ def option_filled_in(rest, value_options):
 
 
 def message_texts(rest, command, value_options):
-    """The message texts of git commit or git tag, with an unreadable one when the shell fills in an option."""
-    return commit_texts(rest, command) + ([UNREADABLE] if option_filled_in(rest, value_options) else [])
+    """The message texts of git commit or git tag, with a marked unreadable one when the shell fills in an option."""
+    return commit_texts(rest, command) + ([GIT_WORD] if option_filled_in(rest, value_options) else [])
 
 
 def git_target(words, command):
@@ -1210,7 +1219,7 @@ def git_target(words, command):
         elif word in GIT_VALUE_OPTIONS and index + 1 < len(words):
             index += 2
         elif shell_fills_in_an_option(word):
-            return WRAPPED, UNREADABLE  # an option the shell fills in may take the next word, or be the action
+            return WRAPPED, GIT_WORD  # an option the shell fills in may take the next word, or be the action
         elif word.startswith("-"):
             index += 1
         else:
@@ -1219,7 +1228,7 @@ def git_target(words, command):
         return None
     action, rest = words[index], words[index + 1:]
     if UNREADABLE in action:
-        return WRAPPED, UNREADABLE  # the shell fills in git's action, so it could be push, commit or tag
+        return WRAPPED, GIT_WORD  # the shell fills in git's action, so it could be push, commit or tag
     if action == "commit":
         command.cwd, outer = cwd, command.cwd
         texts = message_texts(rest, command, COMMIT_VALUES)
@@ -2077,8 +2086,8 @@ def reason_text(targets, found, text, flags, warned_once):
     lines = [f"hub's public text gate stopped this {' and '.join(names)}, because it contains:"]
     lines += [f"- {DESCRIBE[name]} ({PART}.{name})" for name in found]
     if "unreadable" in found:
-        lines += [note for mark, note in PUSH_NOTES.items() if mark in text]
-    if "unreadable" in found and UNREADABLE in without_push_marks(text):
+        lines += [note for mark, note in MARK_NOTES.items() if mark in text]
+    if "unreadable" in found and UNREADABLE in without_noted_marks(text):
         lines.append(flags.text(f"{PART}.unreadable.hint"))
     if "dashes" in found:
         lines.append(flags.text(f"{PART}.dashes.hint"))
@@ -2089,9 +2098,9 @@ def reason_text(targets, found, text, flags, warned_once):
     return "\n".join(line for line in lines if line)
 
 
-def without_push_marks(text):
-    """The text with each mark of a push the gate could not read in full taken out, since those have their own note."""
-    return functools.reduce(lambda rest, mark: rest.replace(mark, ""), PUSH_NOTES, text)
+def without_noted_marks(text):
+    """The text with each mark that has its own note taken out, such as a push the gate could not read in full."""
+    return functools.reduce(lambda rest, mark: rest.replace(mark, ""), MARK_NOTES, text)
 
 
 def target_runs(flags, target):

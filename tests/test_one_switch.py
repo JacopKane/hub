@@ -956,6 +956,15 @@ def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home
         assert plain.ran, plain.reason
 
 
+GIT_WORD_NOTE_START = "A variable or a substitution fills in a word that git may read as its action or as an option"
+
+
+def says_git_word_note(home, result):
+    """Whether a refusal gives the note for a git word the shell fills in, without the general hint."""
+    return (GIT_WORD_NOTE_START in result.reason and "Write the word in full" in result.reason
+            and gate_text(home, "unreadable_hint.md") not in result.reason)
+
+
 def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
@@ -966,18 +975,31 @@ def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool
     with when("Claude sends git with an action, or an option before it, that a substitution, a variable or a $'...' "
               "escape that zsh reads as a plain letter fills in"):
         results = hooks(home, tool, actions, "action")
-    with then("the gate can not tell which action runs, so each call is unreadable"):
+    with then("the gate can not tell which action runs, so each call is unreadable, with a note that names the "
+              "case and asks for the word in full instead of the general hint"):
         for line, result in results.items():
             assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+            assert says_git_word_note(home, result), (line, result.reason)
     options = ["git commit $FLAG 'Fix it'", "git commit $'-\\m' 'Fix it'", "git commit -a$FLAG 'Fix it'",
                "git commit --$OPTION 'Fix it'", "git commit -m Fix \"$FILE\"", "git tag $'-\\m' 'Fix it' v1",
                "git tag $FLAG v1"]
     with when("Claude commits or tags with a word before -- that the shell fills in, where git may read an option "
               "such as -m or -F"):
         results = hooks(home, tool, options, "option")
-    with then("the message could be text the gate never reads, so each call is unreadable"):
+    with then("the message could be text the gate never reads, so each call is unreadable, with the same note"):
         for line, result in results.items():
             assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+            assert says_git_word_note(home, result), (line, result.reason)
+    with when("Claude commits with a message that a variable fills in, and with that and a filled-in option too"):
+        message = home.hook(tool, "PreToolUse", "git commit -m \"$MESSAGE\"", session="message")
+        both = home.hook(tool, "PreToolUse", "git commit -m \"$MESSAGE\" $FLAG", session="both")
+    with then("the message alone gets the general hint and no note, and with both the call gets each"):
+        assert message.refused and message.findings == ["unreadable"], message.reason
+        assert gate_text(home, "unreadable_hint.md") in message.reason, message.reason
+        assert GIT_WORD_NOTE_START not in message.reason, message.reason
+        assert both.refused and both.findings == ["unreadable"], both.reason
+        assert gate_text(home, "unreadable_hint.md") in both.reason, both.reason
+        assert GIT_WORD_NOTE_START in both.reason and "Write the word in full" in both.reason, both.reason
     values = ["git commit --author \"$AUTHOR\" -m Fix", "git commit --author=\"$AUTHOR\" -m Fix",
               "git commit -m Fix -- \"$FILE\"", "git commit -am Fix --date \"$WHEN\"", "git commit -S$KEY -m Fix",
               "git tag -u \"$KEY\" -m Fix v1", "git tag -a v$VERSION -m Fix", "git -C \"$FOLDER\" status"]
