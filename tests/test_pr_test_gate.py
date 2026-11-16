@@ -2550,13 +2550,16 @@ def test_a_step_inside_another_command_is_refused_however_many_steps_stand_besid
               "gh pr edit 5 --title t gh pr edit 6 --title u; bash -c 'gh pr ready 7'",
               "gh pr edit 5 --title t gh pr ready 7 --undo; eval 'gh pr ready 7'",
               "$X gh pr edit 5 --title t",
-              "$X git push origin feature gh pr edit 6 --title u"]
+              "$X git push origin feature gh pr edit 6 --title u",
+              "$CMD", '"$CMD" --body hi', "MODE=1 $CMD", "cd . && $CMD", "${X}it push origin feature",
+              "$(printf g)it push origin feature", "$DIR/$TOOL pr ready 7"]
     settings = {"the text gate's unreadable check off": ("off", "public_text_gate.unreadable"),
                 "public_repos_only on in a repo the profile does not mark public":
                     ("on", "public_text_gate.public_repos_only")}
-    with when("Claude sends gh pr ready 7 inside bash -c or eval after a command that holds two gh steps, or a "
-              "command whose program the shell fills in before visible steps, with the text gate letting "
-              "unreadable steps through in each of two ways"):
+    with when("Claude sends gh pr ready 7 inside bash -c or eval after a command that holds two gh steps, a "
+              "command whose program the shell fills in before visible steps, or one whose program the shell "
+              "fills in whole or in part, such as $CMD or ${X}it, with the text gate letting unreadable steps "
+              "through in each of two ways"):
         results = {}
         for setting, (state, flag) in settings.items():
             home.hubctl_from_mod(state, flag)
@@ -2567,11 +2570,14 @@ def test_a_step_inside_another_command_is_refused_however_many_steps_stand_besid
         for (setting, step), result in results.items():
             assert says(home, result, "unreadable_push.md", why="it runs inside another command"), \
                 (setting, step, result.reason)
-    with when("Claude sends the two title edits on their own, and gh pr ready 7 as its own command"):
+    with when("Claude sends the two title edits on their own, gh pr ready 7 as its own command, and a program "
+              "whose folder alone a variable fills in"):
         titles = bash(home, "gh pr edit 5 --title t gh pr edit 6 --title u")
         written_out = bash(home, "gh pr ready 7")
-    with then("the title edits run and the ready step is judged on PR 7's head"):
+        visible_program = bash(home, '"$VENV/bin/pytest" -q')
+    with then("the title edits and the program run, and the ready step is judged on PR 7's head"):
         assert quiet(titles), titles.reason
+        assert quiet(visible_program), visible_program.reason
         assert says(home, written_out, "no_report.md", short=feature[:7]), written_out.reason
 
 

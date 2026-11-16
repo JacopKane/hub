@@ -394,13 +394,21 @@ def folder_after_cd(here, target):
 
 def may_push_or_open_a_pr(line, cwd):
     """Whether the gate reads the line. It does when the line does not parse, when git or gh is in its text or
-    parsed words (so g''it counts), or when the text gate finds a public step inside it, as in bash -c. A line
-    that only a variable fills in, such as $CMD, is left to the text gate."""
+    parsed words (so g''it counts), when the shell fills in a program's name, whole or in part, as in $CMD or
+    ${X}it, since that may be git or gh, or when the text gate finds a public step inside it, as in bash -c."""
     parser = gate()
     segments = parser.Command(line, cwd, read_log=False).segments()
     words = [word for segment in segments or [] for word in segment]
     return (segments is None or any(GIT_OR_GH.search(text) for text in [line, *words])
+            or any(map(fills_in_the_program, segments))
             or any(target != "wrapped" for target, _text in parser.public_steps(line, cwd, log=False)))
+
+
+def fills_in_the_program(words):
+    """Whether the shell fills in the name of the program a simple command runs, whole or in part. A variable
+    that names only its folder, as in "$VENV/bin/pytest", leaves the name in view."""
+    program = next((word for word in words if not ASSIGNMENT.match(word)), "")
+    return unreadable_mark() in os.path.basename(program)
 
 
 def gh_words(parser, words):
