@@ -1855,6 +1855,15 @@ def test_a_new_pr_with_no_head_named_is_judged_at_the_commit_github_has_when_gh_
     with then("it runs after GitHub says feature is at the tested commit"):
         assert quiet(pushed), pushed.reason
         assert ["api", "repos/acme/demo/git/ref/heads/feature", "--jq", ".object.sha"] in gh_calls(home)
+    with when("main is pushed at the tested commit too, so origin's HEAD, which names main, is at it as well"):
+        home.git("push", "-q", "origin", "feature:main")
+        calls_before = len(gh_calls(home))
+        with_main = bash(home, step)
+    with then("it runs, since origin's HEAD is no branch of its own, so only feature and main are looked up"):
+        assert quiet(with_main), with_main.reason
+        looked_up = {call[1] for call in gh_calls(home)[calls_before:] if "/git/ref/heads/" in " ".join(call)}
+        assert looked_up == {"repos/acme/demo/git/ref/heads/feature", "repos/acme/demo/git/ref/heads/main"}, \
+            looked_up
 
 
 HEAD_REPO_WHY = "it names the head's repo in a way the gate does not read"

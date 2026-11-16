@@ -748,20 +748,26 @@ def test_glued_messages_repo_and_label_descriptions_and_text_release_assets_are_
             "api glued method": "gh api -XPATCH repos/o/r/labels/bug -fdescription='See /home/sam/l.md'",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
-    with then("each is refused for the home path"):
+    with then("each is refused for the home path, and the glob, whose files the shell picks, is unreadable too"):
         assert {name: result.findings for name, result in results.items()} == {
-            name: ["private_paths"] for name in commands}
+            name: ["private_paths", "unreadable"] if name == "asset glob" else ["private_paths"] for name in commands}
     with when("a release asset is missing"):
         missing = home.hook(tool, "PreToolUse", "gh release upload v1 gone.txt")
     with then("it is refused as unreadable"):
         assert missing.findings == ["unreadable"]
     with when("the assets are a clean text file and a binary file, and the texts are clean"):
-        clean = ["gh release create v1 clean.txt app.bin#App --notes Clean -t One",
-                 "gh release upload v1 app.bin", "gh release upload v1 *.bin", 'git commit -m"Fix it"',
-                 "gh label create bug -d 'Broken'"]
+        clean = ["gh release create v1 clean.txt 'app.bin#App' --notes Clean -t One",
+                 "gh release upload v1 app.bin", 'git commit -m"Fix it"', "gh label create bug -d 'Broken'"]
         clean_results = [home.hook(tool, "PreToolUse", command) for command in clean]
     with then("each runs, because a binary asset is not text and is allowed"):
         assert [result.output for result in clean_results] == [{}] * len(clean)
+    with when("the binary asset is named by a glob, or by a label after a # outside quotes"):
+        shell_made = ["gh release upload v1 *.bin", "gh release create v1 clean.txt app.bin#App --notes Clean"]
+        shell_made_results = {command: home.hook(tool, "PreToolUse", command) for command in shell_made}
+    with then("each is refused as unreadable, since the shell may pick other files or change the word, as zsh's "
+              "extended globs read a # in a word"):
+        assert {command: result.findings for command, result in shell_made_results.items()} == {
+            command: ["unreadable"] for command in shell_made}
 
 
 def test_a_public_command_inside_a_command_substitution_is_checked_like_any_other_command(home, tool):

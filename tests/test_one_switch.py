@@ -915,11 +915,15 @@ def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_qu
                      "cat <<EOF\n$(git push origin main # don't\n)\nEOF",
                      "cat <(echo hi # it's\n) 'a)'; git push origin main",
                      "cat <(printf $'it\\'s)'; git push origin main\n)",
-                     "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\""]
-    with when("Claude pushes main inside or after a $(...) or <(...) whose comment holds a quote mark, or whose $'...' "
-              "string holds an escaped quote, in double quotes, bare or in a heredoc body, each in its own session"):
+                     "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\"",
+                     "cat <<EOF\n$(echo hi # a)\ngit push origin main\n)\nEOF",
+                     "echo \"$(echo $(echo a)#'x)'; git push origin main)\""]
+    with when("Claude pushes main inside or after a $(...) or <(...) whose comment holds a quote mark or a ), or whose "
+              "$'...' string holds an escaped quote, in double quotes, bare or in a heredoc body, or after a # right "
+              "after the ) of an inner $(...), each in its own session"):
         results = hooks(home, tool, substitutions, "substitutions")
-    with then("the gate ends each substitution where the shell ends it, reads the push inside and names the dash"):
+    with then("the gate ends each substitution where the shell ends it, reads a # right after an inner $(...) as word "
+              "text, reads the push inside and names the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
     with when("Claude pushes main inside a heredoc body's $(...) whose own heredoc holds a quote mark"):
@@ -947,9 +951,10 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
              "echo \"$(case b { a) { echo A }; echo A;; b) git push origin main;; })\"",
              "echo \"$(case a in (a|b)) git push origin main;; esac)\"",
              "echo \"$(case a in a)#it's\n git push origin main;; esac)\"",
-             "echo \"$(case a in a) case b in b) echo B;; esac;; esac; git push origin main)\""]
+             "echo \"$(case a in a) case b in b) echo B;; esac;; esac; git push origin main)\"",
+             "echo \"$(case a in (a) echo esac;; a) echo A;; esac)\"; git push origin main"]
     with when("Claude pushes main inside a $(...) that holds a case command, after a pattern's ) or after the esac, "
-              "each in its own session"):
+              "or after a case whose arm after a (a) pattern prints the word esac, each in its own session"):
         results = hooks(home, tool, cases, "cases")
     with then("the gate reads a pattern's ) as part of the case command, as zsh does, so the substitution ends at "
               "its own ), and it reads the push and names the dash. bash 3.2 ends each of these at a pattern's ), so "
@@ -962,6 +967,15 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
     with then("it runs, since case is a keyword only where a command starts, so the ) ends the $(...) and the "
               "rest is quoted text"):
         assert argument.ran and argument.output == {}, argument.reason
+    outside = ["v=$(case a in a)#x'\n echo A;; esac); cat <<X\nit's\nX\ngit push origin main",
+               "v=$(case a in a) echo A;| case) echo B;; esac)#'\n'; git push origin main"]
+    with when("Claude pushes main after a case in a $(...) outside quotes, whose pattern's ) has a comment with a "
+              "quote mark before a heredoc, or whose ;| is followed by a pattern named case and the $(...) by a #"):
+        results = hooks(home, tool, outside, "outside")
+    with then("the gate reads the # after the pattern's ) as a comment and the case word after ;| as a pattern, so "
+              "the $(...) ends at its own ), and it reads the push, names the dash and finds nothing unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
 
 
 def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(home, tool):
