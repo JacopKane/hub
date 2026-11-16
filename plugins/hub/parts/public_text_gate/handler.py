@@ -448,8 +448,8 @@ class Command:
         another step that may run first or at the same time names it, when a
         substitution other than a plain $(cat file) names it, or when a line
         around this one names it. A redirect to a name the shell fills in may
-        write it too, and so may any of those steps that gets a word the shell
-        fills in, unless its program writes no file. Only a step joined to
+        write it too, and so may any of those steps that may write a file it
+        does not name, such as a script or a test run. Only a step joined to
         this one by ;, && or || runs after it, and only on a line with no loop
         or group.
         """
@@ -457,22 +457,28 @@ class Command:
         if self.at is None or segments is None or self.at >= len(segments):
             return True
         name = os.path.basename(os.path.expanduser(path).rstrip("/"))
-        others = [segment for spot, segment in enumerate(segments)
-                  if spot != self.at and not runs_after(segments, self.at, spot)]
+        spots = [spot for spot in range(len(segments)) if spot != self.at and not runs_after(segments, self.at, spot)]
+        others = [segments[spot] for spot in spots]
         scripts = [script for segment in others if runs_a_script(segment)
                    for script in map(self.heredoc_script, segment) if script is not None]
         sources = [source for source in self.sources if not reads_only(source, name)]
         texts = [*(self.with_scripts(" ".join(segment)) for segment in others), *sources, *self.outer]
         return (any(names_or_hides(target, name) for target in redirect_targets(segments[self.at]))
                 or any(may_write(text, name) for text in texts)
-                or any(map(gets_a_filled_in_word, others))
-                or any(self.script_gets_a_filled_in_word(text) for text in [*scripts, *sources, *self.outer]))
+                or any(may_write_unseen(segments[spot]) for spot in spots if not split_redirect_target(segments, spot))
+                or any(self.script_may_write_unseen(text) for text in [*scripts, *sources])
+                or any(self.script_may_write_unseen(text, around=True) for text in self.outer))
 
-    def script_gets_a_filled_in_word(self, text):
-        """Whether a step in the text gets a word the shell fills in and may write a file with it, or the gate can
-        not split the text into steps."""
+    def script_may_write_unseen(self, text, around=False):
+        """Whether a step in the text may write a file the gate does not see it name, or the gate can not split the
+        text into steps. With around, the text is a line around this one, so a shell or eval there that gets only
+        options and the script's own blanked word is the one that runs this line's script, which the gate reads on
+        its own."""
         segments = Command(text, self.cwd).segments()
-        return segments is None or any(map(gets_a_filled_in_word, segments))
+        runs_the_script = runs_this_script if around else lambda segment: False
+        return segments is None or any(
+            gets_a_filled_in_word(segment) or (may_write_unnamed(segment) and not runs_the_script(segment))
+            for spot, segment in enumerate(segments) if not split_redirect_target(segments, spot))
 
     def with_scripts(self, text):
         """The text with each heredoc's script put back where the heredoc stands."""
@@ -571,6 +577,23 @@ NAME_ENDS = re.compile(r"[\s;&|()<>=`'\"\\${}@:,\x00-\x06]+")
 # Programs that write no file, whatever words the shell fills in for them. Any other program may write a file a
 # filled-in word names, so the gate does not list the programs that write.
 WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export", "cd", "pushd", "popd"}
+# Programs that write no file, or only the files they name, which the gate sees, so a step that runs one does not
+# write a file the line reads without naming it. Any other program may, as a script, a build or a test run may.
+WRITES_ONLY_NAMED_FILES = {*WRITES_NO_FILE, "[[", "chdir", "unset", "set", "wait", "sleep", "pwd", "date", "which",
+                           "type", "cat", "head", "tail", "grep", "wc", "ls", "basename", "dirname", "tee", "touch",
+                           "mkdir", "rm", "fi", "done", "esac"}
+# The options before git's action that take the next word as their value
+GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"}
+# git actions that change only the repo's history, index or remotes, never a file in the folder
+GIT_KEEPS_FILES = {"add", "commit", "push", "fetch", "status", "diff", "log", "show", "rev-parse", "remote", "tag",
+                   "config", "ls-files"}
+# gh steps that only talk to GitHub, never writing a file in the folder. pr merge and pr close may switch the local
+# branch, and pr checkout does.
+GH_KEEPS_FILES = {("pr", action) for action in ("create", "edit", "comment", "reopen", "ready", "review", "view",
+                                                "list", "status", "diff", "checks")} | {
+    ("issue", action) for action in ("create", "edit", "comment", "close", "reopen", "view", "list", "status")} | {
+    ("release", action) for action in ("create", "edit", "view", "list")} | {
+    ("gist", action) for action in ("create", "view", "list")}
 # The shell's own steps that change its folder, so a relative path after them starts somewhere else. chdir is zsh's
 # other name for cd.
 FOLDER_CHANGERS = {"cd", "pushd", "popd", "chdir"}
@@ -597,7 +620,7 @@ def redirect_targets(words):
 def names_or_hides(target, name):
     """Whether a file name may be the file: its last part is the name or a pattern that matches it, or the shell
     fills it in."""
-    tail = os.path.basename(target.rstrip("/"))
+    tail = zsh_pattern(os.path.basename(widen_patterns(target).rstrip("/")))
     return UNREADABLE in target or tail == name or (any(char in tail for char in "*?[")
                                                    and fnmatch.fnmatchcase(name, tail))
 
@@ -605,7 +628,37 @@ def names_or_hides(target, name):
 def may_write(text, name):
     """Whether a text may write the file: it names the file or redirects to a name the shell fills in."""
     return bool(FILLED_IN_REDIRECT.search(text)) or any(
-        names_or_hides(part, name) for part in NAME_ENDS.split(text) if part)
+        names_or_hides(part, name) for part in NAME_ENDS.split(widen_patterns(text)) if part)
+
+
+# A brace list or range, as in {a,b} and {1..9}, and a zsh number range, as in <1-9>
+BRACE_LIST = re.compile(r"(?<!\$)\{[^{}\s]*(?:,|\.\.)[^{}\s]*\}")
+NUMBER_RANGE = re.compile(r"<\d*-\d*>")
+
+
+def widen_patterns(text):
+    """The text with each brace list and zsh number range as a *, which matches every name they may make. An inner
+    list goes first, so {a,{b,c}} ends as one *."""
+    widened = NUMBER_RANGE.sub("*", BRACE_LIST.sub("*", text))
+    return text if widened == text else widen_patterns(widened)
+
+
+def zsh_pattern(tail):
+    """A name as a pattern that matches every file zsh's EXTENDED_GLOB may make of it.
+
+    A~B matches only names A matches, so the part from a ~ after the first
+    character drops. ^X matches any name but X, so the name from its ^ on
+    becomes a *. X# repeats X any number of times, none included, so the
+    name from X on becomes a *, and X may be a [...] class. A ~ or # at the
+    start is a home folder or a comment.
+    """
+    head = tail[:1] + tail[1:].split("~", 1)[0]
+    spot = next((spot for spot, char in enumerate(head) if char == "^" or (char == "#" and spot > 0)), None)
+    if spot is None:
+        return head
+    repeated = spot if head[spot] == "^" else spot - 1
+    start = head.rfind("[", 0, repeated) if head[repeated] == "]" else -1
+    return head[:start if start >= 0 else repeated] + "*"
 
 
 def gets_a_filled_in_word(words):
@@ -614,6 +667,65 @@ def gets_a_filled_in_word(words):
     command = list(itertools.dropwhile(lambda word: re.match(r"[A-Za-z_]\w*=", word), words))
     return (bool(command) and os.path.basename(command[0]) not in WRITES_NO_FILE
             and any(UNREADABLE in word for word in command))
+
+
+def may_write_unseen(words):
+    """Whether a step may write a file the gate does not see it name: it gets a word the shell fills in, or its
+    program may write files it does not name."""
+    return gets_a_filled_in_word(words) or may_write_unnamed(words)
+
+
+def may_write_unnamed(words):
+    """Whether a step's program may write a file it does not name, as a script, a build or a test run may.
+
+    Only a program that writes no file, or only the files it names, is
+    known not to, and so is a git or gh step that leaves the folder's files
+    as they are. A program named by a path is a script. A wrapper option
+    such as env -S counts, since it gives the program words the gate does
+    not see.
+    """
+    command = without_redirects(words)  # a redirect's target is a name the gate sees
+    spot, hidden = program_spot(command)
+    if hidden or spot is None:
+        return hidden
+    program = command[spot].casefold()  # macOS runs ECHO as echo
+    keeps_files = (program in WRITES_ONLY_NAMED_FILES
+                   or (program == "git" and git_action(command[spot:]) in GIT_KEEPS_FILES)
+                   or (program == "gh" and gh_action(command[spot:]) in GH_KEEPS_FILES))
+    return not keeps_files or moved_by_a_wrapper(command)
+
+
+def split_redirect_target(segments, spot):
+    """Whether the step at spot is only the file descriptor of a >& or <& redirect that the gate's parser split at
+    its &, as the 1 of 2>&1 or the - of >&-. The parser drops quotes, so only a number or - counts, which names no
+    program. Any other word stays a step the gate judges."""
+    before = segments[spot - 1] if spot else []
+    return (bool(before) and before.ends == "&" and bool(re.fullmatch(r"\d*[<>]", before[-1]))
+            and len(segments[spot]) == 1 and bool(re.fullmatch(r"\d+|-", segments[spot][0])))
+
+
+def git_action(words):
+    """The action git runs, past its own options, or None when the shell fills in an option or the action."""
+    rest = words[1:]
+    while rest and rest[0].startswith("-") and UNREADABLE not in rest[0]:
+        rest = rest[2:] if rest[0] in GIT_VALUE_OPTIONS else rest[1:]
+    return rest[0] if rest and UNREADABLE not in rest[0] else None
+
+
+def gh_action(words):
+    """(command, action) of a gh step, as gh reads them past its options, or None when the gate can not tell."""
+    ordered = gh_command(words)
+    return tuple(ordered[1:3]) if ordered else None
+
+
+def runs_this_script(words):
+    """Whether a step on a line around a script is the shell that runs it: a shell that gets only options, which
+    reads the script from its heredoc, or a shell with -c or an eval whose only other word is the script's own,
+    which the line around shows blanked."""
+    spot, hidden = program_spot(words)
+    program = os.path.basename(words[spot]).casefold() if not hidden and spot is not None else ""
+    return program in {*SHELLS, "eval"} and all(
+        word.startswith(("-", "+")) or not word.strip() for word in words[spot + 1:])
 
 
 def changes_folder(words):
@@ -1983,7 +2095,8 @@ def graphql_target(text, source):
     """What a GraphQL call writes to, or None for a read. It is a read only when each query it may send stands
     in the command itself and no text it sends names a mutation. A query from a file, or one the gate can not
     read, counts as a write. A mutation the gate can not name, as in a fragment on Mutation, writes to "api"."""
-    if source == "written" and not re.search(r"\bmutation\b", text, re.I):
+    # Text the shell fills in counts as a write too, even when each query stands in the command.
+    if source == "written" and UNREADABLE not in text and not re.search(r"\bmutation\b", text, re.I):
         return None
     mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", text)
     name = mutation.group(1) if mutation else ""

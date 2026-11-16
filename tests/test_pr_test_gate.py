@@ -1936,7 +1936,6 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
 
 
 QUERY_WHY = "the gate can not read the whole GraphQL query before the command runs"
-BEFORE_WHY = "another command runs before it on the same line"
 NODE_WHY = "a node id names the PR, not its number"
 
 
@@ -1993,7 +1992,7 @@ def test_a_graphql_query_the_gate_can_not_read_in_full_is_judged_as_a_write(home
     with then("the file is refused, since it may change before gh reads it, and each fragment gets the answer of "
               "its plain mutation"):
         for kind, result in overwritten.items():
-            assert says(home, result, "unreadable_push.md", why=BEFORE_WHY), (kind, result.reason)
+            assert says(home, result, "unreadable_push.md", why=QUERY_WHY), (kind, result.reason)
         assert says(home, fragments["create"], "no_report.md", short=side[:7], branch="side"), \
             fragments["create"].reason
         assert says(home, fragments["ready"], "unreadable_push.md", why=NODE_WHY), fragments["ready"].reason

@@ -274,6 +274,72 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
         assert [result.output for result in readable_results] == [{}] * len(readable)
 
 
+def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_file_counts_as_unreadable(home, tool):
+    with given("hub is installed with the PR test gate off, a repo with a local bare remote and a new commit on a "
+               "feature branch, and message and body files that hold a home path"):
+        home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("checkout", "-q", "-b", "feature")
+        home.git("commit", "-q", "--allow-empty", "-m", "Late change")
+        for name in ("notes.md", "msg.txt", "body.md"):
+            write(home, name, "See /home/sam/a.md\n")
+        write(home, "query.graphql",
+              'mutation { createIssue(input: {body: "See /home/sam/a.md"}) { clientMutationId } }')
+    with when("a test run, a build or a script runs before the step reads its file"):
+        commands = {
+            "test run then comment": "python3 -m pytest -q && gh pr comment 5 -F notes.md",
+            "make then comment": "make && gh pr comment 5 -F notes.md",
+            "script then comment": "./make-notes.sh; gh pr comment 5 -F notes.md",
+            "test run then commit": "python3 -m pytest -q && git commit -F msg.txt",
+            "make then commit": "make test; git commit -F msg.txt",
+            "script then commit": "./build.sh && git commit -F msg.txt",
+            "full path to a file": f"make && gh pr comment 5 -F {home.work}/notes.md",
+            "script in a substitution": 'gh pr comment 5 -F notes.md --title "$(./make-notes.sh)"',
+            "in a script": "bash <<'S'\nmake\ngh pr comment 5 -F notes.md\nS",
+            "git by a path": "/usr/bin/git checkout main && git commit -F msg.txt",
+            "a new pr": "make && gh pr create --title T --body-file body.md",
+            "a GraphQL query": "make && gh api graphql -F query=@query.graphql",
+            "errors joined to output": "make 2>&1 && gh pr comment 5 -F notes.md",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
+    with then("each is refused as unreadable, since the program may write the file without naming it"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in commands}
+    with when("a program that writes only the files it names gets a brace list or a zsh pattern that may name the "
+              "file"):
+        patterns = {
+            "brace list": "echo x | tee {notes,other}.md && gh pr comment 5 -F notes.md",
+            "brace list redirect": "echo x > {notes,other}.md; gh pr comment 5 -F notes.md",
+            "brace range": "echo x | tee note{a..z}.md && gh pr comment 5 -F notes.md",
+            "zsh not": "echo x | tee ^other.md && gh pr comment 5 -F notes.md",
+            "zsh repeat": "echo x | tee notess#.md && gh pr comment 5 -F notes.md",
+            "zsh repeat of a class": "echo x | tee note[x]#s.md && gh pr comment 5 -F notes.md",
+            "zsh except": "touch *~other.md && git commit -F msg.txt",
+        }
+        pattern_results = {name: home.hook(tool, "PreToolUse", command) for name, command in patterns.items()}
+    with then("each is refused as unreadable too"):
+        assert {name: result.findings for name, result in pattern_results.items()} == {
+            name: ["unreadable"] for name in patterns}
+    with when("the steps before only stage, commit, push or read, or name other files"):
+        readable = {
+            "add then commit": "git add x && git commit -F msg.txt",
+            "push then new pr": "git push origin feature && gh pr create --title T --body-file body.md",
+            "a revision with a ~": "git diff HEAD~1 && git commit -F msg.txt",
+            "tee to another file": "echo x | tee out.log && gh pr comment 5 -F notes.md",
+            "test for another file": "test -f other.md && gh pr comment 5 -F notes.md",
+            "errors joined to output": "git add x 2>&1 && git commit -F msg.txt",
+            "output and errors to a log": "git add x &>add.log && git commit -F msg.txt",
+        }
+        readable_results = {name: home.hook(tool, "PreToolUse", command) for name, command in readable.items()}
+    with then("the gate reads each file and finds the home path"):
+        assert {name: result.findings for name, result in readable_results.items()} == {
+            name: ["private_paths"] for name in readable}
+
+
 def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool):
     with given("hub is installed, with a clean notes file on top and a private one in the docs folder"):
         home.install()
