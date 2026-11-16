@@ -1882,6 +1882,53 @@ def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_iss
         assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
 
 
+def test_a_pr_body_edit_inside_a_wrapper_or_a_substitution_is_refused_as_a_step_inside_another_command(home):
+    with given("PR 7 on GitHub, a bad body, and a GraphQL file whose aliased mutation sets PR 7's body"):
+        with_github(home)
+        fake_gh(home)
+        good, bad = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+        aliased = body_file(home, 'mutation { edited: updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                                  'body: "A fix."}) { clientMutationId } }', "aliased.graphql")
+    edits = [f"gh issue edit 7 --body-file {bad}", f"gh api -X PATCH repos/acme/demo/issues/7 -F body=@{bad}",
+             f"gh api graphql -F query=@{aliased}"]
+    with when("Claude sends each edit as its own command"):
+        bare = {edit: bash(home, edit) for edit in edits}
+    with then("each gets pr-check's sentence, so the gate reads each one"):
+        for edit, result in bare.items():
+            assert result.refused and result.reason == missing_part(home), (edit, result.reason)
+    wrapped = [form.format(edit=edit) for edit in edits
+               for form in ("bash -c '{edit}'", "sh -c '{edit}'", "zsh -c '{edit}'", "eval '{edit}'",
+                            "echo $({edit})", "bash <<'EOF'\n{edit}\nEOF")]
+    read_by_the_text_gate = [step for step in wrapped if step.startswith(("echo", "bash <<"))]
+    with when("Claude sends the same edits inside bash -c, sh -c, zsh -c, eval, a substitution or a heredoc "
+              "script"):
+        results = {step: bash(home, step) for step in wrapped}
+    with then("the text gate answers first where it can not read the text, and this gate refuses each edit it "
+              "reads as a step inside another command, as it refuses a wrapped gh pr edit"):
+        for step, result in results.items():
+            if step in read_by_the_text_gate:
+                assert says(home, result, "unreadable_push.md", why="it runs inside another command"), \
+                    (step, result.reason)
+            else:
+                assert result.refused and result.findings == ["unreadable"], (step, result.reason)
+    with when("the text gate's unreadable check is off and Claude sends the same edits"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        results = {step: bash(home, step) for step in wrapped}
+    with then("this gate refuses each one as a step inside another command"):
+        for step, result in results.items():
+            assert says(home, result, "unreadable_push.md", why="it runs inside another command"), \
+                (step, result.reason)
+    others = [f"gh issue comment 7 --body-file {bad}", f"gh issue create --title T --body-file {good}",
+              "gh api repos/acme/demo/issues/7"]
+    with when("Claude comments on PR 7, opens an issue and reads PR 7 through the issues endpoint, inside bash -c "
+              "and a heredoc script"):
+        results = {step: bash(home, step) for other in others
+                   for step in (f"bash -c '{other}'", f"bash <<'EOF'\n{other}\nEOF")}
+    with then("each runs, since the gate does not read these steps when they stand alone either"):
+        for step, result in results.items():
+            assert quiet(result), (step, result.reason)
+
+
 def failing_git(home, verb):
     """A PATH whose first git fails one verb, as a lookup can fail, and runs the real git for the rest."""
     real = shutil.which("git", path=home.env["PATH"])

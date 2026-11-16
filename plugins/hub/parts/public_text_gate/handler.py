@@ -283,17 +283,19 @@ GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 class Command:
     """A command line with its heredoc bodies set aside, so a body never splits the line."""
 
-    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None):
+    def __init__(self, line, cwd, parent=None, read_log=True, deadline=None, read_step=None):
         """Each line is its own command, since the shell runs a tool call's command as a script.
 
         A command inside a substitution uses its parent's heredoc bodies,
         because the parent set them aside, and reads the log when its parent does.
         Without read_log, a push names its step but not the commits it sends.
         Its git calls end by deadline, a time.monotonic() value, or TEXT_SECONDS from now.
+        read_step names each git or gh step, as step_target does when it is not given.
         """
         self.cwd = cwd
         self.read_log = parent.read_log if parent else read_log
         self.deadline = parent.deadline if parent else deadline or time.monotonic() + TEXT_SECONDS
+        self.read_step = parent.read_step if parent else read_step or step_target
         self.heredocs = parent.heredocs if parent else []
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
@@ -1814,11 +1816,12 @@ def wrapped_steps(words, index, command, depth, first=False):
         # A public step that its source names could print other text, so it is unreadable.
         return [(target, UNREADABLE) for source in sources
                 for target, _text in public_steps(source, command.cwd, depth + 1, script=True,
-                                                  log=command.read_log, deadline=command.deadline)]
+                                                  log=command.read_log, deadline=command.deadline,
+                                                  read_step=command.read_step)]
     if hidden(script) or depth > 3:
         return [(WRAPPED, UNREADABLE)]
     steps = public_steps(script, command.cwd, depth + 1, script=True, opens_the_call=first,
-                         log=command.read_log, deadline=command.deadline)
+                         log=command.read_log, deadline=command.deadline, read_step=command.read_step)
     return steps if how == "input" else [(target, UNREADABLE) for target, _text in steps]
 
 
@@ -1932,7 +1935,13 @@ def wrapper_option(option, options):
     return 1
 
 
-def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True, deadline=None):
+def step_target(words, command):
+    """(target, text) of a git or gh step that makes text public, or None."""
+    return (git_target if os.path.basename(words[0]).casefold() == "git" else gh_target)(words, command)
+
+
+def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=False, log=True, deadline=None,
+                 read_step=None):
     """[(target, text)] for each step in the command line that makes text public.
 
     That includes the steps inside every $(...) and backtick pair, such as
@@ -1940,9 +1949,10 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     says a script is the first thing the tool call runs, as the script of a
     shell that is the call's first command is. With log False, a push is
     named with no text, so a caller that needs only the steps runs no git.
-    Every git call ends by deadline, as Command takes it.
+    Every git call ends by deadline, as Command takes it. A caller may name the steps its own way with read_step,
+    which reads the steps inside wrappers and substitutions too.
     """
-    command = Command(line, cwd, parent, read_log=log, deadline=deadline)
+    command = Command(line, cwd, parent, read_log=log, deadline=deadline, read_step=read_step)
     segments = command.segments()
     if segments is None:
         # The shell may run any line when the gate can not tell where a heredoc ends. bash also runs the lines before
@@ -1966,7 +1976,7 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
                 continue
             if program not in ("git", "gh"):
                 continue
-            found = (git_target if program == "git" else gh_target)(words[index:], command)
+            found = command.read_step(words[index:], command)
             if found and any(os.path.basename(before) in FEEDERS for before in words[:index]):
                 found = (found[0], UNREADABLE)  # xargs fills in the text from a pipe
             if found:

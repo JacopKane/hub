@@ -52,6 +52,7 @@ PARTS_SECONDS = 10.0
 GIT_SECONDS = 2.0
 GH_SECONDS = 3.0
 RELEVANT = {"push", "pr", "wrapped"}
+CHECKED = "checked"  # a gh step this gate reads that the text gate names otherwise, such as gh issue edit
 EVERY_BRANCH = ("--all", "--mirror")
 BRANCH_PREFIXES = ("refs/heads/", "heads/")
 # The flags that let gh fill the body from the commits or a web form
@@ -287,7 +288,8 @@ class Step:
 def read_steps(line, cwd):
     """(the parsed command, its git and gh steps that may need the gate), refusing what it can not read."""
     parser = gate()
-    named = [target for target, _text in parser.public_steps(line, cwd, log=False) if target in RELEVANT]
+    named = [target for target, _text in parser.public_steps(line, cwd, log=False, read_step=step_reader(parser))
+             if target in RELEVANT | {CHECKED}]
     command = parser.Command(line, cwd, read_log=False)
     segments = command.segments()
     if segments is None:
@@ -308,18 +310,37 @@ def read_steps(line, cwd):
             target = (parser.git_target if program == "git" else parser.gh_target)(step_words, command)
             if program == "git" and target and target[0] == parser.WRAPPED:
                 raise unreadable("git_command")
-            api = program == "gh" and step_words[1:2] == ["api"]
-            issue_edit = program == "gh" and step_words[1:3] == ["issue", "edit"]  # may edit a PR's body
-            if not target or (target[0] not in RELEVANT and not api and not issue_edit):
+            if not read_here(program, step_words, target):
                 continue
             if any(os.path.basename(before) in parser.FEEDERS for before in words[:index]):
                 raise unreadable("feeder")
             if here is None or not os.path.isdir(here):
                 raise unreadable("folder")
             found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
-    if len(named) > len([step for step in found if step.target in RELEVANT]):
+    if len(named) > len(found):
         raise unreadable("inside")
     return command, found
+
+
+def read_here(program, step_words, target):
+    """Whether the gate reads a git or gh step: a push, a PR step or one the shell fills in, a gh api call that
+    writes, and gh issue edit, which may edit a PR's body."""
+    return bool(target) and (target[0] in RELEVANT or (program == "gh" and (
+        step_words[1:2] == ["api"] or step_words[1:3] == ["issue", "edit"])))
+
+
+def step_reader(parser):
+    """The text gate's step reader, with each step the gate reads named CHECKED when its target is not RELEVANT.
+    The text gate reads the steps inside wrappers and substitutions with it, so a step there counts as one the gate
+    reads whenever the same step on its own would be read."""
+    def read_step(words, command):
+        target = parser.step_target(words, command)
+        program = os.path.basename(words[0]).casefold()
+        ordered = parser.gh_command(words) if program == "gh" else words
+        step_words = without_gh_alias(ordered) if ordered else words
+        checked = read_here(program, step_words, target) and target[0] not in RELEVANT
+        return (CHECKED, target[1]) if checked else target
+    return read_step
 
 
 def folder_after_cd(here, target):
