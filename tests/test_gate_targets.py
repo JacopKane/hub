@@ -274,6 +274,43 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
         assert [result.output for result in readable_results] == [{}] * len(readable)
 
 
+def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool):
+    with given("hub is installed, with a clean notes file on top and a private one in the docs folder"):
+        home.install()
+        write(home, "notes.md", "Nothing private here\n")
+        os.makedirs(os.path.join(home.work, "docs"))
+        write(home, "docs/notes.md", "See /home/sam/a.md\n")
+    with when("a cd, pushd or popd on the line may run before the step reads a file by a relative path"):
+        commands = {
+            "cd and": "cd docs && gh pr comment 3 -F notes.md",
+            "cd then": "cd docs; git commit -F notes.md",
+            "next line": "cd docs\ngh pr comment 3 --body-file notes.md",
+            "pushd": "pushd docs && gh pr comment 3 -F notes.md",
+            "popd": "popd && gh pr comment 3 -F notes.md",
+            "in a subshell": "(cd docs && gh pr comment 3 -F notes.md)",
+            "filled-in folder": 'cd "$DIR" && gh pr comment 3 -F notes.md',
+            "cat after a cd": 'cd docs && git commit -m "$(cat notes.md)"',
+            "step in a substitution": 'cd docs && echo "$(gh pr comment 3 -F notes.md)"',
+            "script after a cd": "cd docs\nbash <<'S'\ngh pr comment 3 -F notes.md\nS",
+            "gist": "cd docs && gh gist create notes.md",
+            "release asset": "cd docs && gh release upload v1 notes.md",
+            "release pattern": "cd docs && gh release upload v1 note*.md",
+            "api field file": "cd docs && gh api repos/o/r/issues -F body=@notes.md",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
+    with then("each is refused as unreadable, since the gate reads the file from the folder the line starts in"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in commands}
+    with when("the cd comes after the step, or the step names the file by its full path"):
+        readable = [
+            "gh pr comment 3 -F notes.md && cd docs",
+            f"cd docs && gh pr comment 3 -F {home.work}/notes.md",
+        ]
+        readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
+    with then("each runs with no answer"):
+        assert [result.output for result in readable_results] == [{}] * len(readable)
+
+
 def test_a_wrapped_shell_or_eval_whose_script_the_shell_fills_in_counts_as_unreadable(home, tool):
     with given("hub is installed with the gate at warn, and a script file that posts a comment"):
         home.install()

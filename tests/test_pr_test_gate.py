@@ -746,6 +746,13 @@ def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
     with then("each is refused, since the gate reads the file only as it is before the line runs"):
         assert {name: says(home, result, "unreadable_push.md", why=BODY_WHY)
                 for name, result in written_results.items()} == {name: True for name in written}
+    with when("a cd on the line comes before gh reads the whole body by a relative path"):
+        os.makedirs(os.path.join(home.work, "docs"))
+        shutil.copy(good, os.path.join(home.work, "docs", "body.md"))
+        moved = bash(home, "cd docs && gh pr edit 7 --body-file body.md")
+    with then("it is refused, as the text gate refuses it, since the gate reads a relative file only from the "
+              "folder the line starts in"):
+        assert says(home, moved, "unreadable_push.md", why=BODY_WHY), moved.reason
     with when("Claude edits the body from the file that holds the whole body"):
         whole = bash(home, f"gh pr edit 7 --body-file {good}")
     with then("it runs"):

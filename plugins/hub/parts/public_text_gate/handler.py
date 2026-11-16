@@ -408,10 +408,33 @@ class Command:
             return self.standard_input()
         return self.file_text(path)
 
-    def file_text(self, path, reader=None):
+    def file_text(self, path, reader=None, written=None):
         """A file's text as reader, read_file by default, reads it now, or UNREADABLE when the line may write the
-        file first."""
-        return UNREADABLE if path and self.may_write_first(path) else (reader or read_file)(path, self.cwd)
+        file first or may change the folder a relative path starts from. written is the path as the line names it,
+        when path is a file the gate found for a pattern."""
+        unknown = path and (self.may_write_first(path) or self.may_move_first(written or path))
+        return UNREADABLE if unknown else (reader or read_file)(path, self.cwd)
+
+    def may_move_first(self, path):
+        """Whether a cd, pushd or popd may change the folder before the step at self.at reads a relative path.
+
+        The gate reads such a path from the folder the line starts in, so a
+        folder change on a step that may run first, or on a line around this
+        one, leaves the file unknown.
+        """
+        if os.path.isabs(os.path.expanduser(path)):
+            return False
+        segments = self.segments()
+        if self.at is None or segments is None or self.at >= len(segments):
+            return True
+        return (any(changes_folder(segment) for spot, segment in enumerate(segments)
+                    if spot != self.at and not runs_after(segments, self.at, spot))
+                or any(self.script_changes_folder(text) for text in self.outer))
+
+    def script_changes_folder(self, text):
+        """Whether a step in the text changes the folder, or the gate can not split the text into steps."""
+        segments = Command(text, self.cwd).segments()
+        return segments is None or any(map(changes_folder, segments))
 
     def may_write_first(self, path):
         """Whether the line may write the file before or while the step at self.at reads it.
@@ -544,6 +567,8 @@ NAME_ENDS = re.compile(r"[\s;&|()<>=`'\"\\${}@:,\x00-\x06]+")
 # Programs that write no file, whatever words the shell fills in for them. Any other program may write a file a
 # filled-in word names, so the gate does not list the programs that write.
 WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export", "cd", "pushd", "popd"}
+# The shell's own steps that change its folder, so a relative path after them starts somewhere else
+FOLDER_CHANGERS = {"cd", "pushd", "popd"}
 
 
 def runs_after(segments, at, spot):
@@ -580,6 +605,12 @@ def gets_a_filled_in_word(words):
     command = list(itertools.dropwhile(lambda word: re.match(r"[A-Za-z_]\w*=", word), words))
     return (bool(command) and os.path.basename(command[0]) not in WRITES_NO_FILE
             and any(UNREADABLE in word for word in command))
+
+
+def changes_folder(words):
+    """Whether a step changes the shell's folder with cd, pushd or popd. Assignments before it change none."""
+    command = list(itertools.dropwhile(lambda word: re.match(r"[A-Za-z_]\w*=", word), words))
+    return bool(command) and command[0] in FOLDER_CHANGERS
 
 
 def runs_a_script(words):
@@ -2143,7 +2174,8 @@ def release_assets(rest, command):
             # expand the pattern as the shell would
             matches = sorted(glob.glob(os.path.join(command.cwd, os.path.expanduser(path))))
         texts.append(command.expand(label))
-        texts += [command.file_text(match, asset_text) for match in matches] or [command.file_text(path, asset_text)]
+        texts += ([command.file_text(match, asset_text, written=path) for match in matches]
+                  or [command.file_text(path, asset_text)])
     return texts
 
 
