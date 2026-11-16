@@ -34,6 +34,11 @@ OPEN_PR_LIST = ["pr", "list", "--head", "feature", "--state", "open", "--json", 
                 "--limit", "1"]
 
 
+def forked_from(repo):
+    """gh's lookup of the repos a pushed repo is a fork of, its parent and the source at the root of its forks."""
+    return ["api", f"repos/{repo}", "--jq", "[.parent.full_name, .source.full_name | strings]"]
+
+
 # The repo, its remote and the fake gh
 
 
@@ -931,7 +936,8 @@ def test_steps_outside_the_gate_run_quietly(home):
     with then("the push runs after gh is asked for feature's PR in its own repo and in acme/demo, since the later "
               "new PR needs the report"):
         assert quiet(result)
-        assert gh_calls(home) == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
+        assert gh_calls(home) == [forked_from("acme/demo"), OPEN_PR_LIST,
+                                  OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
 
 
 def test_a_new_pr_needs_a_report_for_its_head_and_a_tested_part_that_says_what_was_not_tested(home):
@@ -1558,7 +1564,8 @@ def test_a_push_is_judged_by_an_open_pr_in_the_repo_it_goes_to_as_well_as_in_ghs
     with then("each is refused for feature's commit, after gh is asked in its own repo and in acme/demo"):
         for step, result in results.items():
             assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (step, result.reason)
-        assert gh_calls(home)[-4:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]] * 2
+        assert gh_calls(home)[-6:] == [forked_from("acme/demo"), OPEN_PR_LIST,
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/demo"]] * 2
     with when("a second GitHub remote, acme/fork, holds the open PR instead, and Claude pushes feature there"):
         fork = os.path.join(home.root, "github.com", "acme", "fork.git")
         home.git("init", "-q", "--bare", fork)
@@ -1570,13 +1577,36 @@ def test_a_push_is_judged_by_an_open_pr_in_the_repo_it_goes_to_as_well_as_in_ghs
     with when("no repo has an open PR for feature, and Claude pushes it to the fork"):
         fake_gh(home, open={}, open_in={})
         no_pr = bash(home, "git push fork feature")
-    with then("it runs, after gh is asked in its own repo and in acme/fork"):
+    with then("it runs, after gh is asked whether acme/fork is a fork, then in its own repo and in acme/fork"):
         assert quiet(no_pr), no_pr.reason
-        assert gh_calls(home)[-2:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/fork"]]
-    with when("gh can not reach GitHub, and Claude pushes feature to the fork"):
+        assert gh_calls(home)[-3:] == [forked_from("acme/fork"), OPEN_PR_LIST,
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/fork"]]
+    with when("acme/fork is a fork of acme/upstream, which is no remote here and holds open PR 9 for feature, "
+              "and Claude pushes feature to the fork"):
+        fake_gh(home, open={}, open_in={"github.com/acme/upstream": {"feature": 9}},
+                parents={"repos/acme/fork": ["acme/upstream", "acme/upstream"]})
+        to_parent = bash(home, "git push fork feature")
+    with then("it is refused, since PR 9 gets the new commit, after gh is asked in the fork's parent too"):
+        assert says(home, to_parent, "no_report.md", short=feature[:7], branch="feature"), to_parent.reason
+        assert gh_calls(home)[-4:] == [forked_from("acme/fork"), OPEN_PR_LIST,
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/fork"],
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/upstream"]]
+    with when("neither the fork nor its parent has an open PR for feature"):
+        fake_gh(home, open={}, open_in={}, parents={"repos/acme/fork": ["acme/upstream"]})
+        no_pr_in_parent = bash(home, "git push fork feature")
+    with then("the push runs, after gh is asked in all three repos"):
+        assert quiet(no_pr_in_parent), no_pr_in_parent.reason
+        assert gh_calls(home)[-4:] == [forked_from("acme/fork"), OPEN_PR_LIST,
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/fork"],
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/upstream"]]
+    with when("GitHub can not say whether acme/fork is a fork, and gh can not reach GitHub at all"):
+        fake_gh(home, open={}, open_in={}, unknown_forks=["repos/acme/fork"])
+        unknown_fork = bash(home, "git push fork feature")
         fake_gh(home, fail=True)
         failed = bash(home, "git push fork feature")
-    with then("the push is refused, as after any failed lookup"):
+    with then("each push is refused, as after any failed lookup, since a PR may be open in a repo the gate did "
+              "not ask"):
+        assert says(home, unknown_fork, "no_report.md", short=feature[:7], branch="feature"), unknown_fork.reason
         assert says(home, failed, "no_report.md", short=feature[:7], branch="feature"), failed.reason
 
 
@@ -1720,7 +1750,8 @@ def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_send
         again = bash(home, "git push")
     with then("it runs after gh reads the head of PR 7 from GitHub, in its own repo and in acme/demo"):
         assert quiet(again), again.reason
-        assert gh_calls(home)[-2:] == [OPEN_PR_LIST, OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
+        assert gh_calls(home)[-3:] == [forked_from("acme/demo"), OPEN_PR_LIST,
+                                       OPEN_PR_LIST + ["-R", "github.com/acme/demo"]]
     with when("branch side is pushed with no report, its next commit gets a report, and the local copy of "
               "origin's side is moved to that commit"):
         home.git("checkout", "-q", "-b", "side", "main")

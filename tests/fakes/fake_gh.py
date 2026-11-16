@@ -13,6 +13,9 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
   -R or --repo, or else a GH_REPO that is not empty, the key is <repo>#<number>
 - bases: {PR number or branch: the branch the PR goes into}, main when not named
 - default: the repo's default branch for `gh api repos/<owner>/<repo> --jq .default_branch`, main when not named
+- parents: {REST path such as repos/acme/fork: [full names]} for `gh api <path> --jq` with the gate's query for
+  the repos a fork comes from, its parent and its source; a repo it does not name is no fork, []
+- unknown_forks: REST paths that the same lookup answers like GitHub's 404 for
 - unknown_repos: repos, as GH_REPO names them, that gh api answers like GitHub's 404 for when the endpoint
   says {owner}/{repo}
 - issues: plain issues, as numbers or as <GH_REPO>#<number> for one repo only; `gh api <repo>/issues/<n> --jq
@@ -36,6 +39,7 @@ import time
 import urllib.parse
 
 REPO = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
+FORKED_FROM = "[.parent.full_name, .source.full_name | strings]"
 words = sys.argv[1:]
 config = {}
 if os.environ.get("FAKE_GH_CONFIG") and os.path.exists(os.environ["FAKE_GH_CONFIG"]):
@@ -118,3 +122,8 @@ elif words[:1] == ["api"] and len(words) > 1:
         print(commit if value_of("--jq") == ".object.sha" else json.dumps({"object": {"sha": commit}}))
     elif re.fullmatch(REPO, words[1]) and value_of("--jq") == ".default_branch":
         print(config.get("default", "main"))
+    elif re.fullmatch(REPO, words[1]) and value_of("--jq") == FORKED_FROM:
+        if words[1] in config.get("unknown_forks", []):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(config.get("parents", {}).get(words[1], [])))
