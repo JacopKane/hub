@@ -311,7 +311,7 @@ class Command:
 
         found = set_aside_heredocs(line, len(self.heredocs))
         self.unreadable = found is None  # the gate can not tell where a heredoc starts or ends
-        text, bodies = found or (line, [])
+        text, bodies, self.read_apart = found or (line, [], False)  # read_apart: bash 3.2 reads the line apart
         for body, quoted in bodies:
             self.scripts.append(body)
             if not quoted:
@@ -653,7 +653,7 @@ def case_step(line, index, stack):
     return None
 
 
-def closing(line, start, brackets="()", commands=False):
+def closing(line, start, brackets="()", commands=False, cases=True):
     """Where the ) that closes the ( at start is, or -1, read the way zsh reads it.
 
     Quotes, a backslash and the escapes of a $'...' string are skipped, and
@@ -661,7 +661,7 @@ def closing(line, start, brackets="()", commands=False):
     included. With commands the ( opens a command, as in $(...) or <(...),
     so a # where a word starts opens a comment that runs to the line end,
     and each $(...) inside reads the same. The ) of a case pattern inside
-    ends nothing (case_step). A $((...)) sum, a ((...)) and a ${...} hold no
+    ends nothing (case_step), unless cases is False. A $((...)) sum, a ((...)) and a ${...} hold no
     comment. With brackets="{}" it finds the } that closes a {.
     bash 3.2 reads a quote mark in such a comment inside "$(...)" or <(...)
     as a quote and stops with a syntax error, so it runs no command that
@@ -693,7 +693,7 @@ def closing(line, start, brackets="()", commands=False):
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             index += 1
             continue
-        step = case_step(line, index, stack) if context not in ("{", "((") else None
+        step = case_step(line, index, stack) if cases and context not in ("{", "((") else None
         if step:
             stack, length = step
             word, last, index = char.isalpha() or char in "{}", "", index + length
@@ -730,6 +730,41 @@ def closing(line, start, brackets="()", commands=False):
     return -1
 
 
+def case_ends_early(line, index):
+    """Whether bash 3.2 ends the $(...) at index sooner than zsh does.
+
+    Inside double quotes, a ${...} or a heredoc body, bash 3.2 ends a
+    $(...) at the first ) that no ( opened, so a plain case pattern such as
+    a) ends it, and bash then runs the text after it as commands.
+    """
+    return closing(line, index + 1, commands=True, cases=False) != closing(line, index + 1, commands=True)
+
+
+def a_case_ends_early(text):
+    """Whether bash 3.2 ends a $(...) anywhere in the text sooner than zsh does (case_ends_early)."""
+    return any(case_ends_early(text, found.start()) for found in re.finditer(r"\$\(", text))
+
+
+# A word the shell fills in: $name, ${...}, $(...), $((...)), a special parameter or a backtick pair.
+SHELL_FILLED = re.compile(r"\$[\w{(@*#?$!-]|`")
+
+
+def may_run_git_or_gh_read_apart(text):
+    """Whether bash 3.2, reading the text apart from zsh (case_ends_early), may run git or gh.
+
+    bash 3.2 runs the text after the early end as commands the gate never
+    reads, so it may when the text names git or gh, a shell, eval or a
+    source command, or holds a word the shell fills in. The $( that bash
+    3.2 ends early does not count: it runs only the case words before the
+    pattern's ), which can not run a command.
+    """
+    early = {found.start() for found in re.finditer(r"\$\(", text) if case_ends_early(text, found.start())}
+    filled = any(found.start() not in early for found in SHELL_FILLED.finditer(text))
+    plain = re.sub(r"[\\'\"]", "", text).casefold()  # macOS runs GIT as git
+    programs = {os.path.basename(word) for word in re.findall(r"[\w./-]+", plain)} & (SHELLS | SOURCES | {"eval"})
+    return filled or bool(programs) or bool(GIT_TOOLS.search(plain))
+
+
 def arithmetic_end(line, index):
     """Where the last ) of the $((...)) sum that starts at index is, or -1 when no such sum starts there.
 
@@ -742,7 +777,8 @@ def arithmetic_end(line, index):
 
 
 def set_aside_heredocs(line, first=0):
-    """(the line with each heredoc body taken out, [(body, quoted)]), or None when the gate can not tell.
+    """(the line with each heredoc body taken out, [(body, quoted)], whether bash 3.2 reads part of the line apart
+    from zsh), or None when the gate can not tell.
 
     The shell starts a heredoc only at a << outside quotes, comments,
     arithmetic and a <<< here-string. A # opens a comment only where a word
@@ -755,9 +791,11 @@ def set_aside_heredocs(line, first=0):
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
     gate can not tell a heredoc from a shift, its end word is not plain, or
-    its end line is missing.
+    its end line is missing. bash 3.2 reads a line apart when it ends a
+    $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
+    a case pattern's ) (case_ends_early).
     """
-    out, bodies, pending, stack, index = [], [], [], ["top"], 0
+    out, bodies, pending, stack, index, apart = [], [], [], ["top"], 0, False
     while index < len(line):
         char, context = line[index], stack[-1]
         if char == "\n" and pending:
@@ -768,6 +806,7 @@ def set_aside_heredocs(line, first=0):
                 return None
             index, found = read
             bodies += found
+            apart = apart or any(a_case_ends_early(body) for body, quoted in found if not quoted)
             pending = []
             continue
         if context in ("'", "$'"):
@@ -786,12 +825,14 @@ def set_aside_heredocs(line, first=0):
             if region == "":
                 return None
             out.append(WordPart(region) if region.startswith("$") else region)
+            apart = apart or a_case_ends_early(region)
             index += len(region)
             continue
         if context == '"':
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             if line.startswith("$(", index):
                 stack, char = stack + ["$("], "$("
+                apart = apart or case_ends_early(line, index)
             out.append(char)
             index += len(char)
             continue
@@ -821,6 +862,7 @@ def set_aside_heredocs(line, first=0):
         if line.startswith("$'", index):
             stack, char = stack + ["$'"], "$'"
         elif line.startswith("$(", index):
+            apart = apart or ('"' in stack and case_ends_early(line, index))
             stack, char = stack + ["$("], "$("
         elif char in "'\"":
             stack = stack + [char]
@@ -834,7 +876,7 @@ def set_aside_heredocs(line, first=0):
         index += len(char)
     if pending:
         return None  # the end line is missing
-    return "".join(out), bodies
+    return "".join(out), bodies, apart
 
 
 # The marks the shell reads as one even when a backslash and line end split them: each start the scan joins after.
@@ -1968,7 +2010,10 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
         # a quote that never closes and drops a backslash at the very end, so a line that may run git or gh counts.
         unreadable = [(WRAPPED, UNREADABLE)] if command.unreadable or may_run_git_or_gh(command.flat) else []
         return rough_steps(command) + substituted_steps(command, depth) + unreadable
-    steps = []
+    # bash 3.2 may run commands that the gate, reading the line as zsh does, never sees, even in a heredoc body.
+    # The line as written holds its heredoc bodies, and its flat form marks every substitution, so read the line.
+    apart = command.read_apart and may_run_git_or_gh_read_apart(line)
+    steps = [(WRAPPED, UNREADABLE)] if apart else []
     for position, words in enumerate(segments):
         spot, program_is_hidden = program_spot(words)
         if program_is_hidden:

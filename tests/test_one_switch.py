@@ -921,16 +921,61 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
     with when("Claude pushes main inside a $(...) that holds a case command, after a pattern's ) or after the esac, "
               "each in its own session"):
         results = hooks(home, tool, cases, "cases")
-    with then("the gate reads a pattern's ) as part of the case command, so the substitution ends at its own ), "
-              "and it reads the push and names the dash"):
+    with then("the gate reads a pattern's ) as part of the case command, as zsh does, so the substitution ends at "
+              "its own ), and it reads the push and names the dash. bash 3.2 ends each of these at a pattern's ), so "
+              "each is unreadable too"):
         for push, result in results.items():
-            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+            assert result.refused and result.findings == ["unreadable", "dashes"], (push, result.reason)
     with when("Claude runs echo with the words case, a, in and a) inside a $(...), and then text that names a push"):
         argument = home.hook(tool, "PreToolUse", "echo \"$(echo case a in a) git push origin main)\"",
                              session="argument")
     with then("it runs, since case is a keyword only where a command starts, so the ) ends the $(...) and the "
               "rest is quoted text"):
         assert argument.ran and argument.output == {}, argument.reason
+
+
+def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    early = ["echo \"$(case a in a) echo \";git push origin main;\" ;; esac)\"",
+             "echo \"$(case a in a) echo '$(git push origin main)' ;; esac)\"",
+             "echo $(echo \"$(case a in a) echo \";git push origin main;\" ;; esac)\")",
+             "echo \"${x:-$(case a in a) echo '$(git push origin main)' ;; esac)}\"",
+             "echo ${x:-$(case a in a) echo '$(git push origin main)' ;; esac)}",
+             "cat <<EOF\n$(case a in a) echo '$(git push origin main)';; esac)\nEOF"]
+    with when("Claude runs a case command with a plain pattern inside a $(...) in double quotes, in a ${...} or in a "
+              "heredoc body, whose arm holds a push in quotes, each in its own session"):
+        results = hooks(home, tool, early, "early")
+    with then("bash 3.2 ends that $(...) at the pattern's ) and runs the push in the text after it, while zsh reads "
+              "the push as quoted text, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    alike = ["echo \"$(case a in (a) echo A;; esac)\"; git push origin main",
+             "v=$(case a in a) echo A;; esac); git push origin main"]
+    with when("Claude pushes main after a case whose pattern starts with its own (, in double quotes, or after a "
+              "case with a plain pattern in a $(...) outside quotes"):
+        results = hooks(home, tool, alike, "alike")
+    with then("bash 3.2 reads the first as zsh does and can not run the second at all, so the gate reads the push, "
+              "names the dash and finds nothing unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (line, result.reason)
+    hidden = ["echo \"$(case a in a) echo \";$STEP;\" ;; esac)\"",
+              "echo \"$(case a in a) echo \";printf x | sh;\" ;; esac)\"",
+              "echo \"$(case a in a) echo \";GIT push origin main;\" ;; esac)\"",
+              "cat <<EOF\n$(case a in a) echo ';$STEP;';; esac)\nEOF"]
+    with when("Claude runs such an early-ending case whose arm holds a word the shell fills in, a shell or an "
+              "uppercase GIT, each in its own session"):
+        results = hooks(home, tool, hidden, "hidden")
+    with then("bash 3.2 may run git or gh in the text after the early end, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    plain = ["echo \"$(case a in a) echo A;; esac)\"", "cat <<EOF\n$(case a in a) echo hi;; esac)\nEOF"]
+    with when("Claude runs such an early-ending case with no git, gh, shell or filled-in word on the line"):
+        results = hooks(home, tool, plain, "plain")
+    with then("nothing on the line can run git or gh in either shell, so each call runs"):
+        for line, result in results.items():
+            assert result.ran and result.output == {}, (line, result.reason)
 
 
 def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home, tool):
