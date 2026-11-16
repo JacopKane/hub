@@ -831,6 +831,34 @@ def test_a_backslash_right_after_a_comment_or_an_opening_quote_joins_no_lines(ho
         assert split_quote.refused and split_quote.findings == ["dashes"], split_quote.reason
 
 
+def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still_starts(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    word_text = ["echo $((1))#x <<EOF\nit's\nEOF\ngit push origin main",
+                 "echo $(echo a)#x <<EOF\nit's\nEOF\ngit push origin main",
+                 "cat <(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                 "echo a>(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                 "cat =(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                 "echo `echo a # x` <<EOF\nit's\nEOF\ngit push origin main"]
+    with when("Claude pushes main after a heredoc whose body holds a quote mark, where a # on the heredoc's line "
+              "follows a $((...)) sum, a $(...), <(...), >(...) or =(...) substitution, or stands in a comment that a "
+              "backtick closes, each in its own session"):
+        results = hooks(home, tool, word_text, "word-text")
+    with then("the shell keeps that # as word text or ends the comment at the backtick, so the heredoc starts, and "
+              "the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    comments = ["((1))# <<EOF\ngit push origin main\nEOF", "(true)# <<EOF\ngit push origin main\nEOF",
+                "a=(x)# <<EOF\ngit push origin main\nEOF"]
+    with when("Claude writes a << in a comment that follows a ((...)) sum, a ( ) group or an array, and pushes main "
+              "on the next line"):
+        results = hooks(home, tool, comments, "comments")
+    with then("that # opens a comment, so no heredoc starts, and the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)

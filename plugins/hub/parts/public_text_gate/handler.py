@@ -560,6 +560,11 @@ class Source(str):
     fed = False
 
 
+class WordPart(str):
+    """A piece the shell keeps inside a word, such as the ) that ends $(...) or a whole $((...)) sum, so a # right
+    after it is word text and opens no comment."""
+
+
 def closing(line, start, brackets="()"):
     """Where the ) that closes the ( at start is, or -1. Quotes and a backslash are skipped.
 
@@ -602,7 +607,10 @@ def set_aside_heredocs(line, first=0):
     """(the line with each heredoc body taken out, [(body, quoted)]), or None when the gate can not tell.
 
     The shell starts a heredoc only at a << outside quotes, comments,
-    arithmetic and a <<< here-string. A placeholder numbered from first
+    arithmetic and a <<< here-string. A # opens a comment only where a word
+    starts, so not right after a $((...)) sum, a ${...} or the ) that ends
+    $(...), <(...), >(...) or =(...), and inside backticks the comment ends
+    at the closing backtick. A placeholder numbered from first
     takes the place of the << and its end word, and the body runs from the
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
@@ -614,7 +622,7 @@ def set_aside_heredocs(line, first=0):
     while index < len(line):
         char, context = line[index], stack[-1]
         if char == "\n" and pending:
-            if context not in ("top", "(", "`"):
+            if context not in ("top", "(", "$(", "`"):
                 return None  # a quoted string runs over the line that starts the heredoc
             read = read_heredoc_bodies(line, index + 1, pending)
             if read is None:
@@ -638,19 +646,18 @@ def set_aside_heredocs(line, first=0):
         if region is not None:
             if region == "":
                 return None
-            out.append(region)
+            out.append(WordPart(region) if region.startswith("$") else region)
             index += len(region)
             continue
         if context == '"':
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             if line.startswith("$(", index):
-                stack, char = stack + ["("], "$("
+                stack, char = stack + ["$("], "$("
             out.append(char)
             index += len(char)
             continue
         if char == "#" and starts_a_word(out):
-            end = line.find("\n", index)
-            end = len(line) if end < 0 else end
+            end = comment_end(line, index, context)
             out.append(line[index:end])
             index = end
             continue
@@ -668,14 +675,16 @@ def set_aside_heredocs(line, first=0):
             continue
         if line.startswith("$'", index):
             stack, char = stack + ["$'"], "$'"
+        elif line.startswith("$(", index):
+            stack, char = stack + ["$("], "$("
         elif char in "'\"":
             stack = stack + [char]
         elif char == "`":
             stack = stack[:-1] if context == "`" else stack + ["`"]
         elif char == "(":
-            stack = stack + ["("]
-        elif char == ")" and context == "(":
-            stack = stack[:-1]
+            stack = stack + ["$(" if opens_a_substitution(out) else "("]
+        elif char == ")" and context in ("(", "$("):
+            stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         out.append(char)
         index += len(char)
     if pending:
@@ -722,6 +731,19 @@ def skipped_region(line, index, context):
         return ""
     region = line[index:end + 1]
     return "" if "\n" in region and "<<" in region.replace("<<<", "") else region
+
+
+def opens_a_substitution(pieces):
+    """Whether a ( after the text so far opens <(...), >(...) or zsh's =(...), whose ) the shell keeps in the word."""
+    last = pieces[-1] if pieces else ""
+    return last in ("<", ">") or (last == "=" and starts_a_word(pieces[:-1]))
+
+
+def comment_end(line, index, context):
+    """Where the comment that starts at index ends: at the line end, or inside backticks at the closing backtick
+    when that comes first, since the shell finds that backtick before it reads the command inside."""
+    marks = ("\n", "`") if context == "`" else ("\n",)
+    return min((spot for spot in (line.find(mark, index) for mark in marks) if spot >= 0), default=len(line))
 
 
 def heredoc_start(line, index):
@@ -873,10 +895,12 @@ def starts_a_word(pieces):
     """Whether the shell starts a new word after the text so far, so a # there opens a comment.
 
     It does at the start, after a blank and after each operator character, as
-    in ;# or |#, but not after an escaped character such as \\;.
+    in ;# or |#, but not after an escaped character such as \\; or after a
+    WordPart, such as the ) that ends $(...).
     """
     last = pieces[-1] if pieces else " "
-    return not last.startswith("\\") and (last[-1].isspace() or last[-1] in ";&|()<>")
+    return not (isinstance(last, WordPart) or last.startswith("\\")) and (
+        last[-1].isspace() or last[-1] in ";&|()<>")
 
 
 def ends_in_a_pipe_or_list(pieces):
