@@ -1995,10 +1995,37 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
     with then("each is refused, since the head's repo id does not say which repo the PR goes into"):
         for result in head_only:
             assert says(home, result, "unreadable_push.md", why=HEAD_REPO_WHY), result.reason
+    spelled_creates = [f"gh api repos/acme/demo//pulls -f head=side -F body=@{good}",
+                       f"gh api /repos/acme/demo/pulls/ -f head=side -F body=@{good}",
+                       f"gh api repos/acme/demo/./pulls -f head=side -F body=@{good}",
+                       f"gh api repos/acme/x/../demo/pulls -f head=side -F body=@{good}",
+                       f"gh api repos/acme/demo/PULLS -f head=side -F body=@{good}",
+                       f"gh api REPOSITORIES/123/Pulls -f head=side -F body=@{good}",
+                       f"gh api repos/acme/demo/%70ulls -f head=side -F body=@{good}",
+                       f"gh api repos/acme/demo/%2570ulls -f head=side -F body=@{good}",
+                       f"gh api https://api.github.com//repos/acme/demo/./pulls -f head=side -F body=@{good}"]
+    spelled_edits = [f"gh api -X PATCH repos/acme/demo//pulls/7 -F body=@{bad}",
+                     f"gh api -X PATCH repos/acme/demo/Pulls/7/ -F body=@{bad}",
+                     f"gh api -X PATCH repos/acme/demo/%69ssues/7 -F body=@{bad}",
+                     f"gh api -X PATCH repositories/123/./ISSUES/7 -F body=@{bad}"]
+    with when("Claude opens a PR at side and edits PR 7's body through paths that name the same endpoint another "
+              "way: doubled slashes, . and .. parts, capital letters and %-escaped letters, which gh sends to "
+              "GitHub as written, with the text gate's unreadable check off"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        results = {step: bash(home, step) for step in spelled_creates + spelled_edits}
+        home.hubctl_from_mod("on", "public_text_gate.unreadable")
+    with then("each is judged as the plain endpoint, since the gate does not know which forms GitHub routes "
+              "there: the new PRs are refused for the commit GitHub has on side, and the body edits with "
+              "pr-check's sentence"):
+        for step, result in results.items():
+            if step in spelled_creates:
+                assert says(home, result, "no_report.md", short=side[:7], branch="side"), (step, result.reason)
+            else:
+                assert result.refused and result.reason == missing_part(home), (step, result.reason)
     with when("side's tested commit is pushed"):
         home.git("push", "-q")
     with then("the same steps run with no answer"):
-        for step in creates + fragment_creates + [create]:
+        for step in creates + fragment_creates + [create] + spelled_creates:
             assert quiet(bash(home, step)), step
 
 

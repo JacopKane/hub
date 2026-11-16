@@ -32,6 +32,7 @@ import importlib.util
 import itertools
 import json
 import os
+import posixpath
 import re
 import signal
 import subprocess
@@ -1284,7 +1285,7 @@ def api_step(command, step, flags, answer, lookups):
         sent_call = graphql_sent(fields, files) if grouped else ungrouped_sent(fields, files)
         return graphql_step(sent_call, step, flags, answer, lookups)
     fields = {**fields, **{key: value for sent in files for key, value in flat_fields(sent).items()}}
-    new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
+    new = endpoint_match(endpoint, f"({REPO_PATH})/pulls")
     if new and method == "POST":
         written_out(step)
         body_stop(fields.get("body", ""), step.cwd, flags, answer)
@@ -1294,16 +1295,18 @@ def api_step(command, step, flags, answer, lookups):
             raise unreadable("head")
         if "head_repo" in fields:
             raise unreadable("head_repo")
-        place = ("rest", new.group(1), gh_repo_place(step)[2])
+        repo = re.sub(r"^\w+", lambda word: word.group(0).lower(), new.group(1))  # repos as GitHub spells it
+        place = ("rest", repo, gh_repo_place(step)[2])
         return new_pr(step, fields["head"], True, fields.get("base"), (place, place), lookups)
-    if re.fullmatch(REPO_PATH + r"/pulls/\d+", endpoint) and method != "GET":
+    if endpoint_match(endpoint, REPO_PATH + r"/pulls/\d+") and method != "GET":
         if "draft" in fields and flags.runs(f"{PART}.report"):
             raise unreadable("draft")
         if "body" in fields:
             written_out(step)
             body_stop(fields["body"], step.cwd, flags, answer)
-    if (re.fullmatch(REPO_PATH + r"/issues/\d+", endpoint) and method != "GET" and "body" in fields
-            and flags.runs(f"{PART}.body") and may_be_a_pr(step, endpoint, gh_repo_place(step)[2], lookups)):
+    issue = endpoint_match(endpoint, REPO_PATH + r"/issues/\d+")
+    if (issue and method != "GET" and "body" in fields
+            and flags.runs(f"{PART}.body") and may_be_a_pr(step, issue.group(0), gh_repo_place(step)[2], lookups)):
         written_out(step)
         body_stop(fields["body"], step.cwd, flags, answer)
     return []
@@ -1454,6 +1457,24 @@ def api_path(endpoint):
     of the path, so the path ends at the first ? or #."""
     path = re.split(r"[?#]", endpoint, maxsplit=1)[0]
     return re.sub(r"^[a-z]+://[^/]+/(?:api/v3/)?", "", path, flags=re.I).strip("/")
+
+
+def endpoint_match(path, pattern):
+    """The match of a REST endpoint pattern on the path gh sends, or on its plain form, or None. gh sends the path
+    as written, so GitHub gets repos/o/r//pulls, repos/o/r/./pulls, PULLS or %70ulls as they stand. Which of those
+    GitHub routes to the plain endpoint is not known, so a path counts when either form matches, case blind."""
+    return next((found for form in dict.fromkeys((plain_path(path), path))
+                 for found in [re.fullmatch(pattern, form, re.I)] if found), None)
+
+
+def plain_path(path):
+    """A path with its %-escapes decoded until none is left, cut at a ? or # that an escape spelt, and with doubled
+    slashes and . and .. parts folded, as a server that reads paths loosely may read it."""
+    decoded = path
+    while urllib.parse.unquote(decoded) != decoded:
+        decoded = urllib.parse.unquote(decoded)
+    cut = re.split(r"[?#]", decoded, maxsplit=1)[0]
+    return posixpath.normpath("/" + cut).strip("/")
 
 
 def pr_mutations(query):
