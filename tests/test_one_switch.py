@@ -696,14 +696,17 @@ def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, t
         piped = home.hook(tool, "PreToolUse", "printf 'git push origin main\\n' |#c\nbash", session="piped")
     with then("the shell still reads its script from the pipe, so the call is unreadable"):
         assert piped.refused and piped.findings == ["unreadable"], piped.reason
-    with when("Claude commits with a message where a # stands inside a word, after a letter or a quote"):
+    with when("Claude commits with a message where a # stands inside a word outside quotes, after a letter or a "
+              "quote"):
         inside = home.hook(tool, "PreToolUse", "git commit -m a#'Fix'#\"two\"#3 # it's", session="inside")
-    with then("the # is word text, as the shell reads it, and the commit runs"):
-        assert not inside.refused, inside.reason
+    with then("the # does not start a comment, but zsh's extended globs may change a word with a # in it, so the "
+              "commit is unreadable"):
+        assert inside.refused and inside.findings == ["unreadable"], inside.reason
     with when("Claude commits with a message where a # follows an escaped ; and comes before a dash"):
         escaped = home.hook(tool, "PreToolUse", f"git commit -m Fix\\;#'Late {DASH} change'", session="escaped")
-    with then("the escaped ; is word text, so the # is too, and the gate names the dash"):
-        assert escaped.refused and escaped.findings == ["dashes"], escaped.reason
+    with then("the escaped ; and the # are word text, so the gate names the dash, and the # outside quotes makes "
+              "the word unreadable"):
+        assert escaped.refused and escaped.findings == ["unreadable", "dashes"], escaped.reason
 
 
 def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_lines(home, tool):
