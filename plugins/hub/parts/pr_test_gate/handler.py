@@ -1467,7 +1467,7 @@ def graphql_step(sent_call, step, flags, answer, lookups):
 def input_bodies(code, sent, others):
     """The bodies an updatePullRequest sets inside an input object variable, such as -f pr[body]=x for input: $pr.
     An input object the call does not send, or a field name the shell fills in, may hold a body."""
-    names = re.findall(r"\bupdatePullRequest\s*\(\s*input\s*:\s*\$(\w+)", code)
+    names = re.findall(r"\bupdatePullRequest\s*\(\s*input\s*:\s*" + GRAPHQL_VARIABLE + r"(\w+)", code)
     if names and any(unreadable_mark() in key for key in [*sent, *others]):
         raise unreadable("body")
     if any(not any(key.startswith(name + "[") for key in sent) for name in names):
@@ -1478,6 +1478,9 @@ def input_bodies(code, sent, others):
 
 # A GraphQL string, set aside so a key is never read inside one, or a comment, which runs to the end of its line
 GRAPHQL_STRING_OR_COMMENT = re.compile(r'"(?:[^"\\\n\r]|\\.)*"|#[^\n\r]*')
+# The $ that starts a GraphQL variable. $ is a token of its own, so spaces, commas and comments may stand between it
+# and the name, as in "$ text", and GitHub reads the same variable.
+GRAPHQL_VARIABLE = r"\$\s*"
 
 
 def graphql_code(query):
@@ -1503,7 +1506,7 @@ def graphql_values(code, strings, key, sent, others):
     """Every string the mutations set key to, written in the query or passed as a variable. A variable the call
     does not send takes its default, as on GitHub. The other values the call names for it count too."""
     written = [graphql_text(strings[int(index)]) for index in re.findall(r"\b" + key + r'\s*:\s*"(\d+)"', code)]
-    variables = re.findall(r"\b" + key + r"\s*:\s*\$(\w+)", code)
+    variables = re.findall(r"\b" + key + r"\s*:\s*" + GRAPHQL_VARIABLE + r"(\w+)", code)
     return written + [value for name in variables
                       for value in ([sent[name]] if name in sent else variable_default(code, strings, name))
                       + others.get(name, [])]
@@ -1512,7 +1515,7 @@ def graphql_values(code, strings, key, sent, others):
 def variable_default(code, strings, name):
     """The default of a variable the call does not send, as a list: empty when it has none or a null one. Refuses a
     default that is not a plain string or null, or a second default for the same name."""
-    defaults = re.findall(r"\$" + name + r'\s*:[^=$)]*=\s*("\d+"|null\b)?', code)
+    defaults = re.findall(GRAPHQL_VARIABLE + name + r'\s*:[^=$)]*=\s*("\d+"|null\b)?', code)
     if len(defaults) > 1 or "" in defaults:
         raise unreadable("query")
     return [graphql_text(strings[int(found[1:-1])]) for found in defaults if found != "null"]

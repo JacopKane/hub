@@ -2143,9 +2143,22 @@ def test_a_graphql_pr_body_gets_the_body_check_wherever_the_query_sets_it(home):
               "an input object named after a comment":
                   graphql_call("mutation($pr: UpdatePullRequestInput!) { updatePullRequest(# the edit\n input: $pr) "
                                "{ clientMutationId } }", shlex.quote("pr[pullRequestId]=PR_kw1"),
+                               "-F", shlex.quote(f"pr[body]=@{bad_file}")),
+              "a variable with a space after its $":
+                  graphql_call('mutation($text: String) { updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                               "body: $ text}) { clientMutationId } }", f"-F text=@{bad_file}"),
+              "a variable with a comment after its $":
+                  graphql_call('mutation($text: String) { updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                               "body: $ # the body\n text}) { clientMutationId } }", f"-F text=@{bad_file}"),
+              "a default whose variable has a space after its $":
+                  graphql_call(by_default.format(default=bad).replace("$text", "$ text")),
+              "an input object with a space after its $":
+                  graphql_call("mutation($ pr: UpdatePullRequestInput!) { updatePullRequest(input: $\tpr) "
+                               "{ clientMutationId } }", shlex.quote("pr[pullRequestId]=PR_kw1"),
                                "-F", shlex.quote(f"pr[body]=@{bad_file}"))}
     with when("Claude sets PR 7's body to one with no tested part through GraphQL, by a variable's default, "
-              "after a comment or a comma, in a second edit, or in an input object named after a comment"):
+              "after a comment or a comma, in a second edit, in an input object named after a comment, or by a "
+              "variable written with a space or a comment after its $, which GraphQL reads as the same variable"):
         results = {case: bash(home, step) for case, step in hidden.items()}
     with then("each is refused with pr-check's sentence, as GitHub sets that body"):
         assert [(case, result.reason) for case, result in results.items()
