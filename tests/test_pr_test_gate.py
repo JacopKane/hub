@@ -29,14 +29,15 @@ TEMPLATE = "## Summary\n\n## Test plan\n"
 NAMED_EXAMPLE = "git push origin feature"
 DESTINATION_EXAMPLE = "git push origin fix-a:feature, where feature is the branch on the remote"
 TEMPLATE_BODY = "## Summary\n\nA fix.\n\n## Test plan\n\nRan the scenarios.\nNot covered: the slow network case.\n"
-# gh's lookup of feature's open PR, in gh's own repo for the folder; the same words with -R ask another repo
-OPEN_PR_LIST = ["pr", "list", "--head", "feature", "--state", "open", "--json", "number,baseRefName,headRefOid",
-                "--limit", "1"]
+# gh's lookup of feature's open PRs, in gh's own repo for the folder; the same words with -R ask another repo
+OPEN_PR_LIST = ["pr", "list", "--head", "feature", "--state", "open", "--json",
+                "number,baseRefName,headRefOid,headRepositoryOwner", "--limit", "100"]
 
 
 def forked_from(repo):
-    """gh's lookup of the repos a pushed repo is a fork of, its parent and the source at the root of its forks."""
-    return ["api", f"repos/{repo}", "--jq", "[.parent.full_name, .source.full_name | strings]"]
+    """gh's lookup of a pushed repo's own name as GitHub knows it now, then the repos it is a fork of, its parent
+    and the source at the root of its forks."""
+    return ["api", f"repos/{repo}", "--jq", "[.full_name, .parent.full_name, .source.full_name | strings]"]
 
 
 # The repo, its remote and the fake gh
@@ -1646,6 +1647,29 @@ def test_a_push_is_judged_by_an_open_pr_in_the_repo_it_goes_to_as_well_as_in_ghs
         assert gh_calls(home)[-4:] == [forked_from("acme/fork"), OPEN_PR_LIST,
                                        OPEN_PR_LIST + ["-R", "github.com/acme/fork"],
                                        OPEN_PR_LIST + ["-R", "github.com/acme/upstream"]]
+    with when("acme/upstream's only open PR for a branch named feature comes from sam's fork, as gh pr list --head "
+              "finds a branch of that name in any fork, and Claude pushes feature to acme/fork"):
+        fake_gh(home, open={}, parents={"repos/acme/fork": ["acme/upstream"]},
+                open_in={"github.com/acme/upstream": {"feature": {"number": 9, "owner": "sam", "head": "0" * 40}}})
+        other_owner = bash(home, "git push fork feature")
+    with then("the push runs, since sam's PR does not get acme/fork's commit"):
+        assert quiet(other_owner), other_owner.reason
+    other_owners_prs = [{"number": 9 + index, "owner": "sam", "head": "0" * 40} for index in range(100)]
+    owners_cases = {
+        "sam's PR is listed first and acme's own PR second": [other_owners_prs[0], {"number": 10, "owner": "acme"}],
+        "GitHub gives no owner for the PR's head repo, as for a deleted fork": [{"number": 9, "owner": None}],
+        "GitHub lists as many PRs as the gate asks for, so more may be open": other_owners_prs,
+        "acme/fork now belongs to Acme-Labs, as GitHub's own name for it says": [{"number": 9, "owner": "Acme-Labs"}]}
+    with when("Claude pushes feature to acme/fork where acme/upstream lists other open PRs for feature"):
+        results = {}
+        for case, prs in owners_cases.items():
+            fake_gh(home, open={}, parents={"repos/acme/fork": ["acme/upstream"]},
+                    renamed={"repos/acme/fork": "acme-labs/fork"} if "Acme-Labs" in case else {},
+                    open_in={"github.com/acme/upstream": {"feature": prs}})
+            results[case] = bash(home, "git push fork feature")
+    with then("each is refused for feature's commit, since a PR from acme/fork may get it"):
+        for case, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (case, result.reason)
     with when("GitHub can not say whether acme/fork is a fork, and gh can not reach GitHub at all"):
         fake_gh(home, open={}, open_in={}, unknown_forks=["repos/acme/fork"])
         unknown_fork = bash(home, "git push fork feature")

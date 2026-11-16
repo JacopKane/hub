@@ -4,9 +4,13 @@
 It reads its answers from the JSON file in $FAKE_GH_CONFIG and adds each call's
 words to $FAKE_GH_LOG, one JSON list a line. The keys:
 
-- open: {branch: PR number} for `gh pr list --head <branch> --state open`; the PR's head commit is the one
-  origin's bare repo has for the branch, as GitHub would say
-- open_in: {repo: {branch: PR number}} for the same list in the repo -R, --repo or GH_REPO names, such as
+- open: {branch: PR} for `gh pr list --head <branch> --state open`, where a PR is its number, or
+  {"number": n, "owner": login, "head": commit}, or a list of those, as GitHub lists every open PR whose head
+  branch has that name in any fork. The head commit is the one origin's bare repo has for the branch, and the
+  head repo's owner (headRepositoryOwner) is the owner of the repo listed, acme for gh's own repo, unless the PR
+  names them; owner null says GitHub gives none, as for a deleted fork. gh prints only the --json fields asked
+  for, and at most --limit PRs
+- open_in: {repo: {branch: PR}} for the same list in the repo -R, --repo or GH_REPO names, such as
   github.com/acme/demo; a repo it does not name gets open
 - heads: {PR number or branch: head commit} for `gh pr view [<it>] --json headRefOid,baseRefName`; with no
   number, gh's own way to find the current branch's PR, the branch checked out in the folder is the key; with
@@ -14,7 +18,10 @@ words to $FAKE_GH_LOG, one JSON list a line. The keys:
 - bases: {PR number or branch: the branch the PR goes into}, main when not named
 - default: the repo's default branch for `gh api repos/<owner>/<repo> --jq .default_branch`, main when not named
 - parents: {REST path such as repos/acme/fork: [full names]} for `gh api <path> --jq` with the gate's query for
-  the repos a fork comes from, its parent and its source; a repo it does not name is no fork, []
+  the repo's own full name and the repos a fork comes from, its parent and its source; a repo it does not name
+  is no fork. The own name comes first, from the path
+- renamed: {REST path: full name} for a repo GitHub now knows by another owner or name, so the same query gives
+  that name first
 - unknown_forks: REST paths that the same lookup answers like GitHub's 404 for
 - unknown_repos: repos, as GH_REPO names them, that gh api answers like GitHub's 404 for when the endpoint
   says {owner}/{repo}
@@ -39,7 +46,7 @@ import time
 import urllib.parse
 
 REPO = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
-FORKED_FROM = "[.parent.full_name, .source.full_name | strings]"
+GITHUB_NAMES = "[.full_name, .parent.full_name, .source.full_name | strings]"
 words = sys.argv[1:]
 config = {}
 if os.environ.get("FAKE_GH_CONFIG") and os.path.exists(os.environ["FAKE_GH_CONFIG"]):
@@ -82,12 +89,25 @@ def base_of(key):
     return config.get("bases", {}).get(key, "main")
 
 
+def listed_pr(spec, branch, owner):
+    """A PR as gh pr list --json prints it, from a number or a {"number", "owner", "head"} object."""
+    spec = spec if isinstance(spec, dict) else {"number": spec}
+    login = spec.get("owner", owner)
+    return {"number": spec["number"], "baseRefName": base_of(branch),
+            "headRefOid": spec.get("head", pushed_head(branch)),
+            "headRepositoryOwner": {"id": "", "login": ""} if login is None else {"id": "U_" + login, "login": login}}
+
+
 if words[:2] == ["pr", "list"]:
     branch = value_of("--head")
-    listed = config.get("open_in", {}).get(repo_named(), config.get("open", {}))
-    number = listed.get(branch)
-    print(json.dumps([{"number": number, "baseRefName": base_of(branch), "headRefOid": pushed_head(branch)}]
-                     if number else []))
+    repo = repo_named()
+    listed = config.get("open_in", {}).get(repo, config.get("open", {}))
+    found = listed.get(branch) or []
+    owner = repo.rstrip("/").split("/")[-2] if repo and repo.count("/") >= 1 else "acme"
+    fields = (value_of("--json") or "").split(",")
+    prs = [listed_pr(spec, branch, owner) for spec in (found if isinstance(found, list) else [found])]
+    limit = int(value_of("--limit") or 30)
+    print(json.dumps([{key: pr[key] for key in fields if key in pr} for pr in prs][:limit]))
 elif words[:2] == ["pr", "view"]:
     key = words[2] if len(words) > 2 and not words[2].startswith("-") else current_branch()
     key = f"{repo_named()}#{key}" if repo_named() else key
@@ -122,8 +142,9 @@ elif words[:1] == ["api"] and len(words) > 1:
         print(commit if value_of("--jq") == ".object.sha" else json.dumps({"object": {"sha": commit}}))
     elif re.fullmatch(REPO, words[1]) and value_of("--jq") == ".default_branch":
         print(config.get("default", "main"))
-    elif re.fullmatch(REPO, words[1]) and value_of("--jq") == FORKED_FROM:
+    elif re.fullmatch(REPO, words[1]) and value_of("--jq") == GITHUB_NAMES:
         if words[1] in config.get("unknown_forks", []):
             print("gh: Not Found (HTTP 404)", file=sys.stderr)
             sys.exit(1)
-        print(json.dumps(config.get("parents", {}).get(words[1], [])))
+        own = config.get("renamed", {}).get(words[1], words[1].split("/", 1)[1])
+        print(json.dumps([own, *config.get("parents", {}).get(words[1], [])]))

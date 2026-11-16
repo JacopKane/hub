@@ -68,7 +68,10 @@ PR_REPO_OPTIONS = {"-R", "--repo"}
 PR_MUTATIONS = ("createPullRequest", "updatePullRequest", "markPullRequestReadyForReview")
 CURRENT_REPO = ("rest", "repos/{owner}/{repo}", {})  # the repo gh picks from the folder, as gh pr list does
 REPO_PATH = r"(?:repos/[^/]+/[^/]+|repositories/\d+)"  # the two ways GitHub's REST API names a repo
-FORKED_FROM = "[.parent.full_name, .source.full_name | strings]"  # the repos a repo is a fork of, as owner/name
+# A repo's own name as GitHub knows it now, then the repos it is a fork of, each as owner/name
+GITHUB_NAMES = "[.full_name, .parent.full_name, .source.full_name | strings]"
+OPEN_PR_FIELDS = "number,baseRefName,headRefOid,headRepositoryOwner"
+OPEN_PR_LIMIT = 100  # a list this long may leave out an open PR
 HEAD_ON_NODE = ("query($id: ID!, $ref: String!) { node(id: $id) { ... on Repository { ref(qualifiedName: $ref) "
                 "{ target { oid } } } } }")
 DEFAULT_ON_NODE = "query($id: ID!) { node(id: $id) { ... on Repository { defaultBranchRef { name } } } }"
@@ -831,36 +834,50 @@ def branch_name(ref):
 def with_open_pr(candidates, lookups):
     """The pushed branches that send something new to an open PR, each with the branch its PR goes into and the
     repo the PR is in, as GitHub says. gh is asked in its own repo for the folder, where a PR from a fork is, and
-    in each repo the push goes to and in each repo that one is a fork of. A branch with no open PR, or whose PR's
-    head is already the commit sent, drops out. More than one branch, or a failed lookup, keeps them all, with no
-    known base."""
+    in each repo the push goes to and in each repo that one is a fork of. gh pr list --head finds a branch of that
+    name in any fork, so a PR whose head repo has another owner than the repo pushed to drops out, as does a branch
+    with no open PR, or whose PR's head is already the commit sent. More than one branch, a failed lookup or a list
+    that may leave a PR out keeps them all, with no known base."""
     if len({branch for branch, _commit, _cwd, _bases, _place in candidates}) != 1:
         return candidates
     branch, _commit, cwd, _bases, _place = candidates[0]
     pushed_to = {place[1] for *_start, place in candidates}
-    forked_from = repos_forked_from(cwd, pushed_to, lookups)
-    if forked_from is None:
+    names = github_names(cwd, pushed_to, lookups)
+    if names is None:
         return candidates
+    forked_from = {"repos/" + name for listed in names.values() for name in listed[1:]}
+    owners = {owner.casefold() for repo, listed in names.items()
+              for owner in (repo.split("/")[1], listed[0].split("/")[0])}
     found = []
     for place, repo_words in pr_lists(pushed_to | forked_from):
         listed = parsed_json(lookups.gh(cwd, "pr", "list", "--head", branch, "--state", "open", "--json",
-                                        "number,baseRefName,headRefOid", "--limit", "1", *repo_words)[0])
-        if not isinstance(listed, list):
+                                        OPEN_PR_FIELDS, "--limit", str(OPEN_PR_LIMIT), *repo_words)[0])
+        if not isinstance(listed, list) or len(listed) >= OPEN_PR_LIMIT:
             return candidates
-        found += [(pr if isinstance(pr, dict) else {}, place) for pr in listed[:1]]
+        prs = [pr if isinstance(pr, dict) else {} for pr in listed]
+        found += [(pr, place) for pr in prs if may_be_from(pr, owners)]
     sent = list(dict.fromkeys((name, commit, here) for name, commit, here, _bases, _place in candidates))
     return [(name, commit, here, bases_of_pr(pr), place) for pr, place in found for name, commit, here in sent
             if commit != pr.get("headRefOid")]
 
 
-def repos_forked_from(cwd, repos, lookups):
-    """The REST paths of the repos that each GitHub repo a push goes to is a fork of: its parent and the source at
-    the root of its forks. A PR from a fork may be open in one of those, and gh pr list with no -R looks only in the
-    repo gh repo set-default picked or else the first remote, so GitHub is asked. None when a lookup fails."""
-    listed = [parsed_json(lookups.gh(cwd, "api", repo, "--jq", FORKED_FROM)[0]) for repo in sorted(repos)]
-    if not all(isinstance(names, list) and all(map(is_a_repo_name, names)) for names in listed):
+def github_names(cwd, repos, lookups):
+    """{the REST path of each GitHub repo a push goes to: [its own owner/name as GitHub knows it now, then the repos
+    it is a fork of, its parent and the source at the root of its forks]}. A PR from a fork may be open in one of
+    those, and gh pr list with no -R looks only in the repo gh repo set-default picked or else the first remote, so
+    GitHub is asked. The own name gives the owner after a rename. None when a lookup fails."""
+    listed = {repo: parsed_json(lookups.gh(cwd, "api", repo, "--jq", GITHUB_NAMES)[0]) for repo in sorted(repos)}
+    if not all(isinstance(names, list) and names and all(map(is_a_repo_name, names)) for names in listed.values()):
         return None
-    return {"repos/" + name for names in listed for name in names}
+    return listed
+
+
+def may_be_from(pr, owners):
+    """Whether an open PR's head repo may be one the push goes to: its owner is one of theirs, or GitHub gives
+    none, as for a deleted fork."""
+    owner = pr.get("headRepositoryOwner")
+    login = owner.get("login") if isinstance(owner, dict) else None
+    return not (isinstance(login, str) and login) or login.casefold() in owners
 
 
 def is_a_repo_name(name):
