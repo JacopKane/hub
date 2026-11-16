@@ -849,14 +849,44 @@ def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still
               "the gate reads the push and names the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
-    comments = ["((1))# <<EOF\ngit push origin main\nEOF", "(true)# <<EOF\ngit push origin main\nEOF",
-                "a=(x)# <<EOF\ngit push origin main\nEOF"]
-    with when("Claude writes a << in a comment that follows a ((...)) sum, a ( ) group or an array, and pushes main "
-              "on the next line"):
+    comments = ["((1))# <<EOF\ngit push origin main\nEOF", "(true)# <<EOF\ngit push origin main\nEOF"]
+    with when("Claude writes a << in a comment that follows a ((...)) sum or a ( ) group, and pushes main on the next "
+              "line"):
         results = hooks(home, tool, comments, "comments")
-    with then("that # opens a comment, so no heredoc starts, and the gate reads the push and names the dash"):
+    with then("that # opens a comment in both shells, so no heredoc starts, and the gate reads the push and names "
+              "the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a << after a # right after an array's ), and pushes main on the next line"):
+        array = home.hook(tool, "PreToolUse", "a=(x)# <<EOF\ngit push origin main\nEOF", session="array")
+    with then("zsh reads a comment and runs the push, while bash 3.2 reads the # as word text and starts the "
+              "heredoc, so the gate names the dash and finds the line unreadable"):
+        assert array.refused and array.findings == ["unreadable", "dashes"], array.reason
+
+
+def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_gh(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    apart = ["a=(x)#; git push origin main", "files=(a b)#list; git push origin main",
+             "a+=(x)#; git push origin main", "a[1]=(x)#; git push origin main",
+             "f() { local a=(x)#; git push origin main; }; f", "a=(x)\\\n#; git push origin main",
+             "echo \"$(a=(x)#; git push origin main)\"", "a=(x)#; $STEP"]
+    with when("Claude pushes main, or runs a word the shell fills in, after a # right after the ) of an array "
+              "assignment, each in its own session"):
+        results = hooks(home, tool, apart, "apart")
+    with then("zsh reads a comment that holds the push, while bash 3.2 reads the # as word text and runs the push, "
+              "so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    alike = ["a=(x)#; echo hi", "a=(x) #; git push origin main", "(echo x)#; git push origin main"]
+    with when("Claude runs echo after such an array, or writes the push in a comment after a blank or after a ( ) "
+              "group"):
+        results = hooks(home, tool, alike, "alike")
+    with then("nothing on the first line can run git or gh, and both shells read the others as comments, so each "
+              "call runs"):
+        for line, result in results.items():
+            assert result.ran and result.output == {}, (line, result.reason)
 
 
 def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_backslash(home, tool):

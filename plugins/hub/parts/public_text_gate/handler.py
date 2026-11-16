@@ -591,6 +591,9 @@ PATTERN_CONTEXTS = {"pattern": "esac", "pattern}": "}"}
 ARM_CONTEXTS = {"arm": "esac", "arm}": "}"}
 LEADING_PAREN = "pattern("  # the ( a pattern may start with, as in (a) or (a|b))
 GROUP = "group"  # a { ... } group, which a } word ends, as zsh ends it even after an argument
+ARRAY = "array"  # the ( ... ) of an array assignment, as in a=(x y), a+=(x) or local a=(x)
+# The words before the ( of an array assignment: a name, perhaps with [index], then = or +=, where a word starts.
+ASSIGNS_AN_ARRAY = re.compile(r"(?:^|[\s;&|(){}])[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=$")
 COMMAND_CONTEXTS = ("top", "$(", "(", GROUP) + tuple(ARM_CONTEXTS)  # where case and { can be keywords
 CASE_CONTEXTS = ("case", LEADING_PAREN, GROUP) + tuple(PATTERN_CONTEXTS) + tuple(ARM_CONTEXTS)  # case_step's
 COMMAND_WORDS = frozenset(("if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"))
@@ -750,10 +753,11 @@ SHELL_FILLED = re.compile(r"\$[\w{(@*#?$!-]|`")
 
 
 def may_run_git_or_gh_read_apart(text):
-    """Whether bash 3.2, reading the text apart from zsh (case_ends_early), may run git or gh.
+    """Whether bash 3.2, reading the text apart from zsh (set_aside_heredocs), may run git or gh.
 
-    bash 3.2 runs the text after the early end as commands the gate never
-    reads, so it may when the text names git or gh, a shell, eval or a
+    bash 3.2 runs text as commands that the gate never reads, such as the
+    text after a $(...) it ends early or after a # it reads as word text.
+    So it may when the text names git or gh, a shell, eval or a
     source command, or holds a word the shell fills in. The $( that bash
     3.2 ends early does not count: it runs only the case words before the
     pattern's ), which can not run a command.
@@ -793,13 +797,15 @@ def set_aside_heredocs(line, first=0):
     gate can not tell a heredoc from a shift, its end word is not plain, or
     its end line is missing. bash 3.2 reads a line apart when it ends a
     $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
-    a case pattern's ) (case_ends_early).
+    a case pattern's ) (case_ends_early), and when a # comes right after
+    the ) of an array assignment, which it reads as word text, not as a
+    comment.
     """
     out, bodies, pending, stack, index, apart = [], [], [], ["top"], 0, False
     while index < len(line):
         char, context = line[index], stack[-1]
         if char == "\n" and pending:
-            if context not in ("top", "(", "$(", "`") + CASE_CONTEXTS:
+            if context not in ("top", "(", "$(", "`", ARRAY) + CASE_CONTEXTS:
                 return None  # a quoted string runs over the line that starts the heredoc
             read = read_heredoc_bodies(line, index + 1, pending)
             if read is None:
@@ -869,8 +875,9 @@ def set_aside_heredocs(line, first=0):
         elif char == "`":
             stack = stack[:-1] if context == "`" else stack + ["`"]
         elif char == "(":
-            stack = stack + ["$(" if opens_a_substitution(out) else "("]
-        elif char == ")" and context in ("(", "$("):
+            stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out) else "("]
+        elif char == ")" and context in ("(", "$(", ARRAY):
+            apart = apart or (context == ARRAY and hash_follows(line, index + 1))
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         out.append(char)
         index += len(char)
@@ -918,6 +925,16 @@ def skipped_region(line, index, context):
         return ""
     region = line[index:end + 1]
     return "" if "\n" in region and "<<" in region.replace("<<<", "") else region
+
+
+def assigns_an_array(pieces):
+    """Whether a ( after the text so far opens the value of an array assignment, as in a=( or local a+=(."""
+    return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
+
+
+def hash_follows(line, index):
+    """Whether a # comes at index, perhaps after backslash and line end pairs, which the shell joins away."""
+    return bool(re.match(r"(?:\\\n)*#", line[index:]))
 
 
 def opens_a_substitution(pieces):
