@@ -1180,7 +1180,9 @@ def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, t
                'gh issue comment 4 --body "$=T"', "gh issue comment 4 --body ok $X",
                'gh issue comment 4 --body ok "$X"', 'gh api repos/acme/demo/issues "$X"',
                "git commit {-F,private.txt}", "git commit -S$KEY -m Fix", "git tag -a v$VERSION -m Fix",
-               "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT"]
+               "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT",
+               'gh issue comment 4 --body-file="~/notes.md"',
+               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"']
     with when("Claude sends git or gh steps where the shell may change a word before git or gh gets it: a brace "
               "list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$=T\" or "
               "\"$~T\", a variable outside quotes, or a variable in quotes that fills in a whole word of a gh step"):

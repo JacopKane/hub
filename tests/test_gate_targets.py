@@ -264,6 +264,7 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
             "tee in other case": "echo x | tee NOTES.MD && gh pr comment 3 -F notes.md",
             "pattern in other case": "printf x > NOTE?.md; gh pr comment 3 -F notes.md",
             "read in other case": "printf x > notes.md; gh pr comment 3 -F NOTES.md",
+            "tee in capitals": "echo x | TEE notes.md && gh pr comment 3 -F notes.md",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the gate reads the file only as it is before the line runs, "
@@ -300,11 +301,11 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
         home.git("push", "-q", "-u", "origin", "main")
         home.git("checkout", "-q", "-b", "feature")
         home.git("commit", "-q", "--allow-empty", "-m", "Late change")
-        for name in ("notes.md", "msg.txt", "body.md"):
+        for name in ("notes.md", "msg.txt", "body.md", "note5.md"):
             write(home, name, "See /home/sam/a.md\n")
         write(home, "query.graphql",
               'mutation { createIssue(input: {body: "See /home/sam/a.md"}) { clientMutationId } }')
-    with when("a test run, a build or a script runs before the step reads its file"):
+    with when("a test run, a build, a script or a checkout runs before the step reads its file"):
         commands = {
             "test run then comment": "python3 -m pytest -q && gh pr comment 5 -F notes.md",
             "make then comment": "make && gh pr comment 5 -F notes.md",
@@ -320,6 +321,8 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "a GraphQL query": "make && gh api graphql -F query=@query.graphql",
             "errors joined to output": "make 2>&1 && gh pr comment 5 -F notes.md",
             "program in env's split string": "env -S'make' && gh pr comment 5 -F notes.md",
+            "a checkout": "git checkout main && gh pr comment 5 -F notes.md",
+            "a PR checkout": "gh pr checkout 5 && gh pr comment 5 -F notes.md",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the program may write the file without naming it"):
@@ -340,12 +343,16 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "zsh glob flag": "echo x | tee notes.md(N) && gh pr comment 5 -F notes.md",
             "brace list of folders": "echo x | tee {docs,.}/notes.md && gh pr comment 5 -F notes.md",
             "nested brace list": "echo x | tee {other,{notes,x}}.md && gh pr comment 5 -F notes.md",
+            "brace list with a folder": "echo x | tee .{/,}notes.md && gh pr comment 5 -F notes.md",
+            "zsh number range": "echo x | tee note<1-9>.md && gh pr comment 5 -F note5.md",
+            "zsh number range redirect": "echo x > note<1-9>.md; gh pr comment 5 -F note5.md",
         }
         pattern_results = {name: home.hook(tool, "PreToolUse", command) for name, command in patterns.items()}
     with then("each is refused as unreadable too"):
         assert {name: result.findings for name, result in pattern_results.items()} == {
             name: ["unreadable"] for name in patterns}
-    with when("the steps before only stage, commit, push or read, or name other files"):
+    with when("the steps before only stage, commit, push or read, or name other files, also with the program in "
+              "capitals or inside a shell's script"):
         readable = {
             "add then commit": "git add x && git commit -F msg.txt",
             "push then new pr": "git push origin feature && gh pr create --title T --body-file body.md",
@@ -356,6 +363,9 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "test for another file": "test -f other.md && gh pr comment 5 -F notes.md",
             "errors joined to output": "git add x 2>&1 && git commit -F msg.txt",
             "output and errors to a log": "git add x &>add.log && git commit -F msg.txt",
+            "a program in capitals": "ECHO x && gh pr comment 5 -F notes.md",
+            "tee in capitals to another file": "echo x | TEE out.log && gh pr comment 5 -F notes.md",
+            "a shell's script that only reads": "bash <<'S'\ngit add x\ngh pr comment 5 -F notes.md\nS",
         }
         readable_results = {name: home.hook(tool, "PreToolUse", command) for name, command in readable.items()}
     with then("the gate reads each file and finds the home path"):
@@ -406,6 +416,7 @@ def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool)
             "sourced script": "source go.sh && gh pr comment 3 -F notes.md",
             "another program runs gh": "chroot docs gh pr comment 3 -F notes.md",
             "wrapper around a script": "env -C docs bash <<'S'\ngh pr comment 3 -F notes.md\nS",
+            "zsh's auto_cd": "docs && gh pr comment 3 -F notes.md",
         }
         other_results = {name: home.hook(tool, "PreToolUse", command) for name, command in other_ways.items()}
     with then("each is refused as unreadable too"):
