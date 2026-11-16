@@ -876,6 +876,30 @@ def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_back
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
 
 
+def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_quoted_escapes(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    substitutions = ["out=\"$(git push origin main 2>&1 # it's fine\n)\"; echo \"$out\"",
+                     "echo \"$(git push origin main; printf $'it\\'s')\"",
+                     "cat <<EOF\n$(git push origin main # don't\n)\nEOF",
+                     "cat <(echo hi # it's\n) 'a)'; git push origin main",
+                     "cat <(printf $'it\\'s)'; git push origin main\n)",
+                     "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\""]
+    with when("Claude pushes main inside or after a $(...) or <(...) whose comment holds a quote mark, or whose $'...' "
+              "string holds an escaped quote, in double quotes, bare or in a heredoc body, each in its own session"):
+        results = hooks(home, tool, substitutions, "substitutions")
+    with then("the gate ends each substitution where the shell ends it, reads the push inside and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pushes main inside a heredoc body's $(...) whose own heredoc holds a quote mark"):
+        nested = home.hook(tool, "PreToolUse", "cat <<EOF\n$(git push origin main; cat <<X\nit's\nX\n)\nEOF",
+                           session="nested")
+    with then("the gate finds no end for that $(...), so it reads the rest of the body as its command and names "
+              "the dash"):
+        assert nested.refused and nested.findings == ["dashes"], nested.reason
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)

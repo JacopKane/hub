@@ -407,7 +407,11 @@ def mark_expansions(line, sources=None):
         following = line[index + 1] if index + 1 < len(line) else ""
         if quote is None and following == "(" and (char in "<>" or (char == "=" and (
                 index == 0 or line[index - 1] in WORD_START))):
-            end = closing(line, index + 1)
+            end = closing(line, index + 1, commands=True)
+            if end < 0:
+                out.append(UNREADABLE)
+                if sources is not None:
+                    sources.append(Source(line[index + 2:]))  # no end, so the rest of the line may be its command
             if end > 0:
                 if sources is not None:
                     source = Source(line[index + 2:end])
@@ -452,10 +456,11 @@ def mark_expansions(line, sources=None):
             continue
         elif char == "`" or (char == "$" and following == "("):
             start = index + 1 if char == "`" else index + 2
-            end = closing(line, index + 1) if char == "$" else line.find("`", start)
-            if end > 0 and sources is not None:
-                sources.append(line[start:end])  # even $(cat file), since its pipe could feed a public tool
-            if char == "$" and CAT_START.match(line, index):
+            end = closing(line, index + 1, commands=True) if char == "$" else line.find("`", start)
+            if sources is not None:
+                # even $(cat file), since its pipe could feed a public tool, and with no end the rest of the line
+                sources.append(line[start:end] if end > 0 else line[start:])
+            if end > 0 and char == "$" and CAT_START.match(line, index):
                 if end > 0 and not any(mark in line[start:end] for mark in ("$", "`", UNREADABLE)):
                     out.append(one_word(line[index:end + 1], quote))  # the gate reads $(cat file) itself
                     index = end + 1
@@ -565,30 +570,73 @@ class WordPart(str):
     after it is word text and opens no comment."""
 
 
-def closing(line, start, brackets="()"):
-    """Where the ) that closes the ( at start is, or -1. Quotes and a backslash are skipped.
+def closing(line, start, brackets="()", commands=False):
+    """Where the ) that closes the ( at start is, or -1, read the way zsh reads it.
 
-    With brackets="{}" it finds the } that closes a {.
+    Quotes, a backslash and the escapes of a $'...' string are skipped, and
+    so is each $(...), ${...} and backtick pair inside, double quotes
+    included. With commands the ( opens a command, as in $(...) or <(...),
+    so a # where a word starts opens a comment that runs to the line end,
+    and each $(...) inside reads the same. A $((...)) sum, a ((...)) and a
+    ${...} hold no comment. With brackets="{}" it finds the } that closes a {.
+    bash 3.2 reads a quote mark in such a comment inside "$(...)" or <(...)
+    as a quote and stops with a syntax error, so it runs no command that
+    this reading misses.
     """
-    opener, closer = brackets
-    depth, index, quote = 0, start, None
+    stack = ["$(" if commands else "{" if brackets == "{}" else "(("]
+    index, word, last, last_starts = start + 1, False, "", True
     while index < len(line):
-        char = line[index]
-        if quote == "'":
-            quote = None if char == "'" else quote
-        elif char == "\\":
+        char, context = line[index], stack[-1]
+        if context in ("'", "$'"):
+            escaped = context == "$'" and char == "\\"
+            stack = stack[:-1] if char == "'" and not escaped else stack
+            word, last, index = True, "", index + 1 + escaped
+            continue
+        if char == "\\":
+            word, last = (word, last) if line.startswith("\\\n", index) else (True, "")
+            index += 2
+            continue
+        if context == "`":
+            stack = stack[:-1] if char == "`" else stack
+            word, last, index = True, "", index + 1
+            continue
+        opener = next((mark for mark in ("$(", "${") if line.startswith(mark, index)), None)
+        if opener:
+            stack = stack + ["((" if line.startswith("$((", index) else "$(" if opener == "$(" else "{"]
+            word, last, index = False, "", index + 2
+            continue
+        if context == '"':
+            stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             index += 1
-        elif quote == '"':
-            quote = None if char == '"' else quote
-        elif char in "'\"":
-            quote = char
-        elif char == opener:
-            depth += 1
-        elif char == closer:
-            depth -= 1
-            if depth == 0:
+            continue
+        if char == "#" and context in ("$(", "(") and not word:
+            end = line.find("\n", index)
+            if end < 0:
+                return -1
+            index = end
+            continue
+        if (char == ")" and context in ("$(", "(", "((")) or (char == "}" and context == "{"):
+            stack = stack[:-1]
+            if not stack:
                 return index
-        index += 1
+            word, last, index = context != "(", "", index + 1
+            continue
+        if char == "(" and context != "{":
+            substitution = last in ("<", ">") or (last == "=" and last_starts)
+            stack = stack + ["((" if context == "((" else "$(" if substitution else "("]
+            word, last, index = False, "", index + 1
+            continue
+        if char == "{" and context == "{":
+            stack = stack + ["{"]
+        elif line.startswith("$'", index):
+            stack, index = stack + ["$'"], index + 1
+        elif char in "'\"`":
+            stack = stack + [char]
+        else:
+            last_starts, word, last = not word, not (char.isspace() or char in ";&|()<>"), char
+            index += 1
+            continue
+        word, last, index = True, "", index + 1
     return -1
 
 
@@ -826,8 +874,9 @@ def heredoc_substitutions(body):
             continue
         if char == "`" or body.startswith("$(", index):
             start = index + 1 if char == "`" else index + 2
-            end = body.find("`", start) if char == "`" else closing(body, index + 1)
+            end = body.find("`", start) if char == "`" else closing(body, index + 1, commands=True)
             if end < 0:
+                found.append(body[start:])  # no end, so the rest of the body may be its command
                 break
             found.append(body[start:end])
             index = end + 1
