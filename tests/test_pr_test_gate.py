@@ -758,6 +758,25 @@ def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
         whole = bash(home, f"gh pr edit 7 --body-file {good}")
     with then("it runs"):
         assert quiet(whole), whole.reason
+    with when("Claude sends a whole body in a heredoc and names standard input in another spelling, for a body, "
+              "a GraphQL query or an --input file"):
+        query = 'mutation { updatePullRequest(input: {pullRequestId: "P", body: "x"}) { clientMutationId } }'
+        spelled = {
+            "capital letters": f"gh pr edit 7 --body-file /Dev/fd/0 <<'A'\n{CANONICAL}A",
+            "two slashes": f"gh pr edit 7 --body-file //dev/fd/0 <<'A'\n{CANONICAL}A",
+            "a dot folder": f"gh pr edit 7 --body-file /dev/./stdin <<'A'\n{CANONICAL}A",
+            "capital stdin": f"gh pr edit 7 --body-file /dev/STDIN <<'A'\n{CANONICAL}A",
+            "relative after cd": f"cd /dev && gh pr edit 7 --body-file stdin <<'A'\n{CANONICAL}A",
+            "relative fd after cd": f"cd /dev/fd && gh pr edit 7 --body-file 0 <<'A'\n{CANONICAL}A",
+            "a field file": f"gh api repos/o/r/pulls/7 -X PATCH -F body=@/Dev/stdin <<'A'\n{CANONICAL}A",
+            "a query file": f"gh api graphql -F query=@//dev/stdin <<'Q'\n{query}\nQ",
+            "an input file": f"gh api repos/o/r/pulls/7 -X PATCH --input /dev/./fd/0 <<'A'\n{{\"body\": \"x\"}}\nA",
+        }
+        spelled_results = {name: bash(home, line) for name, line in spelled.items()}
+    with then("none runs unread: each is refused as a body, a query or an input the gate can not read"):
+        whys = {"a query file": QUERY_WHY, "an input file": API_INPUT_JSON_WHY}
+        assert {name: says(home, result, "unreadable_push.md", why=whys.get(name, BODY_WHY))
+                for name, result in spelled_results.items()} == {name: True for name in spelled}
 
 
 def graphql_call(query, *fields):
@@ -2870,12 +2889,13 @@ def test_a_step_inside_another_command_is_refused_however_many_steps_stand_besid
         assert quiet(visible_program), visible_program.reason
         assert says(home, written_out, "no_report.md", short=feature[:7]), written_out.reason
     with when("self_protection is off, so the gates alone answer, and Claude sends a program the shell fills in "
-              "after a wrapper such as env, sudo, nice, command or exec, with the text gate letting unreadable "
-              "steps through in each of two ways, and a wrapped program whose folder alone a variable fills in"):
+              "after a wrapper such as env, sudo, nice, command or exec, or a program inside env's split string, "
+              "with the text gate letting unreadable steps through in each of two ways, and a wrapped program "
+              "whose folder alone a variable fills in"):
         home.hubctl_from_mod("off", "self_protection")
         wrapped = ["env $CMD pr ready 7", "sudo -u root $CMD push origin feature",
                    "nice -n 5 ${X}it push origin feature", "command $CMD", "env A=b timeout 5 $CMD",
-                   "nohup exec $CMD"]
+                   "nohup exec $CMD", "env -S'gh pr ready 7'", "env --split-string='$X'"]
         wrapped_results = {}
         for setting, (state, flag) in settings.items():
             home.hubctl_from_mod(state, flag)
