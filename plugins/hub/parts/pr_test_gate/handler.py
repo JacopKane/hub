@@ -1288,15 +1288,30 @@ def may_be_a_pr(step, issue_path, variables, lookups):
 
 def issue_place(word, repo_values, step):
     """(the issues endpoint, the variables gh runs with) for an issue or PR that gh issue names by number, #number or
-    URL, read as gh reads it, or None for a word gh refuses. A URL names its own repo, as in gh."""
-    link = re.match(r"https?://([^/?#]+)/([^/?#]+)/([^/?#]+)/(?:issues|pull)/(\d+)", word, re.I)
-    if link:
-        host, owner, name, number = link.groups()
-        return f"repos/{owner}/{name}/issues/{int(number)}", {"GH_REPO": f"{host}/{owner}/{name}"}
+    URL, read as gh reads it, or None for a word gh refuses. A URL names its own repo, as in gh. An http or https
+    word the gate can not read as an issue link gets the unreadable mark as its endpoint, so it counts as a PR."""
+    if re.match(r"https?:", word, re.I):
+        return linked_issue_place(word) or (unreadable_mark(), {})
     number = re.fullmatch(r"#?\+?(\d+)", word)
     if number:
         return f"repos/{{owner}}/{{repo}}/issues/{int(number.group(1))}", gh_repo_place(step, repo_values)[2]
     return None
+
+
+def linked_issue_place(word):
+    """(the issues endpoint, the variables gh runs with) for an issue link, or None. gh parses the link, decodes
+    its path and matches /owner/name/issues/number or /owner/name/pull/number at the path's start, so
+    .../%70ull/7 is PR 7 too. The decoded owner and name are encoded again, so the lookup asks for that repo only."""
+    try:
+        link = urllib.parse.urlsplit(word)
+        host = link.hostname
+    except ValueError:
+        return None
+    named = re.match(r"/([^/]+)/([^/]+)/(?:issues|pull)/([0-9]+)", urllib.parse.unquote(link.path))
+    if not (host and named):
+        return None
+    owner, name, number = (urllib.parse.quote(part, safe="") for part in named.groups())
+    return f"repos/{owner}/{name}/issues/{int(number)}", {"GH_REPO": f"{host}/{owner}/{name}"}
 
 
 def api_path(endpoint):

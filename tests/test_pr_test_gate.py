@@ -1982,6 +1982,37 @@ def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_iss
         assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
 
 
+def test_a_pr_named_by_a_link_gh_decodes_gets_the_body_check_and_a_link_the_gate_can_not_read_counts_as_a_pr(home):
+    with given("PR 7 in acme/demo, plain issue 15 only in acme/other, and a bad body"):
+        with_github(home)
+        fake_gh(home, issues=["github.com/acme/other#15"])
+        bad = body_file(home, NO_PART, "bad.md")
+    encoded_edits = [f"gh issue edit https://github.com/acme/demo/%70ull/7 -F {bad}",
+                     f"gh issue edit https://github.com/acme/demo/issue%73/7 -F {bad}",
+                     f"gh issue edit 'https://github.com/acme/demo/pull/7?x=1#top' -F {bad}",
+                     f"gh issue edit https://GitHub.com:443/acme/demo/pull/7 -F {bad}"]
+    with when("Claude edits PR 7's body to the bad one, naming PR 7 by a link with a percent-encoded path, a query "
+              "and fragment, or a capital host name and a port, all of which gh reads as PR 7"):
+        encoded = {step: bash(home, step) for step in encoded_edits}
+    with then("each is refused with pr-check's sentence, after gh says 7 in acme/demo is a PR"):
+        for step, result in encoded.items():
+            assert result.refused and result.reason == missing_part(home), (step, result.reason)
+        assert ["api", "repos/acme/demo/issues/7", "--jq", 'has("pull_request")'] in gh_calls(home)
+    odd_links = [f"gh issue edit https://github.com/acme/demo/PULL/7 -F {bad}",
+                 f"gh issue edit 'https://[github.com/acme/demo/pull/7' -F {bad}",
+                 f"gh issue edit https:///acme/demo/pull/7 -F {bad}",
+                 f"gh issue edit HTTP:acme/demo/pull/7 -F {bad}"]
+    with when("Claude edits a body by an http or https word the gate can not read as an issue link"):
+        odd = {step: bash(home, step) for step in odd_links}
+    with then("each is refused as if it named a PR, since the gate can not tell which issue gh would edit"):
+        for step, result in odd.items():
+            assert result.refused and result.reason == missing_part(home), (step, result.reason)
+    with when("Claude edits plain issue 15 in acme/other by a link with a percent-encoded path"):
+        plain = bash(home, f"gh issue edit https://github.com/acme/other/%69ssues/15 -F {bad}")
+    with then("it runs, since gh reads the same link as plain issue 15 there"):
+        assert quiet(plain), plain.reason
+
+
 def test_a_pr_body_edit_inside_a_wrapper_or_a_substitution_is_refused_as_a_step_inside_another_command(home):
     with given("PR 7 on GitHub, a bad body, and a GraphQL file whose aliased mutation sets PR 7's body"):
         with_github(home)
