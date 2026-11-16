@@ -4,7 +4,7 @@
 FROM python:3.13-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git tmux \
+    && apt-get install -y --no-install-recommends git procps tmux \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir pytest==9.2.0
 
