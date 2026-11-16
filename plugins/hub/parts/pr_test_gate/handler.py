@@ -1219,18 +1219,12 @@ def api_step(command, step, flags, answer, lookups):
     inputs = [value for name, value in items if name == "--input"]
     sends = any(name in ("--field", "--raw-field") for name, _ in items) or inputs
     method = methods[-1].upper() if methods else ("POST" if sends else "GET")  # as gh picks it
-    for path in inputs:
-        try:
-            sent = json.loads(command.from_file(path))
-        except ValueError:
-            sent = None
-        if not isinstance(sent, dict):
-            raise unreadable("query" if endpoint == "graphql" else "head")
-        fields.update(sent_fields(sent, endpoint == "graphql"))
+    files = [sent_object(command.from_file(path), endpoint == "graphql") for path in inputs]
     if endpoint == "graphql":
         if flags.runs(f"{PART}.report") or flags.runs(f"{PART}.body"):
             query_read_in_full(step, gate().graphql_query_source(items, command))
-        return graphql_step(fields, step, flags, answer, lookups)
+        return graphql_step(graphql_sent(fields, files), step, flags, answer, lookups)
+    fields = {**fields, **{key: value for sent in files for key, value in flat_fields(sent).items()}}
     new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
     if new and method == "POST":
         written_out(step)
@@ -1256,16 +1250,42 @@ def api_step(command, step, flags, answer, lookups):
     return []
 
 
-def sent_fields(sent, graphql):
-    """The fields an --input file sends, named as gh's -f fields name them. A GraphQL file's variables count as
-    fields too, as gh sends every -f field of a GraphQL call as a variable."""
-    variables = sent.get("variables") if graphql else None
+def sent_object(text, graphql):
+    """The JSON object an --input file sends, refusing a file that holds none."""
+    try:
+        sent = json.loads(text)
+    except ValueError:
+        sent = None
+    if not isinstance(sent, dict):
+        raise unreadable("query" if graphql else "head")
+    return sent
+
+
+def graphql_sent(fields, files):
+    """(the query, the variables gh sends, {name: [value]} for the other values the call names) of a GraphQL
+    call. gh makes every -f field but query and operationName a variable. With --input it sends the last file as
+    it is and puts the -f fields in the URL, so only that file's variables are sent. The other values still get
+    read, so the gate never reads less than GitHub may take."""
+    plain = {key: value for key, value in fields.items() if key not in ("query", "operationName")}
+    if not files:
+        return fields.get("query", ""), plain, {key: [fields[key]] for key in ("operationName",) if key in fields}
+    last = files[-1]
+    query = last["query"] if isinstance(last.get("query"), str) else fields.get("query", "")
+    loose = [plain, *({**flat_fields(sent), **file_variables(sent)} for sent in files[:-1]),
+             flat_fields({key: value for key, value in last.items() if key not in ("query", "variables")})]
+    names = {name for found in loose for name in found}
+    return query, file_variables(last), {name: [found[name] for found in loose if name in found] for name in names}
+
+
+def file_variables(sent):
+    """The variables an --input file sends, named as gh's -f fields name them, as in pr[body]."""
+    variables = sent.get("variables")
     if isinstance(variables, str):
         try:
             variables = json.loads(variables)
         except ValueError:
             variables = None
-    return {**flat_fields(sent), **(flat_fields(variables) if isinstance(variables, dict) else {})}
+    return flat_fields(variables) if isinstance(variables, dict) else {}
 
 
 def flat_fields(sent, prefix=""):
@@ -1342,53 +1362,100 @@ def query_read_in_full(step, source):
             raise unreadable("query")
 
 
-def graphql_step(fields, step, flags, answer, lookups):
-    query = fields.get("query", "")
+def graphql_step(sent_call, step, flags, answer, lookups):
+    query, sent, others = sent_call
     names = pr_mutations(query)
     if "markPullRequestReadyForReview" in names and flags.runs(f"{PART}.report"):
         raise unreadable("node")
     if not names & {"createPullRequest", "updatePullRequest"}:
         return []
     written_out(step)
-    body = graphql_value(query, "body", fields)
-    if "createPullRequest" not in names:
-        in_input = input_bodies(query, fields) if flags.runs(f"{PART}.body") else []
-        for text in ([] if body is None else [body]) + in_input:
-            body_stop(text, step.cwd, flags, answer)
+    code, strings = graphql_code(query)
+
+    def values(key):
+        return graphql_values(code, strings, key, sent, others)
+    in_input = input_bodies(code, sent, others) if flags.runs(f"{PART}.body") else []
+    for text in values("body") + in_input or ([""] if "createPullRequest" in names else []):
+        body_stop(text, step.cwd, flags, answer)
+    if "createPullRequest" not in names or not flags.runs(f"{PART}.report"):
         return []
-    body_stop(body or "", step.cwd, flags, answer)
-    if not flags.runs(f"{PART}.report"):
-        return []
-    branch = graphql_value(query, "headRefName", fields)
+    branch = one_value(values("headRefName"))
     if not branch:
         raise unreadable("head")
-    base_place = node_place(graphql_value(query, "repositoryId", fields), step)
-    head_node = graphql_value(query, "headRepositoryId", fields)
+    base_place = node_place(one_value(values("repositoryId")), step)
+    head_node = one_value(values("headRepositoryId"))
     head_place = base_place if head_node is None else node_place(head_node, step)
-    return new_pr(step, branch, True, graphql_value(query, "baseRefName", fields), (head_place, base_place), lookups)
+    return new_pr(step, branch, True, one_value(values("baseRefName")), (head_place, base_place), lookups)
 
 
-def input_bodies(query, fields):
+def input_bodies(code, sent, others):
     """The bodies an updatePullRequest sets inside an input object variable, such as -f pr[body]=x for input: $pr.
     An input object the call does not send, or a field name the shell fills in, may hold a body."""
-    names = re.findall(r"\bupdatePullRequest\s*\(\s*input\s*:\s*\$(\w+)", query)
-    if names and any(unreadable_mark() in key for key in fields):
+    names = re.findall(r"\bupdatePullRequest\s*\(\s*input\s*:\s*\$(\w+)", code)
+    if names and any(unreadable_mark() in key for key in [*sent, *others]):
         raise unreadable("body")
-    if any(not any(key.startswith(name + "[") for key in fields) for name in names):
+    if any(not any(key.startswith(name + "[") for key in sent) for name in names):
         raise unreadable("body")
-    return [fields[name + "[body]"] for name in names if name + "[body]" in fields]
+    return [value for name in names
+            for value in ([sent[name + "[body]"]] if name + "[body]" in sent else []) + others.get(name + "[body]", [])]
 
 
-def graphql_value(query, key, fields):
-    """A string the mutation sets, written in the query or passed as a variable, or None."""
-    written = re.search(r"\b" + key + r'\s*:\s*"((?:[^"\\]|\\.)*)"', query)
-    if written:
-        try:
-            return json.loads('"' + written.group(1) + '"')
-        except ValueError:
-            return written.group(1)
-    variable = re.search(r"\b" + key + r"\s*:\s*\$(\w+)", query)
-    return fields.get(variable.group(1)) if variable else None
+# A GraphQL string, set aside so a key is never read inside one, or a comment, which runs to the end of its line
+GRAPHQL_STRING_OR_COMMENT = re.compile(r'"(?:[^"\\\n\r]|\\.)*"|#[^\n\r]*')
+
+
+def graphql_code(query):
+    """(the query with each string set aside as "0", "1", ..., and its comments and commas read as spaces, the
+    strings), as GitHub reads it, since GraphQL skips commas as it skips spaces. Refuses a block string or a quote
+    mark the gate can not pair, which the gate does not read."""
+    if '"""' in query:
+        raise unreadable("query")
+    strings = []
+
+    def set_aside(found):
+        if found.group().startswith("#"):
+            return " "
+        strings.append(found.group())
+        return f'"{len(strings) - 1}"'
+    code = GRAPHQL_STRING_OR_COMMENT.sub(set_aside, query).replace(",", " ").replace("\ufeff", " ")
+    if code.count('"') != 2 * len(strings):
+        raise unreadable("query")
+    return code, strings
+
+
+def graphql_values(code, strings, key, sent, others):
+    """Every string the mutations set key to, written in the query or passed as a variable. A variable the call
+    does not send takes its default, as on GitHub. The other values the call names for it count too."""
+    written = [graphql_text(strings[int(index)]) for index in re.findall(r"\b" + key + r'\s*:\s*"(\d+)"', code)]
+    variables = re.findall(r"\b" + key + r"\s*:\s*\$(\w+)", code)
+    return written + [value for name in variables
+                      for value in ([sent[name]] if name in sent else variable_default(code, strings, name))
+                      + others.get(name, [])]
+
+
+def variable_default(code, strings, name):
+    """The default of a variable the call does not send, as a list: empty when it has none or a null one. Refuses a
+    default that is not a plain string or null, or a second default for the same name."""
+    defaults = re.findall(r"\$" + name + r'\s*:[^=$)]*=\s*("\d+"|null\b)?', code)
+    if len(defaults) > 1 or "" in defaults:
+        raise unreadable("query")
+    return [graphql_text(strings[int(found[1:-1])]) for found in defaults if found != "null"]
+
+
+def graphql_text(string):
+    """A GraphQL string's text, which escapes as JSON does."""
+    try:
+        return json.loads(string)
+    except ValueError:
+        return string[1:-1]
+
+
+def one_value(values):
+    """The one value a mutation sets, or None. Refuses values that differ, since the gate can not tell which one
+    GitHub uses."""
+    if len(set(values)) > 1:
+        raise unreadable("query")
+    return values[0] if values else None
 
 
 # The report check

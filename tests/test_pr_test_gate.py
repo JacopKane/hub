@@ -2017,6 +2017,57 @@ def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_na
         assert unknown.refused and unknown.reason == missing_part(home), unknown.reason
 
 
+def test_a_graphql_pr_body_gets_the_body_check_wherever_the_query_sets_it(home):
+    with given("PR 7 on GitHub, a good and a bad body as files and as GraphQL strings"):
+        with_github(home)
+        good_file, bad_file = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+        good, bad = json.dumps(CANONICAL), json.dumps(NO_PART)
+    by_default = ('mutation($text: String = {default}) {{ updatePullRequest(input: {{pullRequestId: "PR_kw1", '
+                  'body: $text}}) {{ clientMutationId }} }}')
+
+    def edit(inside):
+        return graphql_call(f'mutation {{ updatePullRequest(input: {{pullRequestId: "PR_kw1", {inside}}}) '
+                            "{ clientMutationId } }")
+
+    def sent_file(query, sent, name):
+        return "gh api graphql --input " + body_file(home, json.dumps({"query": query, **sent}), name)
+    second = ('mutation { first: updatePullRequest(input: {pullRequestId: "PR_kw1", body: %s}) { clientMutationId } '
+              'second: updatePullRequest(input: {pullRequestId: "PR_kw2", body: %s}) { clientMutationId } }')
+    created = ('mutation($text: String = %s) { createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", '
+               'headRefName: "side", title: "T", body: $text}) { pullRequest { number } } }')
+    hidden = {"a default the call does not send": graphql_call(by_default.format(default=bad)),
+              "a default when the --input file sends the value outside its variables":
+                  sent_file(by_default.format(default=bad), {"text": CANONICAL, "variables": {}}, "outside.json"),
+              "a default for a new PR": graphql_call(created % bad),
+              "a body after a comment that holds a good one": edit(f"# body: {good}\n body: {bad}"),
+              "a body after a comma": edit(f"body:, {bad}"),
+              "a second edit after a good one": graphql_call(second % (good, bad)),
+              "an input object named after a comment":
+                  graphql_call("mutation($pr: UpdatePullRequestInput!) { updatePullRequest(# the edit\n input: $pr) "
+                               "{ clientMutationId } }", shlex.quote("pr[pullRequestId]=PR_kw1"),
+                               "-F", shlex.quote(f"pr[body]=@{bad_file}"))}
+    with when("Claude sets PR 7's body to one with no tested part through GraphQL, by a variable's default, "
+              "after a comment or a comma, in a second edit, or in an input object named after a comment"):
+        results = {case: bash(home, step) for case, step in hidden.items()}
+    with then("each is refused with pr-check's sentence, as GitHub sets that body"):
+        assert [(case, result.reason) for case, result in results.items()
+                if result.reason != missing_part(home)] == []
+    with when("Claude sends a good default, a good value over a bad default, and a good body after a comment that "
+              "holds a bad one"):
+        fine = {"good default": bash(home, graphql_call(by_default.format(default=good))),
+                "sent over a default": bash(home, graphql_call(by_default.format(default=bad),
+                                                               f"-F text=@{good_file}")),
+                "comment": bash(home, edit(f"# body: {bad}\n body: {good}"))}
+        sent_bad = bash(home, graphql_call(by_default.format(default=good), f"-F text=@{bad_file}"))
+    with then("each runs, and a bad value sent over a good default is refused"):
+        assert [(case, result.reason) for case, result in fine.items() if not quiet(result)] == []
+        assert sent_bad.refused and sent_bad.reason == missing_part(home), sent_bad.reason
+    with when("Claude sets the body in a block string, which can hold a good body's text before the real one"):
+        block = bash(home, edit(f'title: """body: {good}""", body: {bad}'))
+    with then("it is refused, since the gate does not read block strings"):
+        assert says(home, block, "unreadable_push.md", why=QUERY_WHY), block.reason
+
+
 def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):
     with given("PR 7 and plain issue 12 on GitHub, plain issue 15 only in acme/other, and a good and a bad body"):
         with_github(home)
