@@ -147,6 +147,7 @@ SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
 SSH_CONFIG_OPTIONS = {"-F", "-o", "-p"}  # the ssh options that change the config ssh -G prints for a host
 # A port as C's strtol reads the text after a colon, which git's get_host_and_port and get_port take whole
 GIT_PORT = re.compile(r"[ \t\n\v\f\r]*[+-]?[0-9]+")
+PERCENT_ESCAPE = re.compile(rb"%([0-9A-Fa-f]{2})")
 # ssh's one-letter options, as its getopt string names them: those that take a value, and those that do not
 SSH_VALUE_LETTERS = set("BDEFIJLOPQRSWbceilmopw")
 SSH_SWITCH_LETTERS = set("1246ACGKMNTVXYafgknqstvxy")
@@ -620,14 +621,26 @@ def ssh_config_options(options):
 
 def url_authority(url):
     """(the [user@]host[:port] part of a remote URL, or None for a local path, whether git reaches it over ssh), as
-    git reads a URL: scheme://[user@]host[:port]/path, or [user@]host:path when a colon comes before any slash."""
+    git reads a URL: scheme://[user@]host[:port]/path, decoded once first, or [user@]host:path when a colon comes
+    before any slash, which git does not decode."""
     scheme, separator, rest = url.partition("://")
     if separator and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
         if scheme.lower() == "file":
             return None, False
-        return rest.split("/", 1)[0], scheme.lower() in SSH_SCHEMES
+        return git_url_decode(rest).split("/", 1)[0], scheme.lower() in SSH_SCHEMES
     scp_like = SCP_LIKE.match(url)
     return (scp_like.group(0)[:-1], True) if scp_like else (None, False)
+
+
+def git_url_decode(text):
+    """The text with each %XX decoded once, byte for byte, as git's url_decode reads a URL before it splits it
+    into user, host, port and path. Like git, it leaves %00 as it is."""
+    return os.fsdecode(PERCENT_ESCAPE.sub(decoded_escape, os.fsencode(text)))
+
+
+def decoded_escape(escape):
+    value = int(escape.group(1), 16)
+    return bytes([value]) if value else escape.group(0)
 
 
 def ssh_destination(authority):

@@ -1837,6 +1837,45 @@ def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
         assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work"]
 
 
+def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to(home):
+    with given("branch feature with open PR 7 and a new commit with no report, alias github-work for github.com, "
+               "alias port-work that is github.com only on port 2222, and remotes that spell their hosts with "
+               "percent escapes"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        with_fake_ssh(home, hosts={"github-work": "github.com"}, ports={"2222": {"port-work": "github.com"}})
+        ssh_user = "git" + "@"
+        on_github = {"letter": f"ssh://{ssh_user}%67ithub.com/acme/demo.git",
+                     "dot": f"ssh://{ssh_user}github%2Ecom/acme/demo.git",
+                     "alias": f"ssh://{ssh_user}github%2Dwork/acme/demo.git",
+                     "user_and_port": "ssh://git%40port-work%3A2222/acme/demo.git"}
+        elsewhere = {"twice": f"ssh://{ssh_user}%2567ithub.com/acme/demo.git",
+                     "nul": f"ssh://{ssh_user}github.com%00x/acme/demo.git",
+                     "scp_like": f"{ssh_user}%67ithub.com:acme/demo.git"}
+        for name, url in {**on_github, **elsewhere}.items():
+            home.git("remote", "add", name, url)
+    with when("Claude pushes feature to each remote whose ssh:// URL decodes to GitHub"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in on_github}
+    with then("each is judged as the push to GitHub it is, since git decodes an ssh:// URL once before it reads "
+              "the user, host and port, and ssh -G is asked about the decoded alias and port"):
+        for name, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work"],
+                                                  ["-p", "2222", "-G", "--", f"{ssh_user}port-work"]]
+    with when("Claude pushes feature to a URL escaped twice, one with %00, which git leaves as it is, and an "
+              "address in the user@host:path form, which git does not decode"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in elsewhere}
+    with then("each runs, and ssh -G is asked about the host as git hands it to ssh"):
+        for name, result in results.items():
+            assert quiet(result), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}%67ithub.com"],
+                                                  ["-G", "--", f"{ssh_user}github.com%00x"],
+                                                  ["-G", "--", f"{ssh_user}%67ithub.com"]]
+
+
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
     with given("branch feature with open PR 7, pushed, and a new commit with no report"):
         with_github(home)
