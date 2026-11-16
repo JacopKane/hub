@@ -395,7 +395,7 @@ class Command:
             for index, body in enumerate(self.heredocs):
                 if name == PLACEHOLDER.format(index):
                     return body
-            return self.file_text(name)
+            return self.file_text(name, by_the_step=False)
 
         value = CAT_FILE.sub(cat, value)
         for index, body in enumerate(self.heredocs):
@@ -408,33 +408,37 @@ class Command:
             return self.standard_input()
         return self.file_text(path)
 
-    def file_text(self, path, reader=None, written=None):
+    def file_text(self, path, reader=None, written=None, by_the_step=True):
         """A file's text as reader, read_file by default, reads it now, or UNREADABLE when the line may write the
         file first or may change the folder a relative path starts from. written is the path as the line names it,
-        when path is a file the gate found for a pattern."""
-        unknown = path and (self.may_write_first(path) or self.may_move_first(written or path))
+        when path is a file the gate found for a pattern. by_the_step is False for a file a substitution reads,
+        which the shell opens before a wrapper such as env -C moves the step."""
+        unknown = path and (self.may_write_first(path) or self.may_move_first(written or path, by_the_step))
         return UNREADABLE if unknown else (reader or read_file)(path, self.cwd)
 
-    def may_move_first(self, path):
-        """Whether a cd, pushd or popd may change the folder before the step at self.at reads a relative path.
+    def may_move_first(self, path, by_the_step=True):
+        """Whether the folder may change before the step at self.at reads a relative path.
 
         The gate reads such a path from the folder the line starts in, so a
         folder change on a step that may run first, or on a line around this
-        one, leaves the file unknown.
+        one, leaves the file unknown. When the step itself opens the file, a
+        wrapper that moves it, as env -C and sudo -D do, leaves it unknown too.
         """
         if os.path.isabs(os.path.expanduser(path)):
             return False
         segments = self.segments()
         if self.at is None or segments is None or self.at >= len(segments):
             return True
-        return (any(changes_folder(segment) for spot, segment in enumerate(segments)
-                    if spot != self.at and not runs_after(segments, self.at, spot))
+        return ((by_the_step and runs_elsewhere(segments[self.at]))
+                or any(changes_folder(segment) for spot, segment in enumerate(segments)
+                       if spot != self.at and not runs_after(segments, self.at, spot))
                 or any(self.script_changes_folder(text) for text in self.outer))
 
     def script_changes_folder(self, text):
-        """Whether a step in the text changes the folder, or the gate can not split the text into steps."""
+        """Whether a step in the text changes the folder or moves its program, as env -C bash does for the script it
+        runs, or the gate can not split the text into steps."""
         segments = Command(text, self.cwd).segments()
-        return segments is None or any(map(changes_folder, segments))
+        return segments is None or any(changes_folder(segment) or moved_by_a_wrapper(segment) for segment in segments)
 
     def may_write_first(self, path):
         """Whether the line may write the file before or while the step at self.at reads it.
@@ -567,8 +571,13 @@ NAME_ENDS = re.compile(r"[\s;&|()<>=`'\"\\${}@:,\x00-\x06]+")
 # Programs that write no file, whatever words the shell fills in for them. Any other program may write a file a
 # filled-in word names, so the gate does not list the programs that write.
 WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export", "cd", "pushd", "popd"}
-# The shell's own steps that change its folder, so a relative path after them starts somewhere else
-FOLDER_CHANGERS = {"cd", "pushd", "popd"}
+# The shell's own steps that change its folder, so a relative path after them starts somewhere else. chdir is zsh's
+# other name for cd.
+FOLDER_CHANGERS = {"cd", "pushd", "popd", "chdir"}
+# The options of env and sudo that start the program in another folder or root, or give it words the gate does not
+# split: env -C and -S, sudo -D and -R
+FOLDER_LETTERS = {"C", "D", "R", "S"}
+FOLDER_LONG_OPTIONS = {"--chdir", "--chroot", "--split-string"}
 
 
 def runs_after(segments, at, spot):
@@ -608,9 +617,34 @@ def gets_a_filled_in_word(words):
 
 
 def changes_folder(words):
-    """Whether a step changes the shell's folder with cd, pushd or popd. Assignments before it change none."""
-    command = list(itertools.dropwhile(lambda word: re.match(r"[A-Za-z_]\w*=", word), words))
-    return bool(command) and command[0] in FOLDER_CHANGERS
+    """Whether a step may change the shell's folder: cd, pushd, popd or chdir, also after builtin or command, eval,
+    a script the shell sources, or a program the shell fills in. Assignments before it change none."""
+    spot, hidden = program_spot(words)
+    return hidden or (spot is not None and words[spot] in {*FOLDER_CHANGERS, *SOURCES, "eval"})
+
+
+def moved_by_a_wrapper(words):
+    """Whether a wrapper before the program may start it in another folder, as env -C, env --chdir and sudo -D do.
+    env -S counts, since it splits its value into words the gate does not see. A short option counts when any of
+    its letters is one of these, and a long one when it may be short for one, as --ch is for --chdir."""
+    spot, _hidden = program_spot(words)
+    return any(moves_the_program(word) for word in words[:spot])
+
+
+def moves_the_program(word):
+    """Whether a wrapper's option word may move the program to another folder."""
+    if word.startswith("--"):
+        key = word.split("=", 1)[0]
+        return len(key) > 2 and any(option.startswith(key) for option in FOLDER_LONG_OPTIONS)
+    return word.startswith("-") and any(letter in FOLDER_LETTERS for letter in word[1:])
+
+
+def runs_elsewhere(words):
+    """Whether the program of the step that opens a file may start in another folder than the line's: a wrapper
+    moves it, or a program other than git or gh runs git or gh, as chroot does."""
+    spot, hidden = program_spot(words)
+    return (hidden or spot is None or os.path.basename(words[spot]).casefold() not in ("git", "gh")
+            or moved_by_a_wrapper(words))
 
 
 def runs_a_script(words):

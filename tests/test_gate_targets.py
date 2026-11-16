@@ -301,10 +301,34 @@ def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool)
     with then("each is refused as unreadable, since the gate reads the file from the folder the line starts in"):
         assert {name: result.findings for name, result in results.items()} == {
             name: ["unreadable"] for name in commands}
-    with when("the cd comes after the step, or the step names the file by its full path"):
+    with when("the folder may change another way before the step reads a file by a relative path"):
+        other_ways = {
+            "env -C": "env -C docs gh pr comment 3 -F notes.md",
+            "env --chdir=": "env --chdir=docs gh pr comment 3 -F notes.md",
+            "short for --chdir": "env --ch docs gh pr comment 3 -F notes.md",
+            "in a cluster": "env -vC docs gh pr comment 3 -F notes.md",
+            "sudo -D": "sudo -D docs git commit -F notes.md",
+            "sudo --chdir=": "sudo --chdir=docs gh pr comment 3 -F notes.md",
+            "builtin cd": "builtin cd docs && gh pr comment 3 -F notes.md",
+            "command cd": "command cd docs && gh pr comment 3 -F notes.md",
+            "zsh chdir": "chdir docs && gh pr comment 3 -F notes.md",
+            "cd in an if": "if cd docs; then gh pr comment 3 -F notes.md; fi",
+            "eval": "eval 'cd docs' && gh pr comment 3 -F notes.md",
+            "sourced script": "source go.sh && gh pr comment 3 -F notes.md",
+            "another program runs gh": "chroot docs gh pr comment 3 -F notes.md",
+            "wrapper around a script": "env -C docs bash <<'S'\ngh pr comment 3 -F notes.md\nS",
+        }
+        other_results = {name: home.hook(tool, "PreToolUse", command) for name, command in other_ways.items()}
+    with then("each is refused as unreadable too"):
+        assert {name: result.findings for name, result in other_results.items()} == {
+            name: ["unreadable"] for name in other_ways}
+    with when("the cd comes after the step, the step names the file by its full path, a wrapper only sets a "
+              "variable, or a substitution the shell runs before the wrapper reads the file"):
         readable = [
             "gh pr comment 3 -F notes.md && cd docs",
             f"cd docs && gh pr comment 3 -F {home.work}/notes.md",
+            "env FOO=1 gh pr comment 3 -F notes.md",
+            'env -C docs gh pr comment 3 --body "$(cat notes.md)"',
         ]
         readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
     with then("each runs with no answer"):
