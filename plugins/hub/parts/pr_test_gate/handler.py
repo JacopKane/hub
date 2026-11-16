@@ -1412,8 +1412,11 @@ def linked_issue_place(word):
 
 
 def api_path(endpoint):
-    """gh api's endpoint as a path, so a full URL such as https://api.github.com/repos/... reads as repos/..."""
-    return re.sub(r"^[a-z]+://[^/]+/(?:api/v3/)?", "", endpoint.split("?", 1)[0], flags=re.I).strip("/")
+    """gh api's endpoint as the path GitHub gets, so a full URL such as https://api.github.com/repos/... reads as
+    repos/... gh's HTTP client parses the endpoint as a URL and sends neither the #fragment nor the ?query as part
+    of the path, so the path ends at the first ? or #."""
+    path = re.split(r"[?#]", endpoint, maxsplit=1)[0]
+    return re.sub(r"^[a-z]+://[^/]+/(?:api/v3/)?", "", path, flags=re.I).strip("/")
 
 
 def pr_mutations(query):

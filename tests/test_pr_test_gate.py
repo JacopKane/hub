@@ -1912,6 +1912,28 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
               "and names gh pr ready instead"):
         for step, result in results.items():
             assert says(home, result, "unreadable_push.md", why=DRAFT_WHY), (step, result.reason)
+    fragment_creates = [f"gh api 'repos/acme/demo/pulls#new' -f head=side -F body=@{good}",
+                        f"gh api 'https://api.github.com/repos/acme/demo/pulls#new' -f head=side -F body=@{good}",
+                        f"gh api 'repositories/123/pulls?state=open#new' -f head=side -F body=@{good}"]
+    fragment_edits = [f"gh api -X PATCH 'repos/acme/demo/pulls/7#body' -F body=@{bad}",
+                      f"gh api -X PATCH 'repos/acme/demo/issues/7#body' -F body=@{bad}"]
+    settings = {"the text gate's unreadable check on": ("on", "public_text_gate.unreadable"),
+                "the text gate's unreadable check off": ("off", "public_text_gate.unreadable")}
+    with when("Claude opens a PR at side and edits PR 7's body through endpoints that end in a #fragment, which "
+              "gh's HTTP client never sends, with the text gate's unreadable check on and off"):
+        results = {}
+        for setting, (state, flag) in settings.items():
+            home.hubctl_from_mod(state, flag)
+            results.update({(setting, step): bash(home, step) for step in fragment_creates + fragment_edits})
+        home.hubctl_from_mod("on", "public_text_gate.unreadable")
+    with then("each is judged as the same endpoint with no fragment: the new PRs are refused for the commit "
+              "GitHub has on side, and the body edits with pr-check's sentence"):
+        for (setting, step), result in results.items():
+            if step in fragment_creates:
+                assert says(home, result, "no_report.md", short=side[:7], branch="side"), \
+                    (setting, step, result.reason)
+            else:
+                assert result.refused and result.reason == missing_part(home), (setting, step, result.reason)
     create = graphql_call('mutation { createPullRequest(input: {repositoryId: "R_base", headRepositoryId: "R_head", '
                           'baseRefName: "main", headRefName: "side", title: "T", body: $body}) '
                           '{ pullRequest { number } } }', f"-F body=@{good}")
@@ -1940,7 +1962,7 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
     with when("side's tested commit is pushed"):
         home.git("push", "-q")
     with then("the same steps run with no answer"):
-        for step in creates + [create]:
+        for step in creates + fragment_creates + [create]:
             assert quiet(bash(home, step)), step
 
 
