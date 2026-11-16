@@ -2561,7 +2561,8 @@ def program_spot(words):
     """(index, hidden) of the program word, past assignments, keywords and wrappers such as sudo and env.
 
     The index is None when the segment runs no program. hidden is True when
-    the shell fills in the program's name, so it could be any public tool.
+    the shell fills in the program's name, or env splits it out of a string,
+    so it could be any public tool.
     """
     index = 0
     while index < len(words):
@@ -2588,8 +2589,21 @@ def program_spot(words):
                 durations -= 1
                 index += 1
                 continue
+            if name == "env" and splits_into_words(option):
+                return index, True  # env makes the program and its words from a string the gate does not split
             index += wrapper_option(option, options)
     return None, False
+
+
+def splits_into_words(option):
+    """Whether an option of env gives it a string that env splits into the program and its words, as -S, -iS'...'
+    and --split-string do. In a short cluster the first letter that takes a value decides, so the S in -uSTATE is
+    the name to unset. A long option counts when it may be short for --split-string, as --sp is."""
+    if option.startswith("--"):
+        key = option.split("=", 1)[0]
+        return len(key) > 2 and "--split-string".startswith(key)
+    value_letter = next((letter for letter in option[1:] if "-" + letter in WRAPPERS["env"]), None)
+    return value_letter == "S"
 
 
 def wrapper_option(option, options):

@@ -319,6 +319,7 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "a new pr": "make && gh pr create --title T --body-file body.md",
             "a GraphQL query": "make && gh api graphql -F query=@query.graphql",
             "errors joined to output": "make 2>&1 && gh pr comment 5 -F notes.md",
+            "program in env's split string": "env -S'make' && gh pr comment 5 -F notes.md",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the program may write the file without naming it"):
@@ -490,6 +491,11 @@ def test_a_wrapped_command_from_a_tool_that_publishes_nothing_runs_and_a_hidden_
             "braced": "${TOOL} pr comment 3",
             "here-string": 'bash <<< "$CMD"',
             "after an assignment": "MODE=1 $CMD",
+            "env split string": "env -S'gh pr comment 3 --body hi'",
+            "env split string as the next word": "env -S 'git commit -m Fix'",
+            "env split string in a cluster": "env -iS'git commit -m Fix'",
+            "env long split string": "env --split-string='gh pr comment 3 --body hi'",
+            "env short for --split-string": "env --sp 'git commit -m Fix'",
         }
         hidden_results = {name: home.hook(tool, "PreToolUse", command) for name, command in hidden.items()}
     with then("each is refused as unreadable, with the hint"):
@@ -586,7 +592,8 @@ def test_a_program_name_that_a_substitution_prints_is_unreadable(home, tool):
         readable = ['"$(brew --prefix)"/bin/x --help', '"$(brew --prefix)/bin/x" --help', '"$VENV/bin/pytest" -q',
                     'eval "$(ssh-agent -s)"', "eval $(ssh-agent -s)", "eval `ssh-agent -s`",
                     'bash -c "$(brew shellenv)"', "eval $(ssh-agent -s) && ssh-add -l",
-                    "sudo -u root ls -la", "timeout 60 bash -c 'echo hi'", "env FOO=1 make test"]
+                    "sudo -u root ls -la", "timeout 60 bash -c 'echo hi'", "env FOO=1 make test",
+                    "env -uSTATE make test"]
         readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
     with then("each runs with no answer"):
         assert [result.output for result in readable_results] == [{}] * len(readable)
