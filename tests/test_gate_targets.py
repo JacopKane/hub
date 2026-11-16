@@ -154,6 +154,39 @@ def test_a_body_file_that_is_not_a_regular_file_counts_as_unreadable(home, tool)
         assert private.findings == ["private_paths"]
 
 
+MAX_TEXT = 200_000  # the most the gate reads of one file, as its handler says
+
+
+def test_a_file_longer_than_the_gate_reads_counts_as_unreadable_and_one_at_the_limit_is_read_in_full(home, tool):
+    tail = "\nSee /home/sam/end.md\n"
+    with given("hub is installed, with a clean text file one character past the limit, one with a home path "
+               "at the very end of the limit, and a large binary file"):
+        home.install()
+        write(home, "long.md", "a" * (MAX_TEXT + 1))
+        write(home, "edge.md", "a" * (MAX_TEXT - len(tail)) + tail)
+        with open(os.path.join(home.work, "big.bin"), "wb") as handle:
+            handle.write(b"\0" * (MAX_TEXT * 2))
+    with when("Claude publishes the long file through each way a command reads a file"):
+        commands = {
+            "body file": "gh pr comment 3 --body-file long.md",
+            "message file": "git commit -F long.md",
+            "cat substitution": 'git commit -m "$(cat long.md)"',
+            "gist file": "gh gist create long.md",
+            "api field file": "gh api repos/o/r/issues -F body=@long.md",
+            "release asset": "gh release upload v1 long.md",
+        }
+        results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
+    with then("each is refused as unreadable, since the text past the limit is never checked"):
+        assert {name: result.findings for name, result in results.items()} == {
+            name: ["unreadable"] for name in commands}
+    with when("Claude publishes the file that ends at the limit, and uploads the large binary file"):
+        edge = home.hook(tool, "PreToolUse", "gh pr comment 3 --body-file edge.md")
+        binary = home.hook(tool, "PreToolUse", "gh release upload v1 big.bin")
+    with then("the gate reads the first in full and finds the home path, and the binary file runs"):
+        assert edge.findings == ["private_paths"]
+        assert binary.output == {}
+
+
 def test_a_wrapped_shell_or_eval_whose_script_the_shell_fills_in_counts_as_unreadable(home, tool):
     with given("hub is installed with the gate at warn, and a script file that posts a comment"):
         home.install()

@@ -713,6 +713,30 @@ def test_a_pr_step_whose_folder_or_body_the_gate_can_not_read_is_refused_and_hub
             assert quiet(bash(home, line)), line
 
 
+MAX_TEXT = 200_000  # the most the gates read of one file, as the text gate's handler says
+BODY_WHY = "a variable or a substitution fills in the PR body"
+
+
+def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
+    with given("branch feature with open PR 7, a body file with a tested part, and one that runs past the limit "
+               "with its tested part at the start"):
+        with_github(home)
+        pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        good = body_file(home, CANONICAL)
+        long = body_file(home, CANONICAL + "a" * MAX_TEXT, name="long.md")
+    with and_("the text gate's unreadable check is off, so this gate gives the answer"):
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+    with when("Claude edits the body from the long file"):
+        too_long = bash(home, f"gh pr edit 7 --body-file {long}")
+    with then("it is refused, since the gate never reads the text past the limit"):
+        assert says(home, too_long, "unreadable_push.md", why=BODY_WHY), too_long.reason
+    with when("Claude edits the body from the file that holds the whole body"):
+        whole = bash(home, f"gh pr edit 7 --body-file {good}")
+    with then("it runs"):
+        assert quiet(whole), whole.reason
+
+
 def graphql_call(query, *fields):
     return " ".join(["gh api graphql -f", shlex.quote("query=" + query), *fields])
 

@@ -1322,16 +1322,18 @@ def read_file(path, cwd):
 
     That covers a name the shell fills in at run time, and anything that is
     not a regular file. A pipe, a device or a folder has no text before the
-    command runs, and reading a pipe would wait for a writer.
+    command runs, and reading a pipe would wait for a writer. A file longer
+    than MAX_TEXT counts too, since the gate would never check its end.
     """
     if not path or path == "-":
         return ""
     data = read_bytes(path, cwd)
-    return UNREADABLE if data is None else data.decode("utf-8", errors="replace")
+    return UNREADABLE if data is None or len(data) > MAX_TEXT else data.decode("utf-8", errors="replace")
 
 
 def read_bytes(path, cwd):
-    """The first bytes of a regular file, or None when the gate can not read it before the command runs."""
+    """The first MAX_TEXT bytes of a regular file and one more, so a caller can tell a longer file, or None when the
+    gate can not read it before the command runs."""
     if UNREADABLE in path or path in STDIN_PATHS:
         return None
     full = os.path.join(cwd, os.path.expanduser(path))
@@ -1341,19 +1343,20 @@ def read_bytes(path, cwd):
         if not stat.S_ISREG(os.stat(full).st_mode):
             return None
         with open(full, "rb") as handle:
-            return handle.read(MAX_TEXT)
+            return handle.read(MAX_TEXT + 1)
     except OSError:
         return None
 
 
 def asset_text(path, cwd):
-    """The text of a release asset. A binary asset has no text to check, so it gives an empty string."""
+    """The text of a release asset. A binary asset has no text to check, so it gives an empty string, and a text
+    asset longer than MAX_TEXT is unreadable."""
     data = read_bytes(path, cwd) if path else None
     if data is None:
         return UNREADABLE
     if b"\0" in data[:BINARY_PEEK]:
         return ""
-    return data.decode("utf-8", errors="replace")
+    return UNREADABLE if len(data) > MAX_TEXT else data.decode("utf-8", errors="replace")
 
 
 def option_values(words, names, attached=False):
