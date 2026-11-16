@@ -225,6 +225,7 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
         home.install()
         write(home, "notes.md", "Nothing private here\n")
         write(home, "notes.json", '{"body": "Nothing private here"}')
+        write(home, "NOTES.md", "Nothing private here\n")  # the same file where the disk ignores case
     with when("something on the line may write the file before or while the step reads it"):
         commands = {
             "redirect earlier": "printf 'See /home/sam/a.md' > notes.md; gh pr comment 3 -F notes.md",
@@ -251,9 +252,15 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
             "release asset": "printf x > notes.md; gh release upload v1 notes.md",
             "api field file": "printf x > notes.md; gh api repos/o/r/issues -F body=@notes.md",
             "api input": "printf x > notes.json; gh api repos/o/r/issues --input notes.json",
+            "redirect in other case": "printf 'See /home/sam/a.md' > NOTES.md; gh pr comment 3 -F notes.md",
+            "message file in other case": "echo x > Notes.md && git commit -F notes.md",
+            "tee in other case": "echo x | tee NOTES.MD && gh pr comment 3 -F notes.md",
+            "pattern in other case": "printf x > NOTE?.md; gh pr comment 3 -F notes.md",
+            "read in other case": "printf x > notes.md; gh pr comment 3 -F NOTES.md",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
-    with then("each is refused as unreadable, since the gate reads the file only as it is before the line runs"):
+    with then("each is refused as unreadable, since the gate reads the file only as it is before the line runs, "
+              "and a disk that ignores case, as macOS disks do, opens one file for both names"):
         assert {name: result.findings for name, result in results.items()} == {
             name: ["unreadable"] for name in commands}
     with when("the line writes the file only after the step, writes another file, or only reads it"):
@@ -268,6 +275,7 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
             'gh pr comment 3 --body "$(cat notes.md)"',
             'echo "Posting to $PR"; gh pr comment 3 -F notes.md',
             "cat > other.md <<EOF\nHello $USER\nEOF\ngh pr comment 3 -F notes.md",
+            'gh issue create --title "$(cat NOTES.md)" --body-file notes.md',
         ]
         readable_results = [home.hook(tool, "PreToolUse", command) for command in readable]
     with then("each runs with no answer"):

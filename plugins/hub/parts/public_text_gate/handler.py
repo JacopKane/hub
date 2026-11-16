@@ -626,9 +626,17 @@ def may_write(text, name):
 
 
 def may_name(text, name):
-    """Whether one of the names in the text, as name_tails makes them, is the file or a pattern that matches it."""
-    return any(tail == name or (any(char in tail for char in "*?[") and fnmatch.fnmatchcase(name, tail))
-               for tail in name_tails(text))
+    """Whether one of the names in the text, as name_tails makes them, is the file or a pattern that matches it, both
+    compared as folded_name makes them."""
+    folded = folded_name(name)
+    return any(tail == folded or (any(char in tail for char in "*?[") and fnmatch.fnmatchcase(folded, tail))
+               for tail in map(folded_name, name_tails(text)))
+
+
+def folded_name(name):
+    """A file name as a disk that ignores case compares it. macOS disks do, and zsh there matches a pattern without
+    case, so NOTES.md, NOTE?.md and notes.md all reach one file."""
+    return name.casefold()
 
 
 def name_tails(text):
@@ -788,9 +796,10 @@ def runs_a_script(words):
 
 
 def reads_only(source, name):
-    """Whether a substitution only prints the file, as $(cat notes.md) or $(< notes.md) do."""
+    """Whether a substitution only prints the file, as $(cat notes.md) or $(< notes.md) do, with the names compared
+    as folded_name makes them."""
     match = re.fullmatch(r"\s*(?:cat\s+|<\s*)(['\"]?)([^)'\"\s]+)\1\s*", source)
-    return bool(match) and os.path.basename(match.group(2).rstrip("/")) == name
+    return bool(match) and folded_name(os.path.basename(match.group(2).rstrip("/"))) == folded_name(name)
 
 
 # A standard input redirect in a word, which is a heredoc's placeholder or a <. Digits before it name the file
