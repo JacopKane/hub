@@ -168,7 +168,7 @@ def test_a_texts_run_records_its_base_and_refuses_a_code_file(home):
                 (name, result.reason)
 
 
-def test_a_scenario_that_changes_the_tree_or_commits_while_it_runs_is_caught(home):
+def test_a_scenario_or_texts_check_that_changes_the_tree_or_commits_while_it_runs_is_caught(home):
     with given("branch feature with an open PR and a new commit"):
         with_github(home)
         feature = pushed_branch(home)
@@ -188,6 +188,17 @@ def test_a_scenario_that_changes_the_tree_or_commits_while_it_runs_is_caught(hom
         assert committed.returncode == 1
         assert report_of(home, feature)["clean"] is False
         assert head(home) != feature
+    with when("on branch words from main, which changes only the README and has an open PR, a texts check writes "
+              "to the README while it runs"):
+        home.git("checkout", "-q", "-b", "words", "main")
+        words = change(home, name="README.md", message="Reword the README")
+        fake_gh(home, open={"words": 9})
+        texts = pr_tested(home, "texts", "--base", "main", "--check", "printf x >> README.md", "--not-tested",
+                          LEFT_OUT)
+    with then("the texts report says the tree was not clean, the run fails, and the gate refuses the push as dirty"):
+        assert texts.returncode == 1
+        assert report_of(home, words)["clean"] is False
+        assert says(home, bash(home, "git push -u origin words"), "dirty.md")
 
 
 def test_reports_land_in_the_common_folder_whole_and_old_ones_are_pruned(home):

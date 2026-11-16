@@ -97,10 +97,10 @@ def problem(report, cwd, sha, run_git, bases=None):
     them, and its changes are then counted from that commit, not from the base the report saw."""
     if report.get("version") != 1 or report.get("kind") not in ("code", "texts"):
         return "report_unreadable.md", {}
-    if report["kind"] == "texts":
-        return texts_problem(report, cwd, sha, run_git, bases)
     if report.get("clean") is not True:
         return "dirty.md", {}
+    if report["kind"] == "texts":
+        return texts_problem(report, cwd, sha, run_git, bases)
     scenarios = report.get("scenarios") or []
     if not scenarios:
         return "failed.md", {"which": "no scenario was recorded"}
