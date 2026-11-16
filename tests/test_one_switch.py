@@ -1298,6 +1298,25 @@ def test_a_push_that_git_runs_on_another_repo_is_unreadable(home, tool):
         assert plain.ran, plain.reason
 
 
+def test_a_push_or_commit_after_git_s_attr_source_option_is_read(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    pushes = ["git --attr-source HEAD push origin main", "git --attr-source=HEAD push origin main",
+              "git -C . --attr-source HEAD push origin main"]
+    with when("Claude pushes main after git's --attr-source option, with its tree as the next word or after =, "
+              "each in its own session"):
+        results = hooks(home, tool, pushes, "pushes")
+    with then("git reads the word after --attr-source as its value, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude commits after --attr-source and its tree, with a message that names a private path"):
+        commit = home.hook(tool, "PreToolUse", "git --attr-source HEAD commit -m 'see /Users/sam/notes'",
+                           session="commit")
+    with then("the gate reads the commit message and names the path"):
+        assert commit.refused and commit.findings == ["private_paths"], commit.reason
+
+
 def empty_commits(home, count):
     """count empty commits on top of main, written at once by git fast-import, since one git commit each is slow."""
     commits = [f"commit refs/heads/main\ncommitter Ann <ann@example.com> {1_700_000_000 + number} +0000\n"

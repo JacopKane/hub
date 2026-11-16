@@ -418,7 +418,8 @@ def git_place(step):
     cwd, words, index = step.cwd, step.words, 1
     while index < len(words):
         word = words[index]
-        if word in ("-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
+        if word in ("-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source") \
+                and index + 1 < len(words):
             if unreadable_mark() in words[index + 1]:
                 raise unreadable("word")
             if word in OTHER_REPO_OPTIONS:

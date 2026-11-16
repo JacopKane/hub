@@ -304,7 +304,8 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
              "git push -odeploy origin feature", "git push -uo ci.skip origin feature",
              "git push --push-opt ci.skip origin feature", "git push --set-up origin feature",
              "git push -n --no-dry-run origin feature", "git push --dry --no-dry origin feature",
-             "git push --del --no-del origin feature", "git push --mirror --no-mirror origin feature"]
+             "git push --del --no-del origin feature", "git push --mirror --no-mirror origin feature",
+             "git --attr-source HEAD push origin feature", "git --attr-source=HEAD push origin feature"]
     side_forms = [f"git -C {side_folder} push", f"cd {side_folder} && git push",
                   f"git -C {side_folder} push origin side"]
     with when("Claude names feature's new commit in each way git allows, with no report"):
