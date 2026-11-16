@@ -521,11 +521,13 @@ def test_a_wrapped_command_from_a_tool_that_publishes_nothing_runs_and_a_hidden_
         for target in ["commit", "push", "pr", "issue", "review_comment", "release", "gist", "tag",
                        "discussion", "commit_comment", "contents", "api"]:
             home.hubctl_from_mod("off", f"{GATE}.targets.{target}")
-        program_filled = ["top level", "top level with options", "braced", "after an assignment"]
+        program_filled = ["top level", "top level with options", "braced", "after an assignment",
+                          "env split string", "env split string as the next word", "env split string in a cluster",
+                          "env long split string", "env short for --split-string"]
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in hidden.items()}
     with then("no text target judges any of them, so one that eval, bash -c or a here-string runs goes through, "
-              "while in Claude Code the PR test gate still refuses each whose program a variable fills in, since "
-              "it may be git or gh; Cursor has no PR test gate, so there each runs"):
+              "while in Claude Code the PR test gate still refuses each whose program a variable fills in or env's "
+              "split string hides, since it may be git or gh; Cursor has no PR test gate, so there each runs"):
         assert {name: result.ran for name, result in results.items() if name not in program_filled} == {
             name: True for name in hidden if name not in program_filled}
         refused_by_the_pr_gate = {name: results[name].refused and "it runs inside another command" in
