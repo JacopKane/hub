@@ -2068,6 +2068,69 @@ def test_a_graphql_pr_body_gets_the_body_check_wherever_the_query_sets_it(home):
         assert says(home, block, "unreadable_push.md", why=QUERY_WHY), block.reason
 
 
+def test_a_graphql_call_gets_the_body_check_whatever_path_or_method_names_graphql(home):
+    with given("PR 7 on GitHub, and a good and a bad body as files and as GraphQL strings"):
+        with_github(home)
+        good_file, bad_file = body_file(home, CANONICAL, "good.md"), body_file(home, NO_PART, "bad.md")
+        good, bad = json.dumps(CANONICAL), json.dumps(NO_PART)
+    by_variable = shlex.quote('query=mutation($t: String) { updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                              'body: $t}) { clientMutationId } }')
+
+    def written(body):
+        return shlex.quote('query=mutation { updatePullRequest(input: {pullRequestId: "PR_kw1", '
+                           f"body: {body}}}) {{ clientMutationId }} }}")
+
+    def variable(path):
+        return "-F " + shlex.quote(f"variables[t]=@{path}")
+    hidden = {"/graphql with a variables[t] field": f"gh api /graphql -f {by_variable} {variable(bad_file)}",
+              "graphql/ with a variables field": f"gh api graphql/ -f {by_variable} -f "
+                                                 + shlex.quote("variables=" + json.dumps({"t": NO_PART})),
+              "the github.com URL with a variables[t] field":
+                  f"gh api https://api.github.com/graphql -f {by_variable} {variable(bad_file)}",
+              "-X GET graphql with a variables[t] field": f"gh api -X GET graphql -f {by_variable} "
+                                                          f"{variable(bad_file)}",
+              "--method GET /graphql": f"gh api --method GET /graphql -f {written(bad)}",
+              "-X get on the github.com URL": f"gh api -X get https://api.github.com/graphql -f {written(bad)}",
+              "an enterprise api/graphql URL": f"gh api https://ghe.example.com/api/graphql -f {written(bad)}",
+              "an api/graphql path": f"gh api api/graphql -f {written(bad)}",
+              "/graphql with an input object in variables[pr]":
+                  "gh api /graphql -f " + shlex.quote("query=mutation($pr: UpdatePullRequestInput!) { "
+                                                      "updatePullRequest(input: $pr) { clientMutationId } }")
+                  + " -f 'variables[pr][pullRequestId]=PR_kw1' -F " + shlex.quote(f"variables[pr][body]=@{bad_file}"),
+              "/graphql with --input and a variables[t] field gh puts in the URL":
+                  "gh api /graphql --input " + body_file(home, json.dumps({
+                      "query": by_variable[len("'query="):-1], "variables": {"t": CANONICAL}}), "sent.json")
+                  + " " + variable(bad_file)}
+    with when("Claude sets PR 7's body to one with no tested part through GraphQL by a path other than the bare "
+              "word graphql, or with GET, where gh sends each field as it is and only variables[t] or a variables "
+              "field is a variable"):
+        results = {case: bash(home, step) for case, step in hidden.items()}
+    with then("each is refused with pr-check's sentence, as the bare graphql call would be"):
+        assert [(case, result.reason) for case, result in results.items()
+                if result.reason != missing_part(home)] == []
+    with when("Claude sends a good body the same ways, a bad top-level t field that gh does not send as a variable "
+              "beside a good variables[t], and reads through GraphQL by GET and by URL"):
+        fine = {"good variables[t]": f"gh api /graphql -f {by_variable} {variable(good_file)}",
+                "good by GET": f"gh api --method GET /graphql -f {written(good)}",
+                "read by GET": "gh api -X GET /graphql -f query='query { viewer { login } }'",
+                "read by URL": "gh api https://api.github.com/graphql -f query='query { viewer { login } }'"}
+        fine = {case: bash(home, step) for case, step in fine.items()}
+        stray = bash(home, f"gh api /graphql -f {by_variable} {variable(good_file)} -F "
+                           + shlex.quote(f"t=@{bad_file}"))
+    with then("each runs, and the stray t field is still read, so the gate never reads less than GitHub may take"):
+        assert [(case, result.reason) for case, result in fine.items() if not quiet(result)] == []
+        assert stray.refused and stray.reason == missing_part(home), stray.reason
+    with when("Claude sends variables as a field that is not a JSON object, as one, or beside a variables[t] field"):
+        odd = [bash(home, f"gh api /graphql -f {by_variable} -f " + shlex.quote(variables))
+               for variables in ("variables=[1]", "variables={", 'variables={"t": "x"}')]
+        both = bash(home, f"gh api /graphql -f {by_variable} {variable(good_file)} -f 'variables={{}}'")
+    with then("a field that is not an object and the mixed call are refused, since the gate can not tell what "
+              "GitHub takes from them, and the object's t gets the body check"):
+        assert [result.reason for result in [*odd[:2], both] if not says(home, result, "unreadable_push.md",
+                                                                          why=QUERY_WHY)] == []
+        assert odd[2].refused and odd[2].reason == missing_part(home), odd[2].reason
+
+
 def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):
     with given("PR 7 and plain issue 12 on GitHub, plain issue 15 only in acme/other, and a good and a bad body"):
         with_github(home)

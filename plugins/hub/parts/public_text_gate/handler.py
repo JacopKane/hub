@@ -36,6 +36,7 @@ import hashlib
 import itertools
 import json
 import os
+import posixpath
 import re
 import select
 import shlex
@@ -43,6 +44,7 @@ import signal
 import stat
 import subprocess
 import time
+import urllib.parse
 
 from hub import files
 
@@ -1602,6 +1604,17 @@ def graphql_target(text, source):
     return "api"
 
 
+def graphql_endpoint(word):
+    """Whether a gh api endpoint names a GraphQL path, in any spelling or case: graphql, /graphql, graphql/,
+    api/graphql or a full URL to one. GitHub may answer each as GraphQL, whatever method gh sends. A URL the
+    gate can not split counts as one, so its fields get read."""
+    try:
+        path = urllib.parse.urlsplit(word).path if "://" in word else re.split(r"[?#]", word, maxsplit=1)[0]
+    except ValueError:
+        return True
+    return bool(re.search(r"/graphql$", posixpath.normpath("/" + urllib.parse.unquote(path)), re.I))
+
+
 def graphql_query_source(items, command):
     """Where the queries of a gh api graphql call come from. "written" means each one stands in the command
     itself. "file" means one comes from a file, a heredoc or $(cat file), which the gate reads now but which may
@@ -1671,12 +1684,15 @@ def gh_api_target(items, texts, graphql_source):
 
     gh sends POST when the command has a field or --input and no --method. An option gh does not
     have counts as a write, since the gate can not tell what it does. graphql_source is where a
-    GraphQL call's queries come from, as graphql_query_source says.
+    GraphQL call's queries come from, as graphql_query_source says. A GraphQL path is judged as GraphQL
+    whatever the method, and a spelling other than the bare word graphql is judged as a plain call too.
     """
     endpoints = [value for name, value in items if name is None]
     unknown = any(name == "unknown" for name, _ in items)
-    if endpoints and endpoints[0] == "graphql":
-        return graphql_target("\n".join(texts), graphql_source) or ("api" if unknown else None)
+    if endpoints and graphql_endpoint(endpoints[0]):
+        target = graphql_target("\n".join(texts), graphql_source)
+        if target or endpoints[0] == "graphql":
+            return target or ("api" if unknown else None)
     methods = [value for name, value in items if name == "--method"]
     sends = any(name in ("--field", "--raw-field", "--input") for name, _ in items)
     writes = methods[-1].upper() != "GET" if methods else sends
@@ -1761,7 +1777,7 @@ def gh_target(words, command):
             body = command.from_file(path)
             texts += [body, decoded(json_field(body, "content"))]
         texts += [UNREADABLE for name, _ in items if name == "unknown"]
-        graphql = [value for name, value in items if name is None][:1] == ["graphql"]
+        graphql = any(graphql_endpoint(value) for value in [value for name, value in items if name is None][:1])
         source = graphql_query_source(items, command) if graphql else None
         target = gh_api_target(items, [text for text in texts if text], source)
         return (target, "\n".join(texts)) if target else None

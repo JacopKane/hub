@@ -1219,11 +1219,14 @@ def api_step(command, step, flags, answer, lookups):
     inputs = [value for name, value in items if name == "--input"]
     sends = any(name in ("--field", "--raw-field") for name, _ in items) or inputs
     method = methods[-1].upper() if methods else ("POST" if sends else "GET")  # as gh picks it
-    files = [sent_object(command.from_file(path), endpoint == "graphql") for path in inputs]
-    if endpoint == "graphql":
+    graphql = any(gate().graphql_endpoint(word) for word in endpoints[:1])
+    files = [sent_object(command.from_file(path), graphql) for path in inputs]
+    if graphql:
         if flags.runs(f"{PART}.report") or flags.runs(f"{PART}.body"):
             query_read_in_full(step, gate().graphql_query_source(items, command))
-        return graphql_step(graphql_sent(fields, files), step, flags, answer, lookups)
+        grouped = endpoints[0] == "graphql" and method != "GET"  # as gh groups its fields into variables
+        sent_call = graphql_sent(fields, files) if grouped else ungrouped_sent(fields, files)
+        return graphql_step(sent_call, step, flags, answer, lookups)
     fields = {**fields, **{key: value for sent in files for key, value in flat_fields(sent).items()}}
     new = re.fullmatch(f"({REPO_PATH})/pulls", endpoint)
     if new and method == "POST":
@@ -1275,6 +1278,44 @@ def graphql_sent(fields, files):
              flat_fields({key: value for key, value in last.items() if key not in ("query", "variables")})]
     names = {name for found in loose for name in found}
     return query, file_variables(last), {name: [found[name] for found in loose if name in found] for name in names}
+
+
+def ungrouped_sent(fields, files):
+    """(the query, the variables, {name: [value]} for the other values) of a GraphQL call that gh does not group,
+    as with /graphql, a full URL or GET. gh sends each field as it is, so only a variables field or variables[x]
+    fields are variables. With --input it sends the file and puts the fields in the URL. Every field still counts
+    as another value, under its own name and as its variable, so the gate never reads less than GitHub may take."""
+    variables = field_variables(fields)
+    if files:
+        query, sent, others = graphql_sent(fields, files)
+        return query, sent, joined_values(others, {name: [value] for name, value in variables.items()})
+    return fields.get("query", ""), variables, {key: [value] for key, value in fields.items() if key != "query"}
+
+
+def field_variables(fields):
+    """The variables in fields that gh sends ungrouped. A variables[x] field sets x, so variables[pr][body] sets
+    pr[body], and a variables field of JSON text sets each of its keys. Refuses both at once, or a variables field
+    that is not a JSON object, since the gate can not tell what GitHub takes from it."""
+    named = {variable_name(key): value for key, value in fields.items() if variable_name(key)}
+    if "variables" not in fields:
+        return named
+    try:
+        sent = json.loads(fields["variables"])
+    except ValueError:
+        sent = None
+    if named or not isinstance(sent, dict):
+        raise unreadable("query")
+    return flat_fields(sent)
+
+
+def variable_name(key):
+    """The variable a field such as variables[pr][body] sets, named pr[body], or None for another field."""
+    found = re.fullmatch(r"variables\[([^\]]*)\](.*)", key)
+    return found.group(1) + found.group(2) if found else None
+
+
+def joined_values(first, second):
+    return {name: first.get(name, []) + second.get(name, []) for name in {*first, *second}}
 
 
 def file_variables(sent):

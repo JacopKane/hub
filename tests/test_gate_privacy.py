@@ -137,6 +137,33 @@ def test_merges_closes_and_graphql_mutations_are_checked(home, tool):
         assert query.ran and query.output == {}
 
 
+def test_a_graphql_mutation_is_checked_whatever_path_or_method_names_graphql(home, tool):
+    with given("hub is installed with the gate at warn"):
+        home.install()
+    comment = ("query='mutation { addComment(input: {subjectId: \"x\", body: \"See /home/sam/c.md\"}) "
+               "{ clientMutationId } }'")
+    spellings = [f"gh api -X GET graphql -f {comment}", f"gh api -X GET /graphql -f {comment}",
+                 f"gh api --method get https://api.github.com/graphql -f {comment}",
+                 f"gh api --method=GET graphql/ -f {comment}",
+                 f"gh api -XGET https://ghe.example.com/api/graphql -f {comment}",
+                 f"gh api -X GET api/graphql -f {comment}", f"gh api -X GET 'https://[x/graphql' -f {comment}"]
+    with when("Claude posts through a graphql mutation by GET or by another path or URL to graphql, or by a URL "
+              "the gate can not split"):
+        results = {command: home.hook(tool, "PreToolUse", command) for command in spellings}
+    with then("each is refused for the home path, as the plain graphql call is"):
+        assert {command: result.findings for command, result in results.items()} == \
+            {command: ["private_paths"] for command in spellings}
+    with when("a graphql query only reads, by GET with a home path in a field, or by URL"):
+        reads = [home.hook(tool, "PreToolUse", command) for command in
+                 ("gh api -X GET /graphql -f query='query { viewer { login } }' -f note=/home/sam/d",
+                  "gh api https://api.github.com/graphql -f query='query { viewer { login } }' -f note=done")]
+        posted = home.hook(tool, "PreToolUse", "gh api https://api.github.com/graphql "
+                                               "-f query='query { viewer { login } }' -f note=/home/sam/d")
+    with then("each runs, and a home path posted to a graphql URL is still refused, as any posted gh api call is"):
+        assert [(result.ran, result.output) for result in reads] == [(True, {})] * 2
+        assert posted.findings == ["private_paths"], posted.findings
+
+
 def test_a_review_body_is_read_whatever_the_review_type(home, tool):
     with given("hub is installed and a review body file holds a home path"):
         home.install()
