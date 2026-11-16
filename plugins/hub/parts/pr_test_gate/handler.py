@@ -59,25 +59,6 @@ EVERY_BRANCH = ("--all", "--mirror")
 BRANCH_PREFIXES = ("refs/heads/", "heads/")
 # The flags that let gh fill the body from the commits or a web form
 FILLS = ("fill", "fill-first", "fill-verbose", "web")
-# gh's flags for pr create, pr edit and issue edit, as gh defines them: {long name: (short letter, whether it
-# takes a value)}. Every pr and issue command also has -R or --repo, and --help.
-GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
-GH_PR_FLAGS = {
-    "create": {"draft": ("d", False), "title": ("t", True), "body": ("b", True), "body-file": ("F", True),
-               "base": ("B", True), "head": ("H", True), "editor": ("e", False), "web": ("w", False),
-               "fill-verbose": ("", False), "fill": ("f", False), "fill-first": ("", False),
-               "reviewer": ("r", True), "assignee": ("a", True), "label": ("l", True), "project": ("p", True),
-               "milestone": ("m", True), "no-maintainer-edit": ("", False), "recover": ("", True),
-               "template": ("T", True), "dry-run": ("", False)},
-    "edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True), "base": ("B", True),
-             "milestone": ("m", True), "remove-milestone": ("", False),
-             **{f"{change}-{what}": ("", True) for change in ("add", "remove")
-                for what in ("assignee", "label", "project", "reviewer")}},
-    "issue edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True),
-                   "milestone": ("m", True), "remove-milestone": ("", False),
-                   **{f"{change}-{what}": ("", True) for change in ("add", "remove")
-                      for what in ("assignee", "label", "project")}},
-}
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
 OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
@@ -146,7 +127,11 @@ WHY = {
     "ssh_command": "the gate can not read git's ssh command, so it can not tell which host the push reaches",
     "query": "the gate can not read the whole GraphQL query before the command runs",
     "split": "the shell may split a variable or a substitution outside double quotes into several words or drop "
-             "it when empty, and \"$@\" or an array gives one word per item",
+             "it when it is empty, and even inside double quotes \"$@\", an array or zsh's \"$=name\" gives "
+             "several words",
+    "changed": "the shell may change a word before gh or git gets it, as with a brace list such as {a,b}, a pattern "
+               "such as * or ?, some words with ~ or =, zsh's \"$~name\", or a variable that fills in a whole word "
+               "of a gh step",
 }
 GH_SSH = ("ssh",)  # gh reads a host's ssh config with plain ssh -G
 SSH_COMMAND_SETTING = "core.sshcommand"
@@ -317,8 +302,8 @@ def read_steps(line, cwd):
     """(the parsed command, its git and gh steps that may need the gate), refusing what it can not read."""
     parser = gate()
     reads = []  # the words of each step the text gate reads and names, inside wrappers and substitutions too
-    named = [target for target, _text in parser.public_steps(line, cwd, log=False,
-                                                            read_step=noting_reads(step_reader(parser), reads))
+    named = [(target, text) for target, text in parser.public_steps(line, cwd, log=False,
+                                                                    read_step=noting_reads(step_reader(parser), reads))
              if target in RELEVANT | {CHECKED}]
     command = parser.Command(line, cwd, read_log=False)
     segments = command.segments()
@@ -349,7 +334,7 @@ def read_steps(line, cwd):
             found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
             found_words.append(tuple(words[index:]))
     if names_a_step_it_does_not_read(named, reads, found_words):
-        raise unreadable("inside")
+        raise unreadable("changed" if (parser.WRAPPED, parser.CHANGED_WORD) in named else "inside")
     return command, found
 
 
@@ -900,7 +885,8 @@ def gh_pr_flags(words, action):
     parser (pflag) reads them. A flag that takes a value takes the next word even when it starts with -, short flags
     stack as in -dH branch, and a value may be attached, as in -Hbranch, -H=branch or --head=branch. A flag gh does
     not know is refused, since gh fails on it, and so is a word the shell fills in where gh may read a flag."""
-    known = {**GH_PR_SHARED_FLAGS, **GH_PR_FLAGS[action]}
+    parser = gate()
+    known = {**parser.GH_PR_SHARED_FLAGS, **parser.GH_PR_FLAGS[action]}
     values, positional, index = {}, [], 0
     while index < len(words):
         word, index = words[index], index + 1
@@ -1588,22 +1574,35 @@ def check(command_line, cwd, flags, answer):
             report_stop(branch, commit, here, bases, place, lookups)
     if any(map(shell_may_split(command_line, cwd), steps)):
         raise unreadable("split")
+    if any(map(shell_may_change(command_line, cwd), steps)):
+        raise unreadable("changed")
 
 
-def shell_may_split(line, cwd):
+def shell_may_split(line, cwd, mark=None):
     """Whether the shell may give a step on the line more words or fewer than the gate reads, because a word of the
     step's simple command holds a spot the shell may split or drop. A VAR=value word before the program does not
     count, since the shell keeps it whole. Every other spot the gate reads as one word, so it may have judged words
-    gh or git never get."""
+    gh or git never get. With mark, the spots are the ones the parser marks with it instead."""
     parser = gate()
     marked = parser.Command(line, cwd, read_log=False, many_words=parser.MANY_WORDS).segments() or []
+    spot_mark = mark or parser.MANY_WORDS
 
     def splits(step):
         position = len(step.earlier)
-        words = marked[position] if position < len(marked) else [parser.MANY_WORDS]
+        words = marked[position] if position < len(marked) else [spot_mark]
         leading = len(list(itertools.takewhile(ASSIGNMENT.match, words[:len(step.before)])))
-        return any(parser.MANY_WORDS in word for word in words[leading:])
+        return any(spot_mark in word for word in words[leading:])
     return splits
+
+
+def shell_may_change(line, cwd):
+    """Whether the shell may change a word of a step on the line before git or gh gets it, as the text gate's parser
+    finds it: a brace list, a pattern or a word with ~ or =, or a whole gh word that a variable fills in where gh may
+    read an option."""
+    parser = gate()
+    marked = shell_may_split(line, cwd, parser.WORD_CHANGE)
+    return lambda step: marked(step) or (os.path.basename(step.words[0]) == "gh" and parser.fills_in_a_gh_word(
+        step.words))
 
 
 def handle(event, hook_input, flags, answer):

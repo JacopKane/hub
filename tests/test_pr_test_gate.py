@@ -2192,7 +2192,8 @@ def test_a_gh_api_call_whose_endpoint_method_or_field_name_the_shell_fills_in_is
 
 
 SPLIT_WHY = ("the shell may split a variable or a substitution outside double quotes into several words or drop "
-             "it when empty, and \"$@\" or an array gives one word per item")
+             "it when it is empty, and even inside double quotes \"$@\", an array or zsh's \"$=name\" gives "
+             "several words")
 
 
 def test_a_step_with_a_word_the_shell_may_split_or_drop_is_refused_and_a_quoted_one_is_read(home):
@@ -2205,7 +2206,8 @@ def test_a_step_with_a_word_the_shell_may_split_or_drop_is_refused_and_a_quoted_
         title = os.path.relpath(body_file(home, "x --body y", "title.txt"), home.work)
     splitting = ["gh pr edit 7 --title $T", "gh pr edit 7 --title=$T", "gh pr edit 7 --title x${T}",
                  'gh pr edit 7 --title "$@"', 'gh pr edit 7 --title "${A[@]}"', 'gh pr edit 7 --title "$A[@]"',
-                 'gh pr edit 7 --title "${(f)T}"', "gh pr edit 7 --title $=T", f"gh pr edit 7 --title $(cat {title})",
+                 'gh pr edit 7 --title "${(f)T}"', "gh pr edit 7 --title $=T", 'gh pr edit 7 --title "$=T"',
+                 'gh pr edit 7 --title "${=A}"', f"gh pr edit 7 --title $(cat {title})",
                  "gh pr edit 7 --title $(printf x)", f"gh pr edit 7 --title `cat {title}`",
                  "gh api -X PATCH repos/acme/demo/pulls/7 -f title=$T",
                  "git push -o $OPTION origin feature"]
@@ -2228,6 +2230,57 @@ def test_a_step_with_a_word_the_shell_may_split_or_drop_is_refused_and_a_quoted_
         quoted = {step: bash(home, step) for step in one_word}
     with then("each runs, since the shell gives gh or git exactly the words the gate reads"):
         assert [(step, result.reason) for step, result in quoted.items() if not quiet(result)] == []
+
+
+CHANGED_WHY = ("the shell may change a word before gh or git gets it, as with a brace list such as {a,b}, a pattern "
+               "such as * or ?, some words with ~ or =, zsh's \"$~name\", or a variable that fills in a whole word "
+               "of a gh step")
+
+
+def test_a_step_with_a_word_the_shell_may_change_is_refused_and_a_word_it_keeps_is_read(home):
+    with given("branch feature with open PR 7 and a passing report for its new commit, a good body in the home "
+               "folder and in a work folder named ~+, and a body with no tested part in a work folder named ~"):
+        with_github(home)
+        pushed_branch(home)
+        record(home)
+        fake_gh(home, open={"feature": 7})
+        bodies = {os.path.join(home.root, "body.md"): CANONICAL, os.path.join(home.work, "~+", "body.md"): CANONICAL,
+                  os.path.join(home.work, "~", "body.md"): NO_PART}
+        for path, text in bodies.items():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as handle:
+                handle.write(text)
+    changed = ["gh pr edit 7 --title {x,--body=y}", "gh pr edit 7 --title=x{,' --body=y'}",
+               "gh pr edit 7 --title a{1..3}", "gh pr edit 7 {--title=x,--body=y}", "gh pr edit 7 --title x*",
+               "gh pr edit 7 --title x?-body=y", "gh pr edit 7 --title x[-]-body=y", "gh pr edit 7 --title x(N)",
+               "gh pr edit 7 --title x#y", "gh pr edit 7 --title ^x", "gh pr edit 7 --title x <1-5>",
+               "=gh pr edit 7 --title x", "gh pr edit 7 --body-file ~+/body.md", "gh pr edit 7 --body-file=~/body.md",
+               'gh pr edit 7 --body-file "~/body.md"', "gh pr edit 7 --body-file '~'/body.md",
+               "gh pr edit 7 --body-file \\~/body.md", 'gh pr edit 7 --title "$~T"', 'gh pr edit 7 --title "$^T"',
+               "gh api -X PATCH repos/acme/demo/pulls/7 -f title=~",
+               "gh api -X PATCH repos/acme/demo/pulls/7 -f title={x,y}",
+               'gh api repos/acme/demo/pulls "$X"', "git push -o {a,b} origin feature", "git {push,origin} feature"]
+    with when("Claude edits PR 7 or pushes feature where the shell may change a word before gh or git gets it: a "
+              "brace list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$~T\", or "
+              "a variable that fills in a whole word of a gh step"):
+        default = {step: bash(home, step) for step in changed}
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        alone = {step: bash(home, step) for step in changed}
+    with then("each is refused, and with the text gate's unreadable check off this gate refuses each one with a "
+              "reason that says the shell may change the word"):
+        assert [step for step, result in default.items() if not result.refused] == []
+        assert [(step, result.reason) for step, result in alone.items()
+                if not says(home, result, "unreadable_push.md", why=CHANGED_WHY)] == []
+    kept = ['gh pr edit 7 --title "$T"', 'gh pr edit 7 --title "Fix: why? *now*"',
+            "gh pr edit 7 --title '{x,--body=y}'", 'gh pr edit 7 --title "a{1..3}"', "gh pr edit 7 --title {x}",
+            "gh pr edit 7 --title a{}b", "gh pr edit 7 --title x\\{a,b\\}", "gh pr edit 7 --title x{a\\,b}", "{ gh pr edit 7 --title x; }",
+            "NOTE={a,b} gh pr edit 7 --title x", 'gh pr edit 7 --title "a ~/x"', "gh pr edit 7 --body-file ~/body.md",
+            "gh pr view 5 --json title", "gh api repos/{owner}/{repo}/pulls", "git push origin feature"]
+    with when("Claude sends steps whose words the shell keeps: quoted or escaped marks, a variable in quotes as an "
+              "option's value, a brace with one item, a ~ inside a quoted title, and ~/ at the start of a body file"):
+        results = {step: bash(home, step) for step in kept}
+    with then("each runs, since the shell gives gh or git exactly the words the gate reads"):
+        assert [(step, result.reason) for step, result in results.items() if not quiet(result)] == []
 
 
 def test_a_pr_body_edited_with_gh_issue_edit_gets_the_body_check_and_a_plain_issue_does_not(home):

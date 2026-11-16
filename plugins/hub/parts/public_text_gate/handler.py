@@ -113,6 +113,14 @@ GIT_WORD_NOTE = ("A variable or a substitution fills in a word that git may read
                  "word only when the command runs, so hub can not tell what git will publish. It stops the command "
                  "even when the value is safe. Write the word in full, as in git commit -m x notes.md or git tag "
                  "v1.2.0, and send the command again.")
+CHANGED_WORD_NOTE = ("The shell may change a word before gh or git gets it, so they may get options or text that hub "
+                     "never read. Outside quotes, the shell splits a variable, turns a brace list such as {a,b} or a "
+                     "pattern such as * or ? into other words, and fills in some words that hold ~ or =. Even in "
+                     "quotes, a variable that fills in a whole word of a gh step may become an option, and zsh fills "
+                     "in \"$~NAME\". A ~ in quotes or after a backslash reaches gh and git as a plain ~, but hub reads "
+                     "it as your home folder. Put the word in quotes, give a variable only as an option's value, as "
+                     "in --title \"$TITLE\", or write the word in full, and send the command again. git reads a "
+                     "quoted pattern such as '*.py' itself.")
 TARGET_NAMES = {"commit": "commit", "push": "push", "tag": "tag", "pr": "PR text", "issue": "issue text",
                 "review_comment": "review comment", "release": "release", "gist": "gist",
                 "discussion": "discussion", "commit_comment": "commit comment", "contents": "file write",
@@ -167,11 +175,29 @@ PUSH_NOTES = {LONG_PUSH: LONG_PUSH_NOTE, UNTRACKED_PUSH: UNTRACKED_PUSH_NOTE, SL
 # Put where the shell fills in a word that git may read as its action or as an option, such as "$FILE" in
 # git commit -m x "$FILE". It holds UNREADABLE, so it is refused like one, with its own note.
 GIT_WORD = UNREADABLE + "\x06"
-MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE}
+# Put with the text of a git or gh step, or as the text of a step whose program the shell may change, when the shell
+# may change one of its words, as changes_the_word and fills_in_a_gh_word find them. It holds UNREADABLE, so it is
+# refused like one, with its own note.
+CHANGED_WORD = UNREADABLE + "\x0e"
+MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE, CHANGED_WORD: CHANGED_WORD_NOTE}
 # Added only when a reader asks for it, as the PR test gate does. It goes before each spot the shell may fill in
 # with several words or with none: an expansion outside double quotes, which bash splits and both shells drop when
 # it is empty, and "$@", an array or zsh's (f) flag inside them. The text gate's own reading never holds it.
 MANY_WORDS = "\x07"
+# Put with MANY_WORDS, and only when a reader asks for it, before each character outside quotes that the shell may
+# change the word at even when nothing is filled in, as changes_the_word finds them: a brace list such as {a,b}, a
+# pattern such as * or ?, and some words with ~, = or #. In quotes it goes before zsh's "$~name" and "$^name"
+# and before a ~ that starts a path, as changes_in_quotes finds them.
+WORD_CHANGE = "\x08"
+# The characters the shells never change outside quotes: letters, digits, these marks, and the ones that end or quote
+# a word or start an escape. A $ or a backtick that starts an expansion gets MANY_WORDS instead.
+KEPT_CHARS = frozenset(".-_/:@%+,!]} \t\n;&|)>'\"\\`")
+ZSH_RANGE = re.compile(r"<\d*-\d*>")  # zsh reads <1-5> as any number in the range
+LONE_BRACKET = re.compile(r"\[\[?(?=[ \t\n;&|()<>]|$)")  # the [ and [[ commands
+ARRAY_START = re.compile(r"[A-Za-z_]\w*(?:\[[^]]*\])?\+?=")  # a=( or a+=( starts an array
+EMPTY_GROUP = re.compile(r"[ \t]*\)")  # the () of a function, as in f()
+ZSH_SPLIT = re.compile(r"\$\{?[\^~]*=")  # zsh's "$=name" and "${=name}" split the value even in double quotes
+ZSH_FILL = re.compile(r"\$\{?[\^~]")  # zsh fills in "$~name" and "$^name" in double quotes, where bash keeps the text
 EXPANSION_START = re.compile(r"`|\$[\w({@*#?!$=~^-]")  # zsh's $=name, $~name and $^name split or glob the value
 QUOTED_WORD_LIST = re.compile(r"\$(?:@|\{\(|\{[^}]*@|[A-Za-z_]\w*\[@\])")  # "$@", "${a[@]}", "$a[@]", "${(f)a}"
 # The setup tools whose output may be the whole script for eval or a shell, as
@@ -249,6 +275,25 @@ GH_WRITE_ACTIONS = {
     "release": {"create": ("release", RELEASE), "edit": ("release", RELEASE)},
     "repo": {"create": ("api", DESCRIPTION), "edit": ("api", DESCRIPTION)},
     "label": {"create": ("api", DESCRIPTION), "edit": ("api", DESCRIPTION)},
+}
+# gh's flags for pr create, pr edit and issue edit, as gh defines them: {long name: (short letter, whether it takes a
+# value)}. Every pr and issue command also has -R or --repo, and --help. The PR test gate reads them from here too.
+GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
+GH_PR_FLAGS = {
+    "create": {"draft": ("d", False), "title": ("t", True), "body": ("b", True), "body-file": ("F", True),
+               "base": ("B", True), "head": ("H", True), "editor": ("e", False), "web": ("w", False),
+               "fill-verbose": ("", False), "fill": ("f", False), "fill-first": ("", False),
+               "reviewer": ("r", True), "assignee": ("a", True), "label": ("l", True), "project": ("p", True),
+               "milestone": ("m", True), "no-maintainer-edit": ("", False), "recover": ("", True),
+               "template": ("T", True), "dry-run": ("", False)},
+    "edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True), "base": ("B", True),
+             "milestone": ("m", True), "remove-milestone": ("", False),
+             **{f"{change}-{what}": ("", True) for change in ("add", "remove")
+                for what in ("assignee", "label", "project", "reviewer")}},
+    "issue edit": {"title": ("t", True), "body": ("b", True), "body-file": ("F", True),
+                   "milestone": ("m", True), "remove-milestone": ("", False),
+                   **{f"{change}-{what}": ("", True) for change in ("add", "remove")
+                      for what in ("assignee", "label", "project")}},
 }
 RELEASE_VALUE_OPTIONS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file", "--target", "-R", "--repo",
                          "--discussion-category", "--notes-start-tag"}
@@ -426,12 +471,19 @@ def mark_expansions(line, sources=None, many_words=""):
     becomes the text the shell makes of it, in plain single quotes, because
     the gate's lexer does not know its escapes.
     Given many_words, that mark also goes before each spot that may give the
-    shell more words than one, or none, as gives_many_words finds them.
+    shell more words than one, or none, as gives_many_words finds them, and
+    WORD_CHANGE goes before each character outside quotes that
+    changes_the_word finds, and before each spot in quotes that
+    changes_in_quotes finds.
     """
     out, index, quote = [], 0, None
     while index < len(line):
         if many_words and gives_many_words(line, index, quote):
             out.append(many_words)
+        if many_words and quote is None and changes_the_word(line, index, out):
+            out.append(WORD_CHANGE)
+        if many_words and quote in ("'", '"') and changes_in_quotes(line, index, quote, out):
+            out.append(WORD_CHANGE)
         char = line[index]
         following = line[index + 1] if index + 1 < len(line) else ""
         if quote is None and following == "(" and (char in "<>" or (char == "=" and (
@@ -595,7 +647,103 @@ def gives_many_words(line, index, quote):
     array such as "${a[@]}" or zsh's "$a[@]", and zsh flags such as "${(f)a}", which give one word per item."""
     if quote is None:
         return bool(EXPANSION_START.match(line, index))
+    if quote == '"' and ZSH_SPLIT.match(line, index):
+        return True
     return quote == '"' and bool(QUOTED_WORD_LIST.match(line, index))
+
+
+def changes_the_word(line, index, out):
+    """Whether bash or zsh may change the word at the character at index, which stands outside quotes, even when
+    nothing is filled in. out is the text before it, in pieces.
+
+    That is any character but the ones in KEPT_CHARS, except for these. A $
+    counts only when it starts no expansion and no quote, as a lone $ does. A #
+    counts when it does not start a comment, since zsh reads it as a pattern. A
+    { counts when it opens a brace list. An = counts at the start of a word
+    with text after it, as zsh fills in =ls with a path. A ~ counts after an
+    = or a :, where bash fills it in and gh would not, and at the start of a
+    word unless the word is ~ or starts with ~/, which the gate reads as the
+    home folder too. A [ counts unless it is the [ or [[ command, a < only
+    when it starts zsh's <1-5>, and a ( when it ends a pattern word, as in
+    x(N), as opens_a_pattern_group finds it. A backslash counts when it keeps
+    a ~ that starts a path, since gh and git then get the ~ itself, where the
+    gate would read the home folder.
+    """
+    char, following = line[index], line[index + 1:index + 2]
+    if char == "\\":
+        return following == "~" and starts_a_path(out)
+    if (char.isascii() and char.isalnum()) or char in KEPT_CHARS:
+        return False
+    rules = {
+        "$": lambda: not EXPANSION_START.match(line, index) and following not in ("'", '"'),
+        "#": lambda: not starts_a_word(out),
+        "{": lambda: out[-1:] != ["$"] and opens_a_brace_list(line, index),  # ${ starts an expansion, not a list
+        "=": lambda: not word_has_text(out) and following not in ("", *WORD_ENDS),  # a lone = as in [ a = b ]
+        "~": lambda: last_pieces(out, 1)[0][-1] in "=:" if word_has_text(out) else not (
+            starts_a_word(out) and following in ("", "/", *WORD_ENDS)),
+        "[": lambda: not (starts_a_word(out) and LONE_BRACKET.match(line, index)),
+        "<": lambda: bool(ZSH_RANGE.match(line, index)),
+        "(": lambda: opens_a_pattern_group(line, index),
+    }
+    return rules.get(char, lambda: True)()
+
+
+def changes_in_quotes(line, index, quote, out):
+    """Whether gh or git may get other text than the gate reads at index, inside quotes. zsh fills in "$~name" and
+    "$^name" where bash and the gate keep the text. A ~ right after the quote mark that starts a path stays a ~, where
+    the gate would read the home folder."""
+    if quote == '"' and ZSH_FILL.match(line, index):
+        return True
+    return line.startswith("~", index) and out[-1:] == [quote] and starts_a_path(out[:-1])
+
+
+def starts_a_path(pieces):
+    """Whether a path the gate reads may start after the text so far. It may at the start of a word and after an =
+    or an @, as in --body-file=notes.md or body=@notes.md."""
+    return starts_a_word(pieces) or last_pieces(pieces, 1)[0][-1] in "=@"
+
+
+def word_has_text(pieces):
+    """Whether the word the text so far ends in holds any text yet, past quote marks with nothing between them, as
+    in ''=ls, which zsh still reads as =ls."""
+    last = next((piece for piece in reversed(pieces) if piece not in ("", "'", '"')), None)
+    return last is not None and not starts_a_word([last])
+
+
+def opens_a_pattern_group(line, index):
+    """Whether a ( outside quotes ends a word that zsh then reads as a pattern, as in x(N) or --body (a|b): it comes
+    after a word on the same line that is no keyword and starts no array, and no ) comes right after it, as in f()."""
+    _last, word = word_before(line, index)
+    if not word or word in KEYWORDS | {"in", "for"} or ARRAY_START.fullmatch(word):
+        return False
+    return not EMPTY_GROUP.match(line, index + 1)
+
+
+def opens_a_brace_list(line, index):
+    """Whether a { at index opens a brace list, which bash and zsh turn into one word for each item: its own } ends
+    it in the same word, with a comma or a .. outside quotes and inner braces, as in {a,b}, x{,y} or {1..3}."""
+    if not line.startswith("{", index):
+        return False
+    depth, spot, quote, listed = 0, index, None, False
+    while spot < len(line):
+        char = line[spot]
+        if quote:
+            spot += char == "\\" and quote == '"'  # a backslash in double quotes keeps the next character
+            quote = None if char == quote else quote
+        elif char == "\\":
+            spot += 1
+        elif char in "'\"":
+            quote = char
+        elif char in WORD_ENDS:
+            return False
+        elif char in "{}":
+            depth += 1 if char == "{" else -1
+            if depth == 0:
+                return listed
+        else:
+            listed = listed or (depth == 1 and (char == "," or line.startswith("..", spot)))
+        spot += 1
+    return False
 
 
 class Source(str):
@@ -2115,10 +2263,14 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     # The line as written holds its heredoc bodies, and its flat form marks every substitution, so read the line.
     apart = command.read_apart and may_run_git_or_gh_read_apart(line)
     steps = [(WRAPPED, UNREADABLE)] if apart else []
+    marked = marked_reader(line, cwd, len(segments))
     for position, words in enumerate(segments):
         spot, program_is_hidden = program_spot(words)
         if program_is_hidden:
             steps.append((WRAPPED, UNREADABLE))  # the shell fills in the program, so it could be any step
+            continue
+        if spot is not None and holds_a_change(marked(position)[:spot + 1]):
+            steps.append((WRAPPED, CHANGED_WORD))  # the shell may make another program of these words
             continue
         if spot is not None and reads_hidden_script(words, spot, command):
             steps.append((WRAPPED, UNREADABLE))  # the shell reads a script the gate can not see
@@ -2134,9 +2286,129 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
             found = command.read_step(words[index:], command)
             if found and any(os.path.basename(before) in FEEDERS for before in words[:index]):
                 found = (found[0], UNREADABLE)  # xargs fills in the text from a pipe
+            found = with_changed_words(program, words[index:], marked(position)[index:], found)
             if found:
                 steps.append(found)
     return steps + substituted_steps(command, depth)
+
+
+def marked_reader(line, cwd, count):
+    """A reader of the words of each simple command on the line, as the parser marks them for a reader that asks for
+    many_words. The line is read the second time only when a step asks for it. When that reading finds another
+    number of commands than count, every command reads as one the shell may change, so it is refused."""
+    @functools.lru_cache(maxsize=None)
+    def reading():
+        return Command(line, cwd, read_log=False, many_words=MANY_WORDS).segments() or []
+    return lambda position: reading()[position] if len(reading()) == count else [WORD_CHANGE]
+
+
+def holds_a_change(words):
+    """Whether a word, past the VAR=value words that start the command, holds a spot where the shell may change it.
+    The shell keeps such a VAR=value word whole."""
+    leading = len(list(itertools.takewhile(re.compile(r"[A-Za-z_]\w*=").match, words)))
+    return any(WORD_CHANGE in word for word in words[leading:])
+
+
+def with_changed_words(program, words, marked, found):
+    """The (target, text) of a git or gh step, as found, or found itself when the shell gives git or gh the words the
+    gate read. marked holds the same words as the parser marks them.
+
+    When the shell may change the program's command or action, the step
+    could be any step. A text the gate can not read is refused already, so
+    it stays as it is. A gh api call becomes a wrapped step when the shell
+    may change any of its words, since a read could then become a write. A
+    git commit, tag or push, or a gh step that publishes, gets CHANGED_WORD
+    with its text when the shell may change, split or drop one of its words,
+    or fills in a whole gh word that gh may read as an option.
+    """
+    if any(WORD_CHANGE in word for word in marked[:command_length(program, words)]):
+        return WRAPPED, CHANGED_WORD  # the shell may make another command of these words
+    if found and UNREADABLE in found[1]:
+        return found
+    changed = any(WORD_CHANGE in word or MANY_WORDS in word for word in marked)
+    filled = program == "gh" and fills_in_a_gh_word(words)
+    if program == "gh" and (gh_command(words) or [])[1:2] == ["api"] and (changed or filled):
+        return WRAPPED, CHANGED_WORD  # a read may then be a write
+    judged = found or git_step(program, words)
+    return (judged[0], "\n".join([judged[1], CHANGED_WORD])) if judged and (changed or filled) else found
+
+
+def git_step(program, words):
+    """(action, "") for a git commit, tag or push, which the gate judges even when it finds no text in it, or None."""
+    action = words[git_action_at(words):][:1]
+    return (action[0], "") if program == "git" and action in (["commit"], ["tag"], ["push"]) else None
+
+
+def command_length(program, words):
+    """How many words of a git or gh step name its command and action, with the options before them, or every word
+    when the gate can not find the action."""
+    return git_action_at(words) + 1 if program == "git" else gh_head_length(words)
+
+
+def git_action_at(words):
+    """Where git's action stands in a git step, past git's own options, or len(words) when it has none."""
+    index = 1
+    while index < len(words) and words[index].startswith("-"):
+        index += 2 if words[index] in GIT_VALUE_OPTIONS else 1
+    return min(index, len(words))
+
+
+def gh_head_length(words):
+    """How many words of a gh step come up to its command, and up to its action for a command that has actions, as
+    next_gh_command_word finds them. It is every word when gh may find no such word."""
+    rest = words[1:]
+    group_at = next_gh_command_word(rest)
+    if group_at is None or group_at == len(rest):
+        return len(words)
+    if rest[group_at] not in GH_GROUPS_WITH_ACTIONS:
+        return group_at + 2
+    after = rest[group_at + 1:]
+    action_at = next_gh_command_word(after)
+    return len(words) if action_at is None or action_at == len(after) else group_at + action_at + 3
+
+
+def fills_in_a_gh_word(words):
+    """Whether the shell fills in a whole word of a gh step that gh may read as an option, even in double quotes, as
+    "$X" in gh issue comment 4 --body ok "$X". A word that is an option's value, as in --title "$TITLE", is not, nor
+    is a word after --. An option the gate does not know takes no value, so the word after it counts."""
+    ordered = gh_command(words)
+    if not ordered or len(ordered) < 2:
+        return ordered is None
+    group, action = ordered[1], (ordered[2:3] or [""])[0]
+    action = action if group in GH_GROUPS_WITH_ACTIONS and action and not action.startswith("-") else ""
+    takes_value = gh_value_options(group, action)
+    letters = "".join(name[1] for name in takes_value if len(name) == 2)
+    index = 3 if action else 2
+    while index < len(ordered) and ordered[index] != "--":
+        if shell_fills_in_an_option(ordered[index], letters):
+            return True
+        index += 2 if gh_takes_next_word(ordered[index], takes_value) else 1
+    return False
+
+
+def gh_value_options(group, action):
+    """The options of a gh command that take a value, as the gate knows them: gh api's, the ones in GH_PR_FLAGS for
+    pr create, pr edit and issue edit, the release and gist ones, and otherwise the text and file options of the
+    action, with -R and --repo for all but gh api."""
+    if group == "api":
+        return GH_API_LONG_VALUES | {"-" + letter for letter in GH_API_SHORT_VALUES}
+    flags = GH_PR_FLAGS.get(action if group == "pr" else f"{group} {action}", {})
+    listed = {f"--{name}" for name, (_letter, takes) in flags.items() if takes} | {
+        f"-{letter}" for _name, (letter, takes) in flags.items() if takes and letter}
+    texts, files = GH_WRITE_ACTIONS.get(group, {}).get(action, ("", NO_TEXT))[1]
+    others = {"release": RELEASE_VALUE_OPTIONS, "gist": GIST_VALUE_OPTIONS}.get(group, set(texts + files))
+    return (listed or others) | {"-R", "--repo"}
+
+
+def gh_takes_next_word(word, takes_value):
+    """Whether gh takes the word after this one as the option's value: a long option that takes one, or a cluster of
+    short letters whose first letter that takes a value is its last letter."""
+    if word.startswith("--"):
+        return word in takes_value
+    if not re.match(r"-[A-Za-z]", word):
+        return False
+    first = next((spot for spot, letter in enumerate(word[1:], 1) if "-" + letter in takes_value), None)
+    return first == len(word) - 1
 
 
 # The checks

@@ -1115,14 +1115,91 @@ def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool
         assert gate_text(home, "unreadable_hint.md") in both.reason, both.reason
         assert GIT_WORD_NOTE_START in both.reason and "Write the word in full" in both.reason, both.reason
     values = ["git commit --author \"$AUTHOR\" -m Fix", "git commit --author=\"$AUTHOR\" -m Fix",
-              "git commit -m Fix -- \"$FILE\"", "git commit -am Fix --date \"$WHEN\"", "git commit -S$KEY -m Fix",
-              "git tag -u \"$KEY\" -m Fix v1", "git tag -a v$VERSION -m Fix", "git -C \"$FOLDER\" status"]
+              "git commit -m Fix -- \"$FILE\"", "git commit -am Fix --date \"$WHEN\"", "git commit -S\"$KEY\" -m Fix",
+              "git tag -u \"$KEY\" -m Fix v1", "git tag -a v\"$VERSION\" -m Fix", "git -C \"$FOLDER\" status"]
     with when("Claude commits or tags with a clean message, where the shell fills in only an option's value, a "
               "path after --, or a tag name after other text"):
         results = hooks(home, tool, values, "value")
     with then("each call runs"):
         for line, result in results.items():
             assert not result.refused, (line, result.reason)
+
+
+CHANGED_WORD_NOTE_START = "The shell may change a word before gh or git gets it"
+
+
+def says_changed_word_note(home, result):
+    """Whether a refusal gives the note for a word the shell may change, without the general hint."""
+    return (result.refused and result.findings == ["unreadable"] and CHANGED_WORD_NOTE_START in result.reason
+            and gate_text(home, "unreadable_hint.md") not in result.reason)
+
+
+def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, tool):
+    with given("hub is installed with the PR test gate off; in the work folder a notes file names a home folder, a "
+               "file is named like an option, and folders named ~+ and ~ hold notes files, one clean and one not, "
+               "while the home folder holds a clean notes file"):
+        home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
+        private, clean = "See /home/sam/log.txt\n", "A clean note.\n"
+        files = {"private.md": private, "--body-file=private.md": private, "body.md": clean,
+                 os.path.join("~+", "private.md"): clean, os.path.join("~", "notes.md"): private}
+        for name, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(home.work, name)), exist_ok=True)
+            with open(os.path.join(home.work, name), "w") as handle:
+                handle.write(text)
+        with open(os.path.join(home.root, "notes.md"), "w") as handle:
+            handle.write(clean)
+    changed = ["gh issue create --title {Fix,--body-file=private.md}", "gh issue comment 4 --body a{1..3}",
+               "gh issue comment 4 --body=x{,' --body-file=private.md'}", "{gh,issue} comment 4 --body hi",
+               "gh pr {create,x} --title t", "gh issue comment 4 --body ok x*",
+               "gh issue comment 4 --body ok ?-body-file=private.md",
+               "gh issue comment 4 --body ok [-]-body-file=private.md", "gh issue comment 4 --body ok x(N)",
+               "gh issue comment 4 --body ok (--body-file=private.md|x)", "gh issue comment 4 --body ok <1-5>",
+               "gh issue comment 4 --body issue#12", "gh issue comment 4 --body ok ^x",
+               "gh issue comment 4 --body-file ~+/private.md", "gh issue comment 4 --body-file=~/notes.md",
+               'gh issue comment 4 --body-file "~/notes.md"', "gh issue comment 4 --body-file \\~/notes.md",
+               'gh issue comment 4 --body "$~T"', 'gh issue comment 4 --body "$^T"',
+               "gh api repos/acme/demo/issues/4/comments -f body=~", "=gh issue comment 4 --body hi",
+               'gh issue comment 4 --body "$=T"', "gh issue comment 4 --body ok $X",
+               'gh issue comment 4 --body ok "$X"', 'gh api repos/acme/demo/issues "$X"',
+               "git commit {-F,private.txt}", "git commit -S$KEY -m Fix", "git tag -a v$VERSION -m Fix",
+               "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT"]
+    with when("Claude sends git or gh steps where the shell may change a word before git or gh gets it: a brace "
+              "list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$=T\" or "
+              "\"$~T\", a variable outside quotes, or a variable in quotes that fills in a whole word of a gh step"):
+        results = hooks(home, tool, changed, "changed")
+    with then("git or gh may get options or text the gate never read, so each call is unreadable, with a note that "
+              "names the case instead of the general hint"):
+        assert [(line, result.reason) for line, result in results.items()
+                if not says_changed_word_note(home, result)] == []
+    with when("Claude sends a title that a variable fills in, in quotes, and zsh's split form inside ${...}"):
+        title = home.hook(tool, "PreToolUse", 'gh pr edit 5 --title "$T"', session="title")
+        split = home.hook(tool, "PreToolUse", 'gh issue comment 4 --body "${=a}"', session="split")
+    with then("each is unreadable as before, with the general hint and not the note"):
+        for result in (title, split):
+            assert result.refused and result.findings == ["unreadable"], result.reason
+            assert gate_text(home, "unreadable_hint.md") in result.reason, result.reason
+            assert CHANGED_WORD_NOTE_START not in result.reason, result.reason
+    kept = ['gh pr create --title "Fix #12" --body-file body.md',
+            'gh pr create --title "Fix: why? *now*" --body-file body.md', 'git commit -m "a, b"',
+            "gh pr view 5 --json title", "gh api repos/{owner}/{repo}/pulls",
+            "gh api repos/{owner}/{repo}/issues/4/comments -f body=ok",
+            'gh pr create --base "$B" --title t --body-file body.md',
+            'gh pr create --head "$H" --label "$L" --reviewer "$R" --title t --body-file body.md',
+            "gh issue comment 4 --body-file ~/notes.md", 'gh issue comment 4 --body "a ~/x"',
+            "case x in x*) gh issue comment 4 --body hi;; esac",
+            "[ -n x ] && gh issue comment 4 --body hi", "~/bin/tool && gh issue comment 4 --body hi",
+            "git add *.py && git commit -m x", "f() { gh issue comment 4 --body hi; }",
+            "if (true); then gh issue comment 4 --body hi; fi", "NOTE={a,b} gh issue comment 4 --body hi",
+            "echo {a,b} && gh issue comment 4 --body hi", "{ gh issue comment 4 --body hi; }",
+            "gh issue create --title '{Fix,--body-file=private.md}'", 'gh issue comment 4 --body "a{1..3}"',
+            "gh issue comment 4 --body {x}", "gh issue comment 4 --body x\\{a,b\\}"]
+    with when("Claude sends steps whose words the shell keeps: quoted or escaped marks, a variable as an option's "
+              "value, ~/ at the start of a word, a brace with one item, and patterns, groups, tests and functions "
+              "around the step or in another command"):
+        results = hooks(home, tool, kept, "kept")
+    with then("each call runs, since git and gh get exactly the words the gate reads"):
+        assert [(line, result.reason) for line, result in results.items() if result.refused] == []
 
 
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
