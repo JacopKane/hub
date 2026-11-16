@@ -570,6 +570,73 @@ class WordPart(str):
     after it is word text and opens no comment."""
 
 
+# The parts of a case command, as contexts on a scan's stack. A name that ends in } is zsh's case a { ... } form.
+PATTERN_CONTEXTS = {"pattern": "esac", "pattern}": "}"}
+ARM_CONTEXTS = {"arm": "esac", "arm}": "}"}
+LEADING_PAREN = "pattern("  # the ( a pattern may start with, as in (a) or (a|b))
+GROUP = "group"  # a { ... } group, which a } word ends, as zsh ends it even after an argument
+COMMAND_CONTEXTS = ("top", "$(", "(", GROUP) + tuple(ARM_CONTEXTS)  # where case and { can be keywords
+CASE_CONTEXTS = ("case", LEADING_PAREN, GROUP) + tuple(PATTERN_CONTEXTS) + tuple(ARM_CONTEXTS)  # case_step's
+COMMAND_WORDS = frozenset(("if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"))
+CASE_WORD = re.compile(r"(case|esac|in|\{|\})(?=[\s;&|()<>]|$)")
+ARM_ENDS = (";;&", ";;", ";&", ";|")
+
+
+def word_before(line, index):
+    """(the last character before index past the blanks, or "" when only blanks come before, the word that ends
+    with it, or "" when it is an operator or a new line). It reads back only as far as it needs."""
+    end = next((spot for spot in range(index, 0, -1) if line[spot - 1] not in " \t"), 0)
+    start = next((spot for spot in range(end, 0, -1) if line[spot - 1] in " \t\n;&|()`"), 0)
+    return (line[end - 1] if end else ""), line[start:end]
+
+
+def command_starts_at(line, index, words=COMMAND_WORDS):
+    """Whether a command starts at index: at the start, after an operator, a ( or a new line, or after a keyword
+    such as then or do. After an assignment such as x=1, a case word is a command name, not a keyword."""
+    last, word = word_before(line, index)
+    return not last or (not word and last in ";&|()`\n") or word in words
+
+
+def case_step(line, index, stack):
+    """(the stack after the part of a case command at index, how many characters that part takes), or None
+    when no such part starts there.
+
+    A case keyword where a command starts opens the command, and in, or zsh's
+    {, starts its patterns. A ) ends a pattern, so it ends no substitution,
+    and ;;, ;&, ;| or ;;& ends an arm, so the next pattern starts. esac, or
+    the } of the { form, ends the command. A pattern may start with a (, as
+    in (a) or zsh's (a|b)). Then the ) that pairs with it ends the pattern
+    too, unless another ) comes right after it. A { where a command starts
+    opens a group, so its } ends the group and not a { form around it.
+    """
+    context, char = stack[-1], line[index]
+    found = CASE_WORD.match(line, index) if index == 0 or line[index - 1] in WORD_START + "`" else None
+    word = found.group(1) if found else None
+    if word in ("case", "{") and context in COMMAND_CONTEXTS and command_starts_at(line, index):
+        return stack + ["case" if word == "case" else GROUP], len(word)
+    if word == "}" and context in (GROUP, "arm}"):
+        return stack[:-1], len(word)
+    if context == "case" and word in ("in", "{"):
+        return stack[:-1] + ["pattern" if word == "in" else "pattern}"], len(word)
+    if context in PATTERN_CONTEXTS:
+        if word == PATTERN_CONTEXTS[context]:
+            return stack[:-1], len(word)
+        if char == ")":
+            return stack[:-1] + [context.replace("pattern", "arm")], 1
+        if char == "(" and command_starts_at(line, index, COMMAND_WORDS | {"in"}):
+            return stack + [LEADING_PAREN], 1
+    if context == LEADING_PAREN and char == ")":
+        another = line[index + 1:].lstrip(" \t").startswith(")")
+        return (stack[:-1] if another else stack[:-2] + [stack[-2].replace("pattern", "arm")]), 1
+    if context in ARM_CONTEXTS:
+        if word == ARM_CONTEXTS[context] and command_starts_at(line, index):
+            return stack[:-1], len(word)
+        end = next((mark for mark in ARM_ENDS if line.startswith(mark, index)), None)
+        if end:
+            return stack[:-1] + [context.replace("arm", "pattern")], len(end)
+    return None
+
+
 def closing(line, start, brackets="()", commands=False):
     """Where the ) that closes the ( at start is, or -1, read the way zsh reads it.
 
@@ -577,8 +644,9 @@ def closing(line, start, brackets="()", commands=False):
     so is each $(...), ${...} and backtick pair inside, double quotes
     included. With commands the ( opens a command, as in $(...) or <(...),
     so a # where a word starts opens a comment that runs to the line end,
-    and each $(...) inside reads the same. A $((...)) sum, a ((...)) and a
-    ${...} hold no comment. With brackets="{}" it finds the } that closes a {.
+    and each $(...) inside reads the same. The ) of a case pattern inside
+    ends nothing (case_step). A $((...)) sum, a ((...)) and a ${...} hold no
+    comment. With brackets="{}" it finds the } that closes a {.
     bash 3.2 reads a quote mark in such a comment inside "$(...)" or <(...)
     as a quote and stops with a syntax error, so it runs no command that
     this reading misses.
@@ -609,7 +677,13 @@ def closing(line, start, brackets="()", commands=False):
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             index += 1
             continue
-        if char == "#" and context in ("$(", "(") and not word:
+        step = case_step(line, index, stack) if context not in ("{", "((") else None
+        if step:
+            stack, length = step
+            word, last, index = char.isalpha() or char in "{}", "", index + length
+            continue
+        if char == "#" and context in ("$(", "(", "case", GROUP) + tuple(PATTERN_CONTEXTS) + tuple(ARM_CONTEXTS) \
+                and not word:
             end = line.find("\n", index)
             if end < 0:
                 return -1
@@ -658,7 +732,8 @@ def set_aside_heredocs(line, first=0):
     arithmetic and a <<< here-string. A # opens a comment only where a word
     starts, so not right after a $((...)) sum, a ${...} or the ) that ends
     $(...), <(...), >(...) or =(...), and inside backticks the comment ends
-    at the closing backtick. A placeholder numbered from first
+    at the closing backtick. The ) of a case pattern ends no $(...) and
+    opens a comment like any operator (case_step). A placeholder numbered from first
     takes the place of the << and its end word, and the body runs from the
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
@@ -670,7 +745,7 @@ def set_aside_heredocs(line, first=0):
     while index < len(line):
         char, context = line[index], stack[-1]
         if char == "\n" and pending:
-            if context not in ("top", "(", "$(", "`"):
+            if context not in ("top", "(", "$(", "`") + CASE_CONTEXTS:
                 return None  # a quoted string runs over the line that starts the heredoc
             read = read_heredoc_bodies(line, index + 1, pending)
             if read is None:
@@ -703,6 +778,12 @@ def set_aside_heredocs(line, first=0):
                 stack, char = stack + ["$("], "$("
             out.append(char)
             index += len(char)
+            continue
+        step = case_step(line, index, stack)
+        if step:
+            stack, length = step
+            out.append(line[index:index + length])  # a pattern's ) is an operator, so a # right after it opens a comment
+            index += length
             continue
         if char == "#" and starts_a_word(out):
             end = comment_end(line, index, context)

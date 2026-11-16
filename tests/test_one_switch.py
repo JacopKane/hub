@@ -900,6 +900,39 @@ def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_qu
         assert nested.refused and nested.findings == ["dashes"], nested.reason
 
 
+def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    cases = ["echo \"$(case a in a) git push origin main;; esac)\"",
+             "cat <<EOF\n$(case a in a) git push origin main;; esac)\nEOF",
+             "echo \"$(case b in a) echo A;; b|c) git push origin main;; esac)\"",
+             "echo \"$(case a in\n a) git push origin main;;\nesac)\"",
+             "echo $(( $(case a in a) git push origin main;; esac) + 1 ))",
+             "echo \"$(if true; then case a in a) git push origin main;; esac; fi)\"",
+             "echo \"$(for i in 1; do case a in a) git push origin main;; esac; done)\"",
+             "echo \"$({ case a in a) echo A;; esac; } && git push origin main)\"",
+             "echo \"$(case a in a) echo A;| b) echo B;; esac; git push origin main)\"",
+             "echo \"$(case a { a) git push origin main;; })\"",
+             "echo \"$(case b { a) { echo A }; echo A;; b) git push origin main;; })\"",
+             "echo \"$(case a in (a|b)) git push origin main;; esac)\"",
+             "echo \"$(case a in a)#it's\n git push origin main;; esac)\"",
+             "echo \"$(case a in a) case b in b) echo B;; esac;; esac; git push origin main)\""]
+    with when("Claude pushes main inside a $(...) that holds a case command, after a pattern's ) or after the esac, "
+              "each in its own session"):
+        results = hooks(home, tool, cases, "cases")
+    with then("the gate reads a pattern's ) as part of the case command, so the substitution ends at its own ), "
+              "and it reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude runs echo with the words case, a, in and a) inside a $(...), and then text that names a push"):
+        argument = home.hook(tool, "PreToolUse", "echo \"$(echo case a in a) git push origin main)\"",
+                             session="argument")
+    with then("it runs, since case is a keyword only where a command starts, so the ) ends the $(...) and the "
+              "rest is quoted text"):
+        assert argument.ran and argument.output == {}, argument.reason
+
+
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
