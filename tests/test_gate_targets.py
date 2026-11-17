@@ -815,6 +815,9 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "a # inside a (( )) command": "(( #x )) ; ",
             "a # inside a $(( )) sum": "echo $(( #x )) ; ",
             "a heredoc after a keyword given as an argument": "echo if (a <<END b)\n",
+            "a ( right after an escaped ;": "echo a\\;(b|#x)(N) ; ",
+            "a # that starts a word inside a ${ }": "echo ${x:- #} ; ",
+            "a << inside a $[ ] sum": "echo $[1<<END ]\n",
         }
         for shell in ("bash", "zsh"):
             for name, start in before_the_step.items():
@@ -825,20 +828,64 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
     with then("each is refused on every try as unreadable"):
         assert {name: [result.findings for result in pair] for name, pair in hidden_results.items()} == {
             name: [["unreadable"], ["unreadable"]] for name in hidden}
+    with when("a # or a << comes after an opener on the same line that the gate does not read in full"):
+        not_read = {
+            "a [[ ]] test": "[[ a == (b|#x) ]] ; ",
+            "a subscript in an assignment": "a=(x)\na[(r)#x]=2 ; ",
+            "a ( after >|": "echo x >|(#x) ; ",
+            "a ( after <&": "cat <&(#x) ; ",
+            "a function whose { opens a heredoc": "notes() { cat <<END\nFix the save button\nEND\n}\n",
+            "a (( )) and a comment": "((1)) # count once\n",
+        }
+        not_read_results = {f"{name}, in {shell}": home.hook(
+            tool, "PreToolUse", f"{shell} <<'EOF'\n{start}git commit -m 'Fix the save button'\nEOF")
+            for shell in ("bash", "zsh") for name, start in not_read.items()}
+    with then("the gate does not guess how the shell reads them, so each is refused as unreadable"):
+        assert {name: result.findings for name, result in not_read_results.items()} == {
+            name: ["unreadable"] for name in not_read_results}
     with when("the script is clean"):
         clean = [
             "bash <<'EOF'\ngit commit -m 'Fix the save button'\ngh pr comment 3 --body 'Done'\nEOF",
             "bash <<'EOF'\neval \"$(ssh-agent -s)\"\nssh-add -l\nEOF",
             "bash <<'EOF'\n# set up\necho $HOME\nmake test\nEOF",
-            "bash <<'EOF'\nnotes() { cat <<END\nFix the save button\nEND\n}\nnotes\nEOF",
             "zsh <<'EOF'\nmake test && (cd docs # build the docs\nmake html)\nEOF",
             "bash <<'EOF'\n(make test)# run the tests\nEOF",
-            "bash <<'EOF'\n((1)) # count once\nmake test\nEOF",
             "zsh <<'EOF'\nfiles=(a b)\n# list them\necho $files\nEOF",
         ]
         clean_results = [home.hook(tool, "PreToolUse", command) for command in clean]
     with then("each runs with no answer"):
         assert [result.output for result in clean_results] == [{}] * len(clean)
+
+
+def test_the_usual_commit_and_pr_forms_run_while_a_comment_or_heredoc_after_an_unread_opener_is_refused(home,
+                                                                                                         tool):
+    with given("hub is installed with the gate at warn and the PR test gate off, a PR body file and a message file "
+               "in a docs folder"):
+        home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
+        write(home, "body.md", "Fixes the save button.\n")
+        os.makedirs(os.path.join(home.work, "docs"))
+        write(home, os.path.join("docs", "msg.txt"), "Fix the save button\n")
+    heredoc_commit = "git commit -m \"$(cat <<'EOF'\n{}\n\nKeep the form open after a save.\nEOF\n)\""
+    with when("Claude commits with a message in a heredoc, opens a PR from a body file, commits from a file by its "
+              "full path after cd, and commits with a heredoc on the line after a sum"):
+        usual = [
+            heredoc_commit.format("Fix the save button"),
+            "gh pr create --title 'Fix the save button' --body-file body.md",
+            f"cd docs && git commit -F {home.work}/docs/msg.txt",
+            "echo $((1 + 2))\n" + heredoc_commit.format("Fix the save button"),
+        ]
+        usual_results = [home.hook(tool, "PreToolUse", command) for command in usual]
+    with then("each runs with no answer"):
+        assert [result.output for result in usual_results] == [{}] * len(usual)
+    with when("the heredoc message holds a home path"):
+        private = home.hook(tool, "PreToolUse", heredoc_commit.format("See /home/sam/a.md"))
+    with then("the gate read the heredoc body and refuses the home path"):
+        assert private.findings == ["private_paths"], private.reason
+    with when("the same heredoc commit follows a sum on the same line"):
+        same_line = home.hook(tool, "PreToolUse", "echo $((1 + 2)) ; " + heredoc_commit.format("Fix the save button"))
+    with then("the gate does not read a heredoc after an opener it does not read in full, so it is unreadable"):
+        assert same_line.findings == ["unreadable"], same_line.reason
 
 
 def test_glued_messages_repo_and_label_descriptions_and_text_release_assets_are_checked(home, tool):

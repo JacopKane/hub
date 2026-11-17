@@ -1355,23 +1355,25 @@ def set_aside_heredocs(line, first=0):
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
     gate can not tell a heredoc from a shift, its end word is not plain, or
-    its end line is missing. It is None too when a # starts a word in a
-    ((...)) or $((...)), which zsh and bash read apart, and when a # that
-    starts a word or a << comes after a ( on the same line of the same
-    command level (command_level) that is no $(...), <(...), >(...) or
-    =(...), not the () of a function and does not open a plain subshell
-    (opens_a_plain_subshell). The shell may read such a ( as a pattern or
-    word group, as in echo (a|b), x@(a) or an array's ( ), and then the #
-    as word text and the << as no heredoc. bash 3.2 reads a line apart when
+    its end line is missing. It is None too when a # starts a word inside a
+    $((...)), ((...)) or ${...}, which the shells and the gate's readers
+    read apart. The gate reads a # that starts a word as a comment, and a <<
+    as a heredoc, only after openers it reads in full: quotes, $(...) and a
+    ( that opens a plain subshell (opens_a_plain_subshell). Any other opener
+    earlier on the same line (unread_opener), or one still open around it,
+    makes the answer None, since the shell may read the # as word or pattern
+    text and the << as no heredoc. bash 3.2 reads a line apart when
     it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc
     body at another ) than zsh, such as a case pattern's ) or a ) inside a
     ${...} (bash_3_2_ends_elsewhere).
     """
     out, bodies, pending, stack, index, apart = [], [], [], ["top"], 0, False
-    guessed = frozenset()  # the command levels whose line holds a ( the gate guesses at (opens_a_plain_subshell)
+    unread = frozenset()  # the spots on the stack whose ( the gate does not read in full, as in <(...) or echo if (
+    not_read = False  # whether an opener the gate does not read in full came earlier on this line
     while index < len(line):
         char, context = line[index], stack[-1]
-        guessed = still_guessed(guessed, stack, char)
+        unread = frozenset(spot for spot in unread if spot < len(stack))
+        not_read = not_read and not (char == "\n" and only_plain_levels(stack, unread))
         if char == "\n" and pending:
             if context not in ("top", "(", "$(", "`", ARRAY) + CASE_CONTEXTS:
                 return None  # a quoted string runs over the line that starts the heredoc
@@ -1396,15 +1398,15 @@ def set_aside_heredocs(line, first=0):
         line = joined_after(line, index)
         region = skipped_region(line, index, context)
         if region is not None:
-            if region == "" or (region.lstrip("$").startswith("((") and SUM_COMMENT.search(region)):
-                return None  # zsh reads the # as part of the sum, bash and the gate's readers as a comment
-            if region.startswith("((") and not opens_a_plain_subshell(line, index):
-                guessed = guessed | {command_level(stack)}
+            if region == "" or SUM_COMMENT.search(region):
+                return None  # the shell reads the # as part of the sum or value, the gate's readers as a comment
+            not_read = True
             out.append(WordPart(region) if region.startswith("$") else region)
             apart = apart or bash_3_2_ends_one_elsewhere(region)
             index += len(region)
             continue
         if context == '"':
+            not_read = not_read or char == "`" or line.startswith("$[", index)
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             if line.startswith("$(", index):
                 stack, char = stack + ["$("], "$("
@@ -1414,13 +1416,12 @@ def set_aside_heredocs(line, first=0):
             continue
         step = case_step(line, index, stack)
         if step:
-            stack, length = step
-            guessed = guessed | {command_level(stack)} if char == "(" else guessed  # a case pattern's (
-            out.append(line[index:index + length])  # a pattern's ) is an operator, so a # right after it opens a comment
+            stack, length, not_read = step[0], step[1], True  # the gate does not read a case command in full
+            out.append(line[index:index + length])
             index += length
             continue
         if char == "#" and starts_a_word(out):
-            if command_level(stack) in guessed:
+            if not_read:
                 return None  # the shell may read the # as word or pattern text, not as a comment
             end = comment_end(line, index, context)
             out.append(line[index:end])
@@ -1431,7 +1432,7 @@ def set_aside_heredocs(line, first=0):
             index += 3
             continue
         if line.startswith("<<", index):
-            if command_level(stack) in guessed:
+            if not_read:
                 return None  # the shell may start no heredoc there, and then runs the body lines as commands
             start = heredoc_start(line, index)
             if start is None:
@@ -1448,15 +1449,17 @@ def set_aside_heredocs(line, first=0):
         elif char in "'\"":
             stack = stack + [char]
         elif char == "`":
-            stack = stack[:-1] if context == "`" else stack + ["`"]
+            stack, not_read = (stack[:-1] if context == "`" else stack + ["`"]), True
         elif char == "(":
             stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out)
                              else "(" if starts_a_word(out) and not opens_a_pattern_group(line, index)
                              else WORD_GROUP]
-            if not (stack[-1] == "$(" or opens_a_plain_subshell(line, index) or EMPTY_GROUP.match(line, index + 1)):
-                guessed = guessed | {command_level(stack)}  # both shells read the () of f() as a function's
+            if stack[-1] != "(" or not opens_a_plain_subshell(line, index):
+                unread, not_read = unread | {len(stack) - 1}, True
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
+        elif unread_opener(line, index, out):
+            not_read = True
         out.append(char)
         index += len(char)
     if pending:
@@ -1510,30 +1513,35 @@ def assigns_an_array(pieces):
     return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
 
 
-COMMAND_LEVELS = ("top", "$(", "`")  # the contexts that start commands of their own
-SUM_COMMENT = re.compile(r"[\s;&|()<>]#")  # a # that starts a word inside a sum, which a comment would start at
+SUM_COMMENT = re.compile(r"[\s;&|()<>]#")  # a # that starts a word inside a sum or a ${...}, as a comment would
+REDIRECT_BEFORE_PAREN = (">|", "<&", ">&")  # redirects that end in a mark a plain subshell may follow, as in >|(
 
 
-def command_level(stack):
-    """Where on the stack the innermost command level is: the top level, a $(...) or a backtick command. A ( )
-    inside it belongs to it, while a $(...) inside a ( ) starts commands of its own."""
-    return max(spot for spot, context in enumerate(stack) if context in COMMAND_LEVELS)
+def only_plain_levels(stack, unread):
+    """Whether a line end here ends the line for set_aside_heredocs: only the top level and plain subshells are
+    open, so no quote, $(...), backtick, array, group, case part or ( the gate does not read stays open."""
+    return all(context in ("top", "(") and spot not in unread for spot, context in enumerate(stack))
 
 
-def still_guessed(guessed, stack, char):
-    """The command levels whose line still holds a guessed ( (set_aside_heredocs): those still open, without
-    the innermost one when a line end ends its line, where no ( ), quote or case part stays open."""
-    ended = len(stack) - 1 if char == "\n" and stack[-1] in COMMAND_LEVELS else None
-    return frozenset(level for level in guessed if level < len(stack) and stack[level] in COMMAND_LEVELS
-                     and level != ended)
+def unread_opener(line, index, out):
+    """Whether the character at index, outside quotes, opens a part the gate does not read in full: a { group or
+    brace list, or a [ that is not the [ command, such as [[, a subscript as in a[1]=x, or the [ of $[...]."""
+    char = line[index]
+    lone_bracket = char == "[" and starts_a_word(out) and line[index + 1:index + 2] in (" ", "\t")
+    return char == "{" or (char == "[" and not lone_bracket)
 
 
 def opens_a_plain_subshell(line, index):
-    """Whether the ( or (( at index stands where a command surely starts: at the start, or past blanks right after
-    ;, &, |, ( or a line end that no backslash joins. The gate guesses how the shell reads every other (, which
-    may be a pattern or word group in zsh or bash, such as the ( after a keyword given as an argument."""
+    """Whether the ( at index stands where a command surely starts: at the start, or past blanks right after ;, &,
+    |, ( or a line end that no backslash takes and that ends no redirect such as >| or <&. The gate does not read
+    any other ( in full, since the shell may read it as a pattern or word group, as after a keyword given as an
+    argument or after an escaped ;."""
     before = line[:index].rstrip(" \t")
-    return not before or before[-1] in ";&|(" or (before[-1] == "\n" and not before.endswith("\\\n"))
+    if not before:
+        return True
+    rest = before[:-1]
+    backslashes = len(rest) - len(rest.rstrip("\\"))
+    return before[-1] in ";&|(\n" and backslashes % 2 == 0 and not before.endswith(REDIRECT_BEFORE_PAREN)
 
 
 def opens_a_substitution(pieces):

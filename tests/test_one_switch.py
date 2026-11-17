@@ -744,18 +744,22 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
     after_body = ["cat <<EOF\n EOF\n'\nEOF\ngit push origin main", "cat <<A <<B\na\nA\nb'\nB\ngit push origin main",
                   "cat <<-EOF\n\t'\n\tEOF\ngit push origin main", "bash <<'EOF'\ngit push origin main\nEOF",
-                  "a=(x $(cat <<EOF\nit's\nEOF\n))\ngit push origin main",
-                  "cat <<EOF; a=(x\nit's\nEOF\ny)\ngit push origin main",
-                  "a=(x `cat <<EOF\nit's\nEOF\n`)\ngit push origin main"]
+                  "cat <<EOF; a=(x\nit's\nEOF\ny)\ngit push origin main"]
     with when("Claude pushes main after a heredoc body that holds a quote mark and a line that only looks like its "
-              "end, after two heredocs on one line, after a <<- body, inside a body a shell runs, after a heredoc "
-              "in a $(...) or backtick command inside an array's ( ), or after a body that starts at a line end "
-              "inside an array's ( )"):
+              "end, after two heredocs on one line, after a <<- body, inside a body a shell runs, or after a body "
+              "that starts at a line end inside an array's ( )"):
         results = hooks(home, tool, after_body, "after-body")
     with then("the gate ends each body only at the line that holds its own end word, reads the push and names "
               "the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    in_array = ["a=(x $(cat <<EOF\nit's\nEOF\n))\ngit push origin main",
+                "a=(x `cat <<EOF\nit's\nEOF\n`)\ngit push origin main"]
+    with when("Claude pushes main after a heredoc in a $(...) or backtick command inside an array's ( )"):
+        results = hooks(home, tool, in_array, "in-array")
+    with then("the gate does not read inside the array, so it refuses the call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
     with when("Claude writes a push inside a heredoc body whose end line has a space before the end word"):
         in_body = home.hook(tool, "PreToolUse", "cat <<EOF\nx\n EOF\ngit push origin main\nEOF", session="in-body")
     with then("the shell reads that push as body text, and so does the gate, so the call runs"):
@@ -764,8 +768,9 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
               "substitution inside another sum"):
         shift = home.hook(tool, "PreToolUse", "echo $((1<<3)) && cat <<EOF\n$((2<<1))\nEOF", session="shift")
         in_sum = home.hook(tool, "PreToolUse", "echo $(( $(git push origin main) + 1 ))", session="in-sum")
-    with then("the shift is no heredoc, so the call runs, and the gate reads the push in the sum and names the dash"):
-        assert not shift.refused, shift.reason
+    with then("the gate does not read a << after a sum on the same line, so it refuses that call as unreadable, "
+              "and it reads the push in the sum and names the dash"):
+        assert shift.refused and shift.findings == ["unreadable"], shift.reason
         assert in_sum.refused and in_sum.findings == ["dashes"], in_sum.reason
     odd = ["cat <<$END\ngit push origin main\n$END", "cat <<EOF\ngit push origin main",
            "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF",
@@ -845,28 +850,36 @@ def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still
     with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
-    word_text = ["echo $((1))#x <<EOF\nit's\nEOF\ngit push origin main",
-                 "echo $(echo a)#x <<EOF\nit's\nEOF\ngit push origin main",
-                 "cat <(true)#x <<EOF\nit's\nEOF\ngit push origin main",
-                 "echo a>(true)#x <<EOF\nit's\nEOF\ngit push origin main",
-                 "cat =(true)#x <<EOF\nit's\nEOF\ngit push origin main",
-                 "echo `echo a # x` <<EOF\nit's\nEOF\ngit push origin main"]
+    word_text = ["echo $(echo a)#x <<EOF\nit's\nEOF\ngit push origin main"]
     with when("Claude pushes main after a heredoc whose body holds a quote mark, where a # on the heredoc's line "
-              "follows a $((...)) sum, a $(...), <(...), >(...) or =(...) substitution, or stands in a comment that a "
-              "backtick closes, each in its own session"):
+              "follows a $(...) substitution"):
         results = hooks(home, tool, word_text, "word-text")
-    with then("the shell keeps that # as word text or ends the comment at the backtick, so the heredoc starts, and "
-              "the gate reads the push and names the dash"):
+    with then("the shell keeps that # as word text, so the heredoc starts, and the gate reads the push and names "
+              "the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
-    comments = ["((1))# <<EOF\ngit push origin main\nEOF", "(true)# <<EOF\ngit push origin main\nEOF"]
-    with when("Claude writes a << in a comment that follows a ((...)) sum or a ( ) group, and pushes main on the next "
-              "line"):
+    not_read = ["echo $((1))#x <<EOF\nit's\nEOF\ngit push origin main",
+                "cat <(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "echo a>(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "cat =(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "echo `echo a # x` <<EOF\nit's\nEOF\ngit push origin main"]
+    with when("Claude writes a # and a << on a line after a $((...)) sum, a <(...), >(...) or =(...) substitution, "
+              "or a backtick part, each in its own session"):
+        results = hooks(home, tool, not_read, "not-read")
+    with then("the gate does not read past that opener, so it refuses each call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    comments = ["(true)# <<EOF\ngit push origin main\nEOF"]
+    with when("Claude writes a << in a comment that follows a ( ) group, and pushes main on the next line"):
         results = hooks(home, tool, comments, "comments")
     with then("that # opens a comment in both shells, so no heredoc starts, and the gate reads the push and names "
               "the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a << in a comment that follows a ((...)) sum, and pushes main on the next line"):
+        sum_comment = home.hook(tool, "PreToolUse", "((1))# <<EOF\ngit push origin main\nEOF", session="sum-comment")
+    with then("the gate does not read past the sum on that line, so it refuses the call as unreadable"):
+        assert sum_comment.refused and sum_comment.findings == ["unreadable"], sum_comment.reason
     with when("Claude writes a << after a # right after an array's ), and pushes main on the next line"):
         array = home.hook(tool, "PreToolUse", "a=(x)# <<EOF\ngit push origin main\nEOF", session="array")
     with then("zsh reads a comment and runs the push, while bash 3.2 reads the # as word text and starts the "
@@ -908,15 +921,20 @@ def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_back
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     joined = ["printf '[%s]' 'a'\\\n#b\ngit push origin main", "echo $((1))\\\n#b\ngit push origin main",
               "\\\n#x\ngit push origin main", "echo a \\\n# don't\ngit push origin main",
-              "echo a;\\\n# don't\ngit push origin main", "echo a >\\\n(true)#x <<EOF\nit's\nEOF\ngit push origin main"]
+              "echo a;\\\n# don't\ngit push origin main"]
     with when("Claude pushes main on the line after a # that follows a backslash and line end, where the text before "
-              "the backslash is a closing quote, a $((...)) sum, the line start, a blank, a ; or a > that the joined "
-              "line turns into >(...), each in its own session"):
+              "the backslash is a closing quote, a $((...)) sum, the line start, a blank or a ;, each in its own "
+              "session"):
         results = hooks(home, tool, joined, "joined")
     with then("the shell joins the lines, so the # goes with the text before the backslash, and the gate reads the "
               "push and names the dash without an error"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a # and a << after a > that the joined line turns into >(...)"):
+        redirect = home.hook(tool, "PreToolUse", "echo a >\\\n(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                             session="redirect")
+    with then("the gate does not read past that >(...), so it refuses the call as unreadable"):
+        assert redirect.refused and redirect.findings == ["unreadable"], redirect.reason
 
 
 def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_quoted_escapes(home, tool):
@@ -926,9 +944,7 @@ def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_qu
     substitutions = ["out=\"$(git push origin main 2>&1 # it's fine\n)\"; echo \"$out\"",
                      "echo \"$(git push origin main; printf $'it\\'s')\"",
                      "cat <<EOF\n$(git push origin main # don't\n)\nEOF",
-                     "cat <(echo hi # it's\n) 'a)'; git push origin main",
                      "cat <(printf $'it\\'s)'; git push origin main\n)",
-                     "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\"",
                      "cat <<EOF\n$(echo hi # a)\ngit push origin main\n)\nEOF",
                      "echo \"$(echo $(echo a)#'x)'; git push origin main)\""]
     with when("Claude pushes main inside or after a $(...) or <(...) whose comment holds a quote mark or a ), or whose "
@@ -939,6 +955,13 @@ def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_qu
               "text, reads the push inside and names the dash"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    unread = ["cat <(echo hi # it's\n) 'a)'; git push origin main",
+              "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\""]
+    with when("Claude writes a # with a quote mark inside a <(...), or after a ${#x} and a $((...)) sum in a $(...)"):
+        results = hooks(home, tool, unread, "unread")
+    with then("the gate does not read past that <(...) or sum, so it refuses each call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
     with when("Claude pushes main inside a heredoc body's $(...) whose own heredoc holds a quote mark"):
         nested = home.hook(tool, "PreToolUse", "cat <<EOF\n$(git push origin main; cat <<X\nit's\nX\n)\nEOF",
                            session="nested")
@@ -963,7 +986,6 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
              "echo \"$(case a { a) git push origin main;; })\"",
              "echo \"$(case b { a) { echo A }; echo A;; b) git push origin main;; })\"",
              "echo \"$(case a in (a|b)) git push origin main;; esac)\"",
-             "echo \"$(case a in a)#it's\n git push origin main;; esac)\"",
              "echo \"$(case a in a) case b in b) echo B;; esac;; esac; git push origin main)\"",
              "echo \"$(case a in (a) echo esac;; a) echo A;; esac)\"; git push origin main"]
     with when("Claude pushes main inside a $(...) that holds a case command, after a pattern's ) or after the esac, "
@@ -974,21 +996,31 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
               "each is unreadable too"):
         for push, result in results.items():
             assert result.refused and result.findings == ["unreadable", "dashes"], (push, result.reason)
+    with when("Claude writes a # with a quote mark right after a case pattern's ) inside a $(...)"):
+        pattern_comment = home.hook(tool, "PreToolUse", "echo \"$(case a in a)#it's\n git push origin main;; esac)\"",
+                                    session="pattern-comment")
+    with then("the gate does not read a comment after a case part, so it refuses the call as unreadable"):
+        assert pattern_comment.refused and pattern_comment.findings == ["unreadable"], pattern_comment.reason
     with when("Claude runs echo with the words case, a, in and a) inside a $(...), and then text that names a push"):
         argument = home.hook(tool, "PreToolUse", "echo \"$(echo case a in a) git push origin main)\"",
                              session="argument")
     with then("it runs, since case is a keyword only where a command starts, so the ) ends the $(...) and the "
               "rest is quoted text"):
         assert argument.ran and argument.output == {}, argument.reason
-    outside = ["v=$(case a in a)#x'\n echo A;; esac); cat <<X\nit's\nX\ngit push origin main",
-               "v=$(case a in a) echo A;| case) echo B;; esac)#'\n'; git push origin main"]
-    with when("Claude pushes main after a case in a $(...) outside quotes, whose pattern's ) has a comment with a "
-              "quote mark before a heredoc, or whose ;| is followed by a pattern named case and the $(...) by a #"):
+    outside = ["v=$(case a in a) echo A;| case) echo B;; esac)#'\n'; git push origin main"]
+    with when("Claude pushes main after a case in a $(...) outside quotes, whose ;| is followed by a pattern named "
+              "case and the $(...) by a #"):
         results = hooks(home, tool, outside, "outside")
-    with then("the gate reads the # after the pattern's ) as a comment and the case word after ;| as a pattern, so "
-              "the $(...) ends at its own ), and it reads the push, names the dash and finds nothing unreadable"):
+    with then("the gate reads the case word after ;| as a pattern, so the $(...) ends at its own ), and it reads "
+              "the push, names the dash and finds nothing unreadable"):
         for push, result in results.items():
             assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a # with a quote mark after a case pattern's ) outside quotes, before a heredoc"):
+        outside_comment = home.hook(tool, "PreToolUse",
+                                    "v=$(case a in a)#x'\n echo A;; esac); cat <<X\nit's\nX\ngit push origin main",
+                                    session="outside-comment")
+    with then("the gate does not read a comment after a case part, so it refuses the call as unreadable"):
+        assert outside_comment.refused and outside_comment.findings == ["unreadable"], outside_comment.reason
 
 
 def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(home, tool):
