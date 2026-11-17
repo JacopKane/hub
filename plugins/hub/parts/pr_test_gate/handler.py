@@ -149,15 +149,16 @@ SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
-# The shell's names for the arguments a command runs with and for values that differ between git's run and the
-# gate's run. git runs its ssh command as sh -c '<command> "$@"' with its ssh arguments, which the gate's run of
-# the command does not have. $0 is the command text in both runs, so it does not differ, and it stays refused
-# only so that the lookup never rests on that. $_ is set by the shell that starts it. $$, $PPID, $BASHPID, $SHLVL
-# and the clock, random and line number variables ($RANDOM, $SRANDOM, $SECONDS, $EPOCHSECONDS, $EPOCHREALTIME,
-# $LINENO) differ between the two runs too, so the gate can not read them. $! is empty in both, since the marks
-# above refuse &, and it stays refused for the same reason as $0.
+# The shell's names for the arguments a command runs with and for values git's run and the gate's run may not
+# share. git runs its ssh command as sh -c '<command> "$@"' with its ssh arguments, which the gate's run of the
+# command does not have. $_ is set by the shell that starts it. $$, $PPID, $BASHPID, $SHLVL, $RANDOM, $SRANDOM,
+# $EPOCHSECONDS and $EPOCHREALTIME differ between the two runs. $OLDPWD comes from the shell that runs the step,
+# and $PWD may name the same folder by another path, so the gate can not read them either. $0 is the command text
+# in both runs, $! is empty in both, since the marks above refuse &, and $SECONDS and $LINENO need not differ.
+# They stay refused all the same, so that the lookup never rests on them.
 SSH_COMMAND_ARGUMENTS = re.compile(
-    r"\$(?:[0-9@*#$!]|_(?!\w)|(?:PPID|BASHPID|SHLVL|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|LINENO)(?!\w))")
+    r"\$(?:[0-9@*#$!]|_(?!\w)|(?:PPID|BASHPID|SHLVL|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|LINENO"
+    r"|PWD|OLDPWD)(?!\w))")
 # What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
 # backtick, or a ~ or zsh's =program at the start or after a colon, which the shell expands in an assignment
 SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)[~=]")
@@ -551,16 +552,27 @@ def pushed(step, lookups):
     options = step.words[1:len(step.words) - len(words)]
     assignments = step_variables(step)
     family = address_family(words[1:])
-    repos = github_repos(cwd, remote, lookups, lambda: (*with_address_family(lookups.git_ssh(cwd, options, assignments),
-                                                                             family),
-                                                        receive_pack_program(cwd, remote, words[1:], lookups),
-                                                        assignments))
+
+    def ssh_command():
+        folder = work_tree_top(cwd, lookups)  # git moves there before a push, so its ssh command runs there
+        return (folder, *with_address_family(lookups.git_ssh(folder, options, assignments), family),
+                receive_pack_program(cwd, remote, words[1:], lookups), assignments)
+    repos = github_repos(cwd, remote, lookups, ssh_command)
     if not repos:
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
     return [(target, commit, cwd, set(), ("rest", repo, {})) for target, commit in sent
             if not target.startswith("refs/") for repo in repos]
+
+
+def work_tree_top(cwd, lookups):
+    """The top folder of the work tree that holds cwd, where git runs a push's ssh command. A repo with no work
+    tree stops the step, since git may run its ssh command elsewhere then."""
+    top = lookups.git(cwd, "rev-parse", "--show-toplevel")
+    if not top:
+        raise unreadable("folder")
+    return top
 
 
 def address_family(rest):
@@ -580,13 +592,13 @@ def with_address_family(ssh_command, family):
 
 def github_repos(cwd, remote, lookups, ssh_command):
     """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
-    GitHub, or [] when none is on GitHub. ssh_command gives the ssh program and options git reaches ssh hosts with,
-    git's ssh variant, the program git runs on the remote, and the step's variables."""
-    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_command)]
+    GitHub, or [] when none is on GitHub. ssh_command gives the folder ssh runs in, the ssh program and options git
+    reaches ssh hosts with, git's ssh variant, the program git runs on the remote, and the step's variables."""
+    urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, lookups, ssh_command)]
     return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
-def is_a_github_url(url, cwd, lookups, ssh_command):
+def is_a_github_url(url, lookups, ssh_command):
     """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
     as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_command is
     asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
@@ -596,18 +608,18 @@ def is_a_github_url(url, cwd, lookups, ssh_command):
     if authority is None:
         return False
     return is_a_github_host(bare_host(authority)) or (over_ssh and is_a_github_host(
-        ssh_host_of(url, authority, cwd, lookups, *ssh_command())))
+        ssh_host_of(url, authority, lookups, *ssh_command())))
 
 
-def ssh_host_of(url, authority, cwd, lookups, ssh_words, variant, program, variables):
-    """The host ssh -G names for the [user@]host[:port] of the URL, asked with the ssh program and options, then
-    the port as git adds it for its ssh variant, then the command git sends: the program and the URL's path in
-    single quotes, as one word. A program of None sends no command. ssh runs with the step's variables, so a
-    value the shell fills in stops the step."""
+def ssh_host_of(url, authority, lookups, folder, ssh_words, variant, program, variables):
+    """The host ssh -G names for the [user@]host[:port] of the URL, asked in the folder with the ssh program and
+    options, then the port as git adds it for its ssh variant, then the command git sends: the program and the
+    URL's path in single quotes, as one word. A program of None sends no command. ssh runs with the step's
+    variables, so a value the shell fills in stops the step."""
     if any(unreadable_mark() in value or SHELL_CHANGED_VALUE.search(value) for value in variables.values()):
         raise unreadable("ssh_command")
     remote_command = () if program is None else (f"{program} {git_quoted(git_ssh_path(url))}",)
-    return lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)),
+    return lookups.ssh_hostname(folder, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)),
                                 remote_command, variables)
 
 
@@ -1242,7 +1254,7 @@ def check_github_copies(cwd, commit, lookups, variables):
         url = lookups.git(cwd, "remote", "get-url", "--", remote)
         if url is None:
             raise unreadable("remote_url")
-        if not is_a_github_url(url, cwd, lookups, lambda: (GH_SSH, "ssh", None, variables)):
+        if not is_a_github_url(url, lookups, lambda: (cwd, GH_SSH, "ssh", None, variables)):
             continue
         on_github = github_head(cwd, branch, ("rest", repo_path_of(url), {}), lookups)
         if on_github != commit:

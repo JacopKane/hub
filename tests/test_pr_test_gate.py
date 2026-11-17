@@ -1898,6 +1898,36 @@ def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_r
                     commit=on_github[:7]), pr_with_variable.reason
 
 
+def test_gits_ssh_command_is_looked_up_at_the_top_of_the_work_tree_and_one_that_reads_the_folder_is_refused(home):
+    with given("branch feature with open PR 7 and a new commit with no report, a remote for alias work-only, and "
+               "git's ssh command reading the config file work.json by a relative path, which says work-only is "
+               "github.com at the top of the repo and gitlab.com in its docs folder"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        fake = with_fake_ssh(home)
+        docs = os.path.join(home.work, "docs")
+        os.makedirs(docs)
+        home.write_json(os.path.join(home.work, "work.json"), {"hosts": {"work-only": "github.com"}})
+        home.write_json(os.path.join(docs, "work.json"), {"hosts": {"work-only": "gitlab.com"}})
+        ssh_user = "git" + "@"
+        home.git("remote", "add", "work", f"{ssh_user}work-only:acme/demo.git")
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json"
+    with when("Claude pushes feature to work from the docs folder"):
+        from_docs = bash(home, "git push work feature", cwd=docs)
+    with then("the push is judged as the push to GitHub it is, since git runs its ssh command at the top of the "
+              "work tree"):
+        assert says(home, from_docs, "no_report.md", short=feature[:7], branch="feature"), from_docs.reason
+    with when("git's ssh command reads the folder it runs in or the folder before it"):
+        folder_steps = {}
+        for argument in ("-l $PWD", "-l $OLDPWD"):
+            home.env["GIT_SSH_COMMAND"] = f"{fake} {argument}"
+            folder_steps[argument] = bash(home, "git push work feature")
+    with then("each push is refused, since the shell that runs the step may give them other values"):
+        for case, result in folder_steps.items():
+            assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+
+
 def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
     with given("branch feature with open PR 7 and a new commit with no report, alias port-work that is github.com "
                "only on port 2222, as a Match exec block on %p can set, and remotes that reach port-work on "
