@@ -206,6 +206,7 @@ def test_a_body_read_from_standard_input_is_the_heredoc_the_step_itself_reads(ho
             "file after the heredoc": "gh pr comment 3 -F - <<'A' < notes.md\nclean\nA",
             "cat into a pipe": "cat <<'A' | gh pr comment 3 -F -\nclean\nA",
             "dev stdin": "echo 'See /home/sam/a.md' | git commit -F /dev/stdin\ncat <<'B' > /dev/null\nclean\nB",
+            "heredoc number past the last": "gh pr comment 3 -F - __hub_heredoc_3__",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the gate can not tell what the step reads"):
@@ -265,6 +266,8 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
             "pattern in other case": "printf x > NOTE?.md; gh pr comment 3 -F notes.md",
             "read in other case": "printf x > notes.md; gh pr comment 3 -F NOTES.md",
             "tee in capitals": "echo x | TEE notes.md && gh pr comment 3 -F notes.md",
+            "until loop": "until gh pr comment 3 -F notes.md; do printf x > notes.md; done",
+            "function body": "echo() { gh pr comment 3 -F notes.md; printf x > notes.md; }; echo; echo",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the gate reads the file only as it is before the line runs, "
@@ -323,6 +326,9 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "program in env's split string": "env -S'make' && gh pr comment 5 -F notes.md",
             "a checkout": "git checkout main && gh pr comment 5 -F notes.md",
             "a PR checkout": "gh pr checkout 5 && gh pr comment 5 -F notes.md",
+            "a script on the next line": "make; bash <<'S'\ngh pr comment 5 -F notes.md\nS",
+            "a quoted descriptor then a test run": "echo '2>' & make; gh pr comment 5 -F notes.md",
+            "env changes the folder before tee": "env -C docs tee x && gh pr comment 5 -F notes.md",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the program may write the file without naming it"):
@@ -366,6 +372,8 @@ def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_fi
             "a program in capitals": "ECHO x && gh pr comment 5 -F notes.md",
             "tee in capitals to another file": "echo x | TEE out.log && gh pr comment 5 -F notes.md",
             "a shell's script that only reads": "bash <<'S'\ngit add x\ngh pr comment 5 -F notes.md\nS",
+            "a gh step that only reads": "gh pr view 5 && gh pr comment 5 -F notes.md",
+            "git with a folder option": "git -C . add x && git commit -F msg.txt",
         }
         readable_results = {name: home.hook(tool, "PreToolUse", command) for name, command in readable.items()}
     with then("the gate reads each file and finds the home path"):
@@ -395,6 +403,7 @@ def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool)
             "release asset": "cd docs && gh release upload v1 notes.md",
             "release pattern": "cd docs && gh release upload v1 note*.md",
             "api field file": "cd docs && gh api repos/o/r/issues -F body=@notes.md",
+            "pattern file": "cd docs && gh release upload v1 'note*.md'",
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the gate reads the file from the folder the line starts in"):
@@ -417,6 +426,7 @@ def test_a_relative_file_after_a_cd_on_the_line_counts_as_unreadable(home, tool)
             "another program runs gh": "chroot docs gh pr comment 3 -F notes.md",
             "wrapper around a script": "env -C docs bash <<'S'\ngh pr comment 3 -F notes.md\nS",
             "zsh's auto_cd": "docs && gh pr comment 3 -F notes.md",
+            "a long option prefix": "env --chd=docs gh pr comment 3 -F notes.md",
         }
         other_results = {name: home.hook(tool, "PreToolUse", command) for name, command in other_ways.items()}
     with then("each is refused as unreadable too"):
