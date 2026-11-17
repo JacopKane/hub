@@ -743,6 +743,7 @@ def test_a_pr_body_the_gate_can_not_read_as_gh_will_send_it_is_refused(home):
             "redirect on the step": f"gh pr edit 7 --body-file {good} > {good}",
             "tee after": f"gh pr edit 7 --body-file {good} | tee {good}",
             "in the background": f"gh pr edit 7 --body-file {good} & printf x > {good}",
+            "redirect after a cd": f"cd {home.work} && gh pr edit 7 --body-file {good} > {good}",
         }
         written_results = {name: bash(home, line) for name, line in written.items()}
     with then("each is refused, since the gate reads the file only as it is before the line runs"):
@@ -1866,6 +1867,23 @@ def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
               "keeps the first one, so the push runs"):
         assert quiet(own_port), own_port.reason
         assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]
+    with when("the remotes name port 99999, which is no port, and port +2222, which git reads as 2222, and Claude "
+              "pushes feature to each"):
+        home.write_json(home.env["FAKE_SSH_CONFIG"], {"ports": {"2222": {"port-work": "github.com"},
+                                                                "99999": {"port-work": "github.com"},
+                                                                "+2222": {"port-work": "github.com"}}})
+        home.git("remote", "add", "big", f"ssh://{ssh_user}port-work:99999/acme/demo.git")
+        home.git("remote", "add", "plus", f"ssh://{ssh_user}port-work:+2222/acme/demo.git")
+        calls_before = len(ssh_calls(home))
+        out_of_range = bash(home, "git push big feature")
+        with_a_sign = bash(home, "git push plus feature")
+    with then("the first runs, since git passes it to ssh with no -p, and the second is judged as the push to GitHub "
+              "it is, with ssh -G getting the port as written"):
+        assert quiet(out_of_range), out_of_range.reason
+        assert says(home, with_a_sign, "no_report.md", short=feature[:7], branch="feature"), with_a_sign.reason
+        assert ssh_calls(home)[calls_before:] == [
+            ["-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-p", "+2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]]
 
 
 def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to(home):
@@ -2083,6 +2101,16 @@ def test_an_ssh_alias_is_looked_up_with_the_remote_command_git_sends_for_the_pus
               "name the gate can not read"):
         assert [call[-1] for call in ssh_calls(home)[calls_before:]] == ["git-receive-pack 'acme/%41.git'"]
         assert says(home, percent, "unreadable_push.md", why=REMOTE_URL_WHY), percent.reason
+    with when("a local copy of feature on the exec remote is at feature's new commit, and Claude opens a PR with "
+              "no head named"):
+        home.git("update-ref", "refs/remotes/exec/feature", feature)
+        good = body_file(home, CANONICAL)
+        calls_before = len(ssh_calls(home))
+        opened = bash(home, f"gh pr create --title T --body-file {good}")
+    with then("ssh -G gets no command, as gh asks it, so exec-work is not github.com, the copy is not one gh reads, "
+              "and the PR is judged at feature's new commit"):
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}exec-work"]]
+        assert says(home, opened, "no_report.md", short=feature[:7], branch="feature"), opened.reason
 
 
 def test_github_not_the_local_copy_of_its_refs_says_what_a_push_or_a_new_pr_sends(home):
@@ -2253,6 +2281,10 @@ def test_gh_api_pr_steps_are_judged_whichever_way_the_endpoint_names_the_repo(ho
                     (setting, step, result.reason)
             else:
                 assert result.refused and result.reason == missing_part(home), (setting, step, result.reason)
+    with when("Claude sends a request whose # comes before a /pulls part, which gh reads as the repo's own endpoint"):
+        before_pulls = bash(home, f"gh api 'repos/acme/demo#/pulls' -f head=side -F body=@{good}")
+    with then("it runs, since the endpoint ends at the #"):
+        assert quiet(before_pulls), before_pulls.reason
     create = graphql_call('mutation { createPullRequest(input: {repositoryId: "R_base", headRepositoryId: "R_head", '
                           'baseRefName: "main", headRefName: "side", title: "T", body: $body}) '
                           '{ pullRequest { number } } }', f"-F body=@{good}")
@@ -2398,6 +2430,19 @@ def test_a_graphql_query_the_gate_can_not_read_in_full_is_judged_as_a_write(home
         assert says(home, own_results["ready"], "unreadable_push.md", why=NODE_WHY), own_results["ready"].reason
         assert [(case, result.reason) for case, result in other_results.items()
                 if not says(home, result, "unreadable_push.md", why=QUERY_WHY)] == []
+    with when("Claude sends the reading file after another command on the line, beside a field the shell fills in, "
+              "and as a file that holds exactly as many bytes as the gates read"):
+        at_limit = body_file(home, "query { viewer { login } }".ljust(MAX_TEXT), "at_limit.graphql")
+        assert os.path.getsize(at_limit) == MAX_TEXT
+        after_another = bash(home, f"true; gh api graphql -F query=@{reads}")
+        beside_a_fill = bash(home, f"gh api graphql -F query=@{reads} -f note=\"$X\"")
+        at_the_limit = bash(home, f"gh api graphql -F query=@{at_limit}")
+    with then("each is refused, since the file may change before gh reads it, a field the shell fills in may "
+              "carry the query, and the gate reads no more than it will say it read"):
+        assert says(home, after_another, "unreadable_push.md", why="another command runs before it on the same line"), \
+            after_another.reason
+        assert says(home, beside_a_fill, "unreadable_push.md", why=QUERY_WHY), beside_a_fill.reason
+        assert says(home, at_the_limit, "unreadable_push.md", why=QUERY_WHY), at_the_limit.reason
 
 
 def test_a_pr_body_edited_through_gh_api_gets_the_body_check_however_the_call_names_the_pr_or_the_body(home):
@@ -2523,6 +2568,24 @@ def test_a_graphql_pr_body_gets_the_body_check_wherever_the_query_sets_it(home):
         block = bash(home, edit(f'title: """body: {good}""", body: {bad}'))
     with then("it is refused, since the gate does not read block strings"):
         assert says(home, block, "unreadable_push.md", why=QUERY_WHY), block.reason
+    side_create = ('createPullRequest(input: {repositoryId: "R_1", baseRefName: "main", headRefName: "%s", '
+                   'title: "T", body: %s}) { pullRequest { number } }')
+    unreadable = {
+        "a string a line end breaks":
+            edit('title: "T\n", body: ' + bad),
+        "two operations with different defaults":
+            graphql_call("mutation A($text: String = %s) { %s } mutation B($text: String = %s) { %s }"
+                         % (good, side_create % ("side", "$text"), bad, side_create % ("side", "$text"))),
+        "a default that is no string":
+            graphql_call("mutation($text: String = 5) { %s }" % (side_create % ("side", "$text"))),
+        "two new PRs with different heads":
+            graphql_call("mutation { a: %s b: %s }" % (side_create % ("side", good), side_create % ("other", good)))}
+    with when("Claude sets a body through a string that a line end breaks, two operations whose defaults differ, a "
+              "default that is no string, and opens two PRs with different heads in one mutation"):
+        refused = {case: bash(home, step) for case, step in unreadable.items()}
+    with then("each is refused as one the gate can not read in full"):
+        assert [(case, result.reason) for case, result in refused.items()
+                if not says(home, result, "unreadable_push.md", why=QUERY_WHY)] == []
 
 
 def test_a_graphql_call_gets_the_body_check_whatever_path_or_method_names_graphql(home):
@@ -2713,7 +2776,7 @@ def test_a_step_with_a_word_the_shell_may_change_is_refused_and_a_word_it_keeps_
                "gh pr edit 7 --body-file \\~/body.md", 'gh pr edit 7 --title "$~T"', 'gh pr edit 7 --title "$^T"',
                "gh api -X PATCH repos/acme/demo/pulls/7 -f title=~",
                "gh api -X PATCH repos/acme/demo/pulls/7 -f title={x,y}",
-               'gh api repos/acme/demo/pulls "$X"', "git push -o {a,b} origin feature", "git {push,origin} feature"]
+               'gh api repos/acme/demo/pulls "$X"', 'gh pr merge 7 "$X"', "git push -o {a,b} origin feature", "git {push,origin} feature"]
     with when("Claude edits PR 7 or pushes feature where the shell may change a word before gh or git gets it: a "
               "brace list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$~T\", or "
               "a variable that fills in a whole word of a gh step"):
@@ -2820,7 +2883,7 @@ def test_a_pr_body_edit_inside_a_wrapper_or_a_substitution_is_refused_as_a_step_
             assert result.refused and result.reason == missing_part(home), (edit, result.reason)
     wrapped = [form.format(edit=edit) for edit in edits
                for form in ("bash -c '{edit}'", "sh -c '{edit}'", "zsh -c '{edit}'", "eval '{edit}'",
-                            "echo $({edit})", "bash <<'EOF'\n{edit}\nEOF")]
+                            "echo $({edit})", "$CMD; {edit}", "bash <<'EOF'\n{edit}\nEOF")]
     read_by_the_text_gate = [step for step in wrapped if step.startswith(("echo", "bash <<"))]
     with when("Claude sends the same edits inside bash -c, sh -c, zsh -c, eval, a substitution or a heredoc "
               "script"):
