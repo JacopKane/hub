@@ -149,11 +149,14 @@ SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
-# The shell's names for the arguments a command runs with and for its process ids. git runs its ssh command as
-# sh -c '<command> "$@"' with its ssh arguments, which the gate's run of the command does not have, and $$ differs
-# between the two runs, so the gate can not read them. $! is empty in both, since the marks above refuse &, and
-# it stays refused so that the lookup never rests on that rule.
-SSH_COMMAND_ARGUMENTS = re.compile(r"\$[1-9@*#$!]")
+# The shell's names for the arguments a command runs with and for values that differ between git's run and the
+# gate's run. git runs its ssh command as sh -c '<command> "$@"' with its ssh arguments, which the gate's run of
+# the command does not have, and $0 and $_ are set by the shell that starts it. $$, $PPID, $BASHPID and the clock,
+# random and line number variables ($RANDOM, $SRANDOM, $SECONDS, $EPOCHSECONDS, $EPOCHREALTIME, $LINENO) differ
+# between the two runs too, so the gate can not read them. $! is empty in both, since the marks above refuse &,
+# and it stays refused so that the lookup never rests on that rule.
+SSH_COMMAND_ARGUMENTS = re.compile(
+    r"\$(?:[0-9@*#$!]|_(?!\w)|(?:PPID|BASHPID|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|LINENO)(?!\w))")
 # What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
 # backtick, or a ~ or zsh's =program at the start or after a colon, which the shell expands in an assignment
 SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)[~=]")
