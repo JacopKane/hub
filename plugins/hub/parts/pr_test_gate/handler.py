@@ -149,16 +149,13 @@ SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
-# The shell's names for the arguments a command runs with and for values git's run and the gate's run may not
-# share. git runs its ssh command as sh -c '<command> "$@"' with its ssh arguments, which the gate's run of the
-# command does not have. $_ is set by the shell that starts it. $$, $PPID, $BASHPID, $SHLVL, $RANDOM, $SRANDOM,
-# $EPOCHSECONDS and $EPOCHREALTIME differ between the two runs. $OLDPWD comes from the shell that runs the step,
-# and $PWD may name the same folder by another path, so the gate can not read them either. $0 is the command text
-# in both runs, $! is empty in both, since the marks above refuse &, and $SECONDS and $LINENO need not differ.
-# They stay refused all the same, so that the lookup never rests on them.
-SSH_COMMAND_ARGUMENTS = re.compile(
-    r"\$(?:[0-9@*#$!]|_(?!\w)|(?:PPID|BASHPID|SHLVL|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|LINENO"
-    r"|PWD|OLDPWD)(?!\w))")
+# Each $ in the ssh command and the name the shell reads after it, if any. The gate fills in the command with the
+# hook's environment, which is not the environment of the shell git starts it from, so it reads only the values
+# both runs share: the step's own VAR=value words, which it passes to its run, and HOME and USER. Any other $,
+# such as a special parameter ($1, $@, $$, $_), a value the shell sets ($PWD, $RANDOM), or a value of the step's
+# shell, git or the gate ($DIRSTACK, $GIT_DIR), stops the step. The marks above already stop ${...}.
+SSH_COMMAND_VALUE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?")
+SSH_COMMAND_SHARED_VALUES = frozenset({"HOME", "USER"})
 # What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
 # backtick, or a ~ or zsh's =program at the start or after a colon, which the shell expands in an assignment
 SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)[~=]")
@@ -737,10 +734,11 @@ def one_command_setting(options, setting):
 def shell_words(text, assignments, cwd, lookups):
     """The ssh command split into words by the shell, as git runs it with sh -c, with each $NAME and ~ filled in
     from the push's variables. A shell mark that may run a program, a variable the shell fills in for the step
-    that the command may read, an argument git runs the command with, or a shell that fails stops the step."""
+    that the command may read, a $ other than the step's own names, HOME and USER, or a shell that fails stops the
+    step."""
     hidden_mark = unreadable_mark()
     may_read_a_variable = "$" in text or "~" in text
-    if (SSH_COMMAND_SHELL_MARKS.search(text) or SSH_COMMAND_ARGUMENTS.search(text) or hidden_mark in text
+    if (SSH_COMMAND_SHELL_MARKS.search(text) or reads_an_unshared_value(text, assignments) or hidden_mark in text
             or (may_read_a_variable and any(hidden_mark in value for value in assignments.values()))):
         raise unreadable("ssh_command")
     done = lookups.run(["/bin/sh", "-c", "printf '%s\\0' " + text, text], cwd, GIT_SECONDS, assignments)
@@ -749,6 +747,12 @@ def shell_words(text, assignments, cwd, lookups):
     if done[0] != 0:
         raise unreadable("ssh_command")
     return done[1].split("\0")[:-1]
+
+
+def reads_an_unshared_value(text, assignments):
+    """Whether the ssh command holds a $ that is not a plain $NAME for the step's own VAR= names, HOME or USER."""
+    shared = SSH_COMMAND_SHARED_VALUES | set(assignments)
+    return any(found.group(1) not in shared for found in SSH_COMMAND_VALUE.finditer(text))
 
 
 def ssh_config_options(options):

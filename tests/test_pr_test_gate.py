@@ -1876,13 +1876,23 @@ def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_r
                             "zsh program path": bash(home, f"FAKE_SSH_CONFIG==true {push}"),
                             "zsh program path after a colon": bash(home, f"FAKE_SSH_CONFIG=a:=true {push}")}
         for argument in ("$1", "$@", "$*", "-l $#", "-l $$", "-l $!",
-                         "-l $0", "-l $_", "-l $PPID", "-l $RANDOM", "-l $SHLVL"):
+                         "-l $0", "-l $_", "-l $PPID", "-l $RANDOM", "-l $SHLVL", "-l $DIRSTACK", "-l $GIT_DIR"):
             home.env["GIT_SSH_COMMAND"] = f"{fake} {argument}"
             unreadable_steps[argument] = bash(home, push)
         home.env["GIT_SSH_COMMAND"] = fake
     with then("each push is refused, since the gate can not tell which host git's ssh reaches"):
         for case, result in unreadable_steps.items():
             assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+    with when("git's ssh command reads the home folder, or a variable the push itself sets, to name its config"):
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F $HOME/work.json"
+        from_home = bash(home, push)
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F $WORK_CONFIG"
+        from_own_variable = bash(home, f"WORK_CONFIG={work_config} {push}")
+        home.env["GIT_SSH_COMMAND"] = fake
+    with then("each push is judged as the push to GitHub it is, since the gate fills in those values as git does"):
+        assert says(home, from_home, "no_report.md", short=feature[:7], branch="feature"), from_home.reason
+        assert says(home, from_own_variable, "no_report.md", short=feature[:7],
+                    branch="feature"), from_own_variable.reason
     with when("feature's new commit gets a report, the local copy of work's feature is at it, and Claude opens a PR "
               "that names no head, without the variable and with it"):
         record(home)
