@@ -1357,8 +1357,8 @@ def set_aside_heredocs(line, first=0):
     gate can not tell a heredoc from a shift or inside an array's ( ) or a
     ( ) glued to word text or read by zsh as a pattern, as in echo (a|b),
     its end word is not plain, or its end line is missing. It is None too
-    when a # starts a word inside such a ( ), as bash's extglob and zsh
-    read it as pattern text. bash 3.2 reads a
+    when a # starts a word inside such a ( ) or comes right after its ),
+    as bash's extglob and zsh read it as word text. bash 3.2 reads a
     line apart when it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
     another ) than zsh, such as a case pattern's ) or a ) inside a ${...}
     (bash_3_2_ends_elsewhere), and when a # comes right after
@@ -1447,6 +1447,8 @@ def set_aside_heredocs(line, first=0):
                              else "(" if starts_a_word(out) and not opens_a_pattern_group(line, index)
                              else WORD_GROUP]
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
+            if context == WORD_GROUP and hash_follows(line, index + 1):
+                return None  # the word goes on past this ), so bash and zsh read the # as word text
             apart = apart or (context == ARRAY and hash_follows(line, index + 1))
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         out.append(char)

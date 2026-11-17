@@ -796,6 +796,10 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
                                                          "git commit -m 'Fix the save button'\nEOF",
             "heredoc in a zsh pattern group of its own": "zsh <<'EOF'\necho (a <<END b)\n"
                                                          "git commit -m 'Fix the save button'\nEND\nEOF",
+            "# right after a zsh pattern group": "zsh <<'EOF'\necho (y|z)#(N) ; "
+                                                "git commit -m 'Fix the save button'\nEOF",
+            "# right after a bash extglob group": "bash -O extglob <<'EOF'\necho x@(a)# ; "
+                                                 "git commit -m 'Fix the save button'\nEOF",
         }
         hidden_results = {name: [home.hook(tool, "PreToolUse", command) for _ in range(2)]
                           for name, command in hidden.items()}
@@ -809,6 +813,7 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "bash <<'EOF'\n# set up\necho $HOME\nmake test\nEOF",
             "bash <<'EOF'\nnotes() { cat <<END\nFix the save button\nEND\n}\nnotes\nEOF",
             "zsh <<'EOF'\nmake test && (cd docs # build the docs\nmake html)\nEOF",
+            "bash <<'EOF'\n(make test)# run the tests\nEOF",
         ]
         clean_results = [home.hook(tool, "PreToolUse", command) for command in clean]
     with then("each runs with no answer"):
