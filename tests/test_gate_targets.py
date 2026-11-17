@@ -818,6 +818,10 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "a ( right after an escaped ;": "echo a\\;(b|#x)(N) ; ",
             "a # that starts a word inside a ${ }": "echo ${x:- #} ; ",
             "a << inside a $[ ] sum": "echo $[1<<END ]\n",
+            "a << on the line after an open $[": "echo $[1\n<<END ]\n",
+            "a << on the line after an open subscript": "a[1\n<<END ]=2\n",
+            "a << on the line after an open subscript of a variable": "echo $a[1\n<<END ]\n",
+            "a << after a quote inside an open $[ in a string": "echo \"$[1\"\n<<END ]\" \"\n",
         }
         for shell in ("bash", "zsh"):
             for name, start in before_the_step.items():

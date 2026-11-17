@@ -344,7 +344,8 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                   "echo x@(a)# ; git push origin feature": "the line does not parse",
                   "echo if (#x)(N) ; git push origin feature": "the line does not parse",
                   "(( #x )) ; git push origin feature": "the line does not parse",
-                  "echo a\\;(b|#x)(N) ; git push origin feature": "the line does not parse"}
+                  "echo a\\;(b|#x)(N) ; git push origin feature": "the line does not parse",
+                  "echo $[1\n<<EOF ]\ngit push origin feature\nEOF": "the line does not parse"}
     with when("Claude sends pushes whose commit the gate can not read: a variable, a detached HEAD, every branch "
               "in full or shortened, a shortened option git could read two ways, a broken quote, a step after "
               "another command or program, a substitution, a wrapper, xargs and a heredoc inside an array or "
@@ -359,7 +360,8 @@ def test_every_way_to_name_the_pushed_commit_finds_it_and_a_push_it_can_not_read
                        "echo x@(a <<EOF b)\ngit push origin feature\nEOF",
                        "echo (#x|y)(N) ; git push origin feature", "echo x@(a)# ; git push origin feature",
                        "echo if (#x)(N) ; git push origin feature", "(( #x )) ; git push origin feature",
-                       "echo a\\;(b|#x)(N) ; git push origin feature"]
+                       "echo a\\;(b|#x)(N) ; git push origin feature",
+                       "echo $[1\n<<EOF ]\ngit push origin feature\nEOF"]
     with then("the text gate answers first for the variable, the wrapper, xargs, the option git could read two "
               "ways, every branch, the broken quote and the heredoc inside an array or a glued (, since it can not "
               "read their "

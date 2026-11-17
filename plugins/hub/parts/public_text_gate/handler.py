@@ -1362,7 +1362,9 @@ def set_aside_heredocs(line, first=0):
     ( that opens a plain subshell (opens_a_plain_subshell). Any other opener
     earlier on the same line (unread_opener), or one still open around it,
     makes the answer None, since the shell may read the # as word or pattern
-    text and the << as no heredoc. bash 3.2 reads a line apart when
+    text and the << as no heredoc. It is None as well when a [ the shell
+    may read over a line end has no plain ] later on its line
+    (bracket_left_open). bash 3.2 reads a line apart when
     it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc
     body at another ) than zsh, such as a case pattern's ) or a ) inside a
     ${...} (bash_3_2_ends_elsewhere).
@@ -1406,6 +1408,8 @@ def set_aside_heredocs(line, first=0):
             index += len(region)
             continue
         if context == '"':
+            if char == "[" and bracket_left_open(line, index, quoted=True):
+                return None  # the shell may read the [ to a ] on a later line, the gate to this line end
             not_read = not_read or char == "`" or line.startswith("$[", index)
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             if line.startswith("$(", index):
@@ -1458,6 +1462,8 @@ def set_aside_heredocs(line, first=0):
                 unread, not_read = unread | {len(stack) - 1}, True
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
+        elif char == "[" and bracket_left_open(line, index, quoted=False):
+            return None  # the shell may read the [ to a ] on a later line, the gate to this line end
         elif unread_opener(line, index, out):
             not_read = True
         out.append(char)
@@ -1521,6 +1527,33 @@ def only_plain_levels(stack, unread):
     """Whether a line end here ends the line for set_aside_heredocs: only the top level and plain subshells are
     open, so no quote, $(...), backtick, array, group, case part or ( the gate does not read stays open."""
     return all(context in ("top", "(") and spot not in unread for spot, context in enumerate(stack))
+
+
+def bracket_left_open(line, index, quoted):
+    """Whether the [ at index may run over a line end for the shell while the gate can not see its ] on this line.
+
+    The shells read the [ of a $[...] sum and of a subscript glued to a name,
+    as in a[1]=x or $a[1], up to its ], over line ends too. Inside double
+    quotes only $[ and a [ glued to a $name count. The gate reads such a [
+    only when its ] follows on the same line with nothing but plain text
+    between: no quote, backslash, backtick, $( or ${, which the shells may
+    read apart from the gate.
+    """
+    start = index
+    while start and line[start - 1].isascii() and (line[start - 1].isalnum() or line[start - 1] == "_"):
+        start -= 1
+    after_a_dollar = start > 0 and line[start - 1] == "$"
+    if not (line[index - 1:index] == "$" or (after_a_dollar if quoted else start < index)):
+        return False
+    depth = 0
+    for at in range(index, len(line)):
+        char = line[at]
+        if char in "\n'\"`\\" or line.startswith(("$(", "${"), at):
+            return True
+        depth += (char == "[") - (char == "]")
+        if depth == 0:
+            return False
+    return True
 
 
 def unread_opener(line, index, out):
