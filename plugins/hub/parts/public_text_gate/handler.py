@@ -1132,6 +1132,7 @@ ARM_CONTEXTS = {"arm": "esac", "arm}": "}"}
 LEADING_PAREN = "pattern("  # the ( a pattern may start with, as in (a) or (a|b))
 GROUP = "group"  # a { ... } group, which a } word ends, as zsh ends it even after an argument
 ARRAY = "array"  # the ( ... ) of an array assignment, as in a=(x y), a+=(x) or local a=(x)
+WORD_GROUP = "word("  # a ( glued to word text, as in bash's extglob x@(a|b) or a zsh pattern group x(a|b)
 # The words before the ( of an array assignment: a name, perhaps with [index], then = or +=, where a word starts.
 ASSIGNS_AN_ARRAY = re.compile(r"(?:^|[\s;&|(){}])[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=$")
 COMMAND_CONTEXTS = ("top", "$(", "(", GROUP) + tuple(ARM_CONTEXTS)  # where case and { can be keywords
@@ -1353,8 +1354,10 @@ def set_aside_heredocs(line, first=0):
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
-    gate can not tell a heredoc from a shift or inside an array's ( ), its
-    end word is not plain, or its end line is missing. bash 3.2 reads a
+    gate can not tell a heredoc from a shift or inside an array's ( ) or a
+    ( ) glued to word text, its end word is not plain, or its end line is
+    missing. It is None too when a # starts a word inside such a glued
+    ( ), as bash's extglob reads it as pattern text. bash 3.2 reads a
     line apart when it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
     another ) than zsh, such as a case pattern's ) or a ) inside a ${...}
     (bash_3_2_ends_elsewhere), and when a # comes right after
@@ -1409,6 +1412,8 @@ def set_aside_heredocs(line, first=0):
             index += length
             continue
         if char == "#" and starts_a_word(out):
+            if enclosing_command(stack) == WORD_GROUP:
+                return None  # bash's extglob reads the # as pattern text, and zsh reports an error there
             end = comment_end(line, index, context)
             out.append(line[index:end])
             index = end
@@ -1418,7 +1423,7 @@ def set_aside_heredocs(line, first=0):
             index += 3
             continue
         if line.startswith("<<", index):
-            if inside_an_array(stack):
+            if enclosing_command(stack) in (ARRAY, WORD_GROUP):
                 return None  # neither shell starts a heredoc there, and bash 3.2 runs the body lines as commands
             start = heredoc_start(line, index)
             if start is None:
@@ -1437,8 +1442,9 @@ def set_aside_heredocs(line, first=0):
         elif char == "`":
             stack = stack[:-1] if context == "`" else stack + ["`"]
         elif char == "(":
-            stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out) else "("]
-        elif char == ")" and context in ("(", "$(", ARRAY):
+            stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out)
+                             else "(" if starts_a_word(out) else WORD_GROUP]
+        elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
             apart = apart or (context == ARRAY and hash_follows(line, index + 1))
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         out.append(char)
@@ -1494,11 +1500,11 @@ def assigns_an_array(pieces):
     return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
 
 
-def inside_an_array(stack):
-    """Whether the scan stands inside an array's ( ), also inside a ( ) within it, and not inside a $(...) or
-    backtick command there, which runs its own commands."""
-    commands = [context for context in reversed(stack) if context in (ARRAY, "$(", "`", "top")]
-    return commands[0] == ARRAY
+def enclosing_command(stack):
+    """The innermost array's ( ), word group, $(...), backtick command or top level the scan stands in. A ( )
+    inside an array or a word group belongs to it, while a $(...) or backtick command there runs its own
+    commands."""
+    return next(context for context in reversed(stack) if context in (ARRAY, WORD_GROUP, "$(", "`", "top"))
 
 
 def hash_follows(line, index):
