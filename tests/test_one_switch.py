@@ -714,7 +714,7 @@ def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_line
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     filled_in = ["echo hi # don't\ngit commit -m \"$MESSAGE\"", "echo hi # say \"x\ngit commit -m \"it's $MESSAGE\"",
-                 "git commit -m \"x\"#\"$MESSAGE\""]
+                 "git commit -m \"x\"#\"$MESSAGE\"", "echo a#b; git commit -m \"$MESSAGE\""]
     with when("Claude commits with a message from a variable on the line after a comment that holds a quote mark, "
               "or right after a # that stands inside a word, each in its own session"):
         results = hooks(home, tool, filled_in, "filled-in")
@@ -1189,7 +1189,8 @@ def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, t
                "git commit {-F,private.txt}", "git commit -S$KEY -m Fix", "git tag -a v$VERSION -m Fix",
                "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT",
                'gh issue comment 4 --body-file="~/notes.md"',
-               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"']
+               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"',
+               "\\{ (A=1); gh issue comment 4 --body hi", "\\{ (A=1); git commit -m Tidy"]
     with when("Claude sends git or gh steps where the shell may change a word before git or gh gets it: a brace "
               "list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$=T\" or "
               "\"$~T\", a variable outside quotes, or a variable in quotes that fills in a whole word of a gh step"):
@@ -1235,7 +1236,8 @@ def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home,
     apart = ["$'\\g\\i\\t' push origin main", "git push origin $'ma\\\nin'", "git commit -m $'Fix \\q it'",
              "git commit -m $'Fix\\0 it'", "git commit -m $'Fix\\x00 it'", "git commit -m $'Fix \\cA it'",
              "git commit -m $'Fix \\xZ it'", "git commit -m $'Fix \\400 it'", "git commit -m $'Fix \\8 it'",
-             "git commit -m $'Fix \\U110000 it'", "git commit -m $'Fix \\u00e9 it'"]
+             "git commit -m $'Fix \\U110000 it'", "git commit -m $'Fix \\u00e9 it'",
+             ". $'./x\\x00\\x01'"]
     with when("Claude writes a $'...' string with an escape that bash and zsh fill in differently, such as an "
               "unknown letter, a backslash at a line end, a NUL, \\c, \\x with no digit, an octal past 377, \\8, "
               "or a \\u or \\U code point, which macOS bash 3.2 keeps as written"):
