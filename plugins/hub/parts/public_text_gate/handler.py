@@ -1132,7 +1132,7 @@ ARM_CONTEXTS = {"arm": "esac", "arm}": "}"}
 LEADING_PAREN = "pattern("  # the ( a pattern may start with, as in (a) or (a|b))
 GROUP = "group"  # a { ... } group, which a } word ends, as zsh ends it even after an argument
 ARRAY = "array"  # the ( ... ) of an array assignment, as in a=(x y), a+=(x) or local a=(x)
-WORD_GROUP = "word("  # a ( glued to word text, as in bash's extglob x@(a|b) or a zsh pattern group x(a|b)
+WORD_GROUP = "word("  # a ( glued to word text, as in bash's extglob x@(a|b), or a zsh pattern group, as in echo (a|b)
 # The words before the ( of an array assignment: a name, perhaps with [index], then = or +=, where a word starts.
 ASSIGNS_AN_ARRAY = re.compile(r"(?:^|[\s;&|(){}])[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=$")
 COMMAND_CONTEXTS = ("top", "$(", "(", GROUP) + tuple(ARM_CONTEXTS)  # where case and { can be keywords
@@ -1355,9 +1355,10 @@ def set_aside_heredocs(line, first=0):
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
     gate can not tell a heredoc from a shift or inside an array's ( ) or a
-    ( ) glued to word text, its end word is not plain, or its end line is
-    missing. It is None too when a # starts a word inside such a glued
-    ( ), as bash's extglob reads it as pattern text. bash 3.2 reads a
+    ( ) glued to word text or read by zsh as a pattern, as in echo (a|b),
+    its end word is not plain, or its end line is missing. It is None too
+    when a # starts a word inside such a ( ), as bash's extglob and zsh
+    read it as pattern text. bash 3.2 reads a
     line apart when it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
     another ) than zsh, such as a case pattern's ) or a ) inside a ${...}
     (bash_3_2_ends_elsewhere), and when a # comes right after
@@ -1413,7 +1414,7 @@ def set_aside_heredocs(line, first=0):
             continue
         if char == "#" and starts_a_word(out):
             if enclosing_command(stack) == WORD_GROUP:
-                return None  # bash's extglob reads the # as pattern text, and zsh reports an error there
+                return None  # bash's extglob and a zsh pattern read the # as pattern text, not as a comment
             end = comment_end(line, index, context)
             out.append(line[index:end])
             index = end
@@ -1443,7 +1444,8 @@ def set_aside_heredocs(line, first=0):
             stack = stack[:-1] if context == "`" else stack + ["`"]
         elif char == "(":
             stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out)
-                             else "(" if starts_a_word(out) else WORD_GROUP]
+                             else "(" if starts_a_word(out) and not opens_a_pattern_group(line, index)
+                             else WORD_GROUP]
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
             apart = apart or (context == ARRAY and hash_follows(line, index + 1))
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
