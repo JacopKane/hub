@@ -1865,7 +1865,9 @@ def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_r
     with when("the variable's value is one the shell fills in or expands, or git's ssh command reads the "
               "arguments git runs it with"):
         unreadable_steps = {"filled value": bash(home, f"FAKE_SSH_CONFIG=$(cat {work_config}.name) {push}"),
-                            "home folder": bash(home, f"FAKE_SSH_CONFIG=~/work.json {push}")}
+                            "home folder": bash(home, f"FAKE_SSH_CONFIG=~/work.json {push}"),
+                            "zsh program path": bash(home, f"FAKE_SSH_CONFIG==true {push}"),
+                            "zsh program path after a colon": bash(home, f"FAKE_SSH_CONFIG=a:=true {push}")}
         for argument in ("$1", "$@", "$*", "-l $#", "-l $$", "-l $!"):
             home.env["GIT_SSH_COMMAND"] = f"{fake} {argument}"
             unreadable_steps[argument] = bash(home, push)

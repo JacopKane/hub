@@ -153,8 +153,8 @@ SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
 # its ssh arguments, which the gate's run of the command does not have, so it can not read them.
 SSH_COMMAND_ARGUMENTS = re.compile(r"\$[1-9@*#$!]")
 # What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
-# backtick, or a ~ at the start or after a colon, which the shell expands in an assignment
-SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)~")
+# backtick, or a ~ or zsh's =program at the start or after a colon, which the shell expands in an assignment
+SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)[~=]")
 # The ssh options that change the config ssh -G prints for a host: a config file or setting, the port, user, tag
 # and jump host that Match blocks and %p, %r, %j can test, the session type that Match sessiontype tests, and the
 # address family
