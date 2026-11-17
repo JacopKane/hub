@@ -1863,7 +1863,7 @@ def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_r
               "arguments git runs it with"):
         unreadable_steps = {"filled value": bash(home, f"FAKE_SSH_CONFIG=$(cat {work_config}.name) {push}"),
                             "home folder": bash(home, f"FAKE_SSH_CONFIG=~/work.json {push}")}
-        for argument in ("$1", "$@", "$*", "-l $#"):
+        for argument in ("$1", "$@", "$*", "-l $#", "-l $$", "-l $!"):
             home.env["GIT_SSH_COMMAND"] = f"{fake} {argument}"
             unreadable_steps[argument] = bash(home, push)
         home.env["GIT_SSH_COMMAND"] = fake
