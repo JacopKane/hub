@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 
+import pytest
 from conftest import REPO, commit
 from steps import and_, given, then, when
 
@@ -1908,6 +1909,68 @@ def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_r
         assert quiet(plain_pr), plain_pr.reason
         assert says(home, pr_with_variable, "github_head_differs.md", branch="feature", short=feature[:7],
                     commit=on_github[:7]), pr_with_variable.reason
+
+
+def with_alias_remote(home):
+    """Branch feature with open PR 7 and a new commit with no report, a remote for alias work-only, and git's ssh
+    command reading work.json at the top of the repo, which says work-only is github.com. It returns the commit and
+    the fake ssh's path."""
+    with_github(home)
+    feature = pushed_branch(home)
+    fake_gh(home, open={"feature": 7})
+    fake = with_fake_ssh(home)
+    home.write_json(os.path.join(home.work, "work.json"), {"hosts": {"work-only": "github.com"}})
+    ssh_user = "git" + "@"
+    home.git("remote", "add", "work", f"{ssh_user}work-only:acme/demo.git")
+    home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json"
+    return feature, fake
+
+
+def test_gits_ssh_command_that_reads_a_value_the_shell_sets_or_a_folder_through_a_tilde_is_refused(home):
+    with given("branch feature with open PR 7 and a new commit with no report, a remote for alias work-only, and "
+               "git's ssh command reading work.json, which says work-only is github.com"):
+        feature, fake = with_alias_remote(home)
+        push = "git push work feature"
+    with when("Claude pushes feature to work with git's ssh command as it is"):
+        plain = bash(home, push)
+    with then("the push is judged as the push to GitHub it is"):
+        assert says(home, plain, "no_report.md", short=feature[:7], branch="feature"), plain.reason
+    with when("the push sets a variable that bash or zsh fills in or changes itself, and git's ssh command reads it"):
+        shell_set_steps = {}
+        for name in ("RANDOM", "SRANDOM", "_", "SECONDS", "EPOCHSECONDS", "EPOCHREALTIME", "BASHPID", "PPID",
+                     "LINENO", "SHLVL", "PWD", "OLDPWD", "BASH_COMMAND", "BASH_ARGV0", "DIRSTACK", "HISTCMD",
+                     "ZSH_SUBSHELL", "TTYIDLE"):
+            home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json -l ${name}"
+            shell_set_steps[name] = bash(home, f"{name}=git {push}")
+    with and_("git's ssh command reads a folder through ~ followed by +, - or a digit"):
+        tilde_steps = {}
+        for argument in ("-l ~-", "-l ~+", "-l ~1", "-l ~-1", "-l ~+2"):
+            home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json {argument}"
+            tilde_steps[argument] = bash(home, push)
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json"
+    with then("each push is refused, since the shell that runs git's ssh command may give them other values"):
+        for case, result in {**shell_set_steps, **tilde_steps}.items():
+            assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+    with when("the push sets a plain variable of its own that git's ssh command reads"):
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json -l $WORK_USER"
+        own_variable = bash(home, f"WORK_USER=git {push}")
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json"
+    with then("the push is still judged as the push to GitHub it is"):
+        assert says(home, own_variable, "no_report.md", short=feature[:7], branch="feature"), own_variable.reason
+
+
+def test_a_push_from_the_work_tree_typed_in_another_case_is_read_when_the_file_system_ignores_case(home):
+    with given("branch feature with open PR 7 and a new commit with no report, a remote for alias work-only, and "
+               "the repo's folder named in another case"):
+        feature, _fake = with_alias_remote(home)
+        other_case = os.path.join(os.path.dirname(home.work), os.path.basename(home.work).swapcase())
+        if other_case == home.work or not os.path.isdir(other_case) or not os.path.samefile(other_case, home.work):
+            pytest.skip("this file system tells the two cases apart, so the other case names no folder")
+    with when("Claude pushes feature to work from the folder typed in the other case"):
+        from_other_case = bash(home, "git push work feature", cwd=other_case)
+    with then("the push is judged as the push to GitHub it is, since it is the same folder as the work tree's top"):
+        assert says(home, from_other_case, "no_report.md", short=feature[:7],
+                    branch="feature"), from_other_case.reason
 
 
 def test_gits_ssh_command_is_looked_up_at_the_top_of_the_work_tree_and_one_that_reads_the_folder_is_refused(home):

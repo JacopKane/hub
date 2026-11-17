@@ -146,16 +146,29 @@ SSH_VARIANT_SETTING = "ssh.variant"
 # The ssh variants git names, which pass a port another way or not at all; git reads any other value as ssh, and
 # auto as ssh too, since the gate lets only a program named ssh through
 SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
-# Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
-# can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
+# Shell marks that may start a program, pipe, redirect, expand ${...} or match files. Without them the shell
+# only quotes words and fills in a $ or a ~, which the checks below limit, so it runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
+# A ~ followed by +, - or a digit, which the shell fills in with the folder it runs in or an earlier one
+SSH_COMMAND_FOLDER_TILDE = re.compile(r"~[-+0-9]")
 # Each $ in the ssh command and the name the shell reads after it, if any. The gate fills in the command with the
-# hook's environment, which is not the environment of the shell git starts it from, so it reads only the values
-# both runs share: the step's own VAR=value words, which it passes to its run, and HOME and USER. Any other $,
-# such as a special parameter ($1, $@, $$, $_), a value the shell sets ($PWD, $RANDOM), or a value of the step's
-# shell, git or the gate ($DIRSTACK, $GIT_DIR), stops the step. The marks above already stop ${...}.
+# hook's environment, not that of the shell git starts it from, so it reads only HOME, USER and the step's own
+# VAR= names that the shell does not set itself. Any other $ stops the step, and the marks above stop ${...}.
 SSH_COMMAND_VALUE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?")
 SSH_COMMAND_SHARED_VALUES = frozenset({"HOME", "USER"})
+# Names bash or zsh fill in or change by themselves, so a step's VAR= word for one may not reach git's ssh command
+# as written. Any name that starts with BASH_ or ZSH_ counts too.
+SHELL_SET_NAMES = frozenset({
+    "_", "RANDOM", "SRANDOM", "SECONDS", "EPOCHSECONDS", "EPOCHREALTIME", "BASHPID", "PPID", "LINENO", "SHLVL",
+    "PWD", "OLDPWD", "DIRSTACK", "BASHOPTS", "SHELLOPTS", "GROUPS", "FUNCNAME", "PIPESTATUS", "HISTCMD", "UID",
+    "EUID", "GID", "EGID", "OPTIND", "OPTARG", "REPLY", "IFS", "HOSTNAME", "HOSTTYPE", "MACHTYPE", "OSTYPE",
+    "COLUMNS", "LINES", "COMP_WORDS", "COMP_CWORD", "COMP_LINE", "COMP_POINT", "READLINE_LINE", "READLINE_POINT",
+    "TTYIDLE", "TTY", "ERRNO", "ARGC", "USERNAME", "HOST", "CPUTYPE", "VENDOR", "TRY_BLOCK_ERROR",
+    "TRY_BLOCK_INTERRUPT", "TMPPREFIX", "KEYBOARD_HACK", "SAVEHIST", "HISTSIZE", "histchars", "status",
+    "pipestatus", "argv", "signals", "funcstack", "funcfiletrace", "funcsourcetrace", "functrace", "reply",
+    "path", "cdpath", "fpath", "manpath", "module_path", "mailpath", "psvar", "watch", "zsh_eval_context",
+})
+SHELL_SET_PREFIXES = ("BASH_", "ZSH_")
 # What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
 # backtick, or a ~ or zsh's =program at the start or after a colon, which the shell expands in an assignment
 SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)[~=]")
@@ -575,9 +588,18 @@ def work_tree_top(cwd, lookups):
 
 
 def holds(top, folder):
-    """Whether folder is top or inside it, with links followed in both."""
-    real_top, real_folder = os.path.realpath(top), os.path.realpath(folder)
-    return os.path.commonpath([real_top, real_folder]) == real_top
+    """Whether folder is top or inside it, with links followed in both. The file system says whether two names are
+    the same folder, so a name in another case counts on one that ignores case. Any error counts as not inside."""
+    try:
+        return any(os.path.samefile(top, candidate) for candidate in folder_and_parents(os.path.realpath(folder)))
+    except (OSError, ValueError):
+        return False
+
+
+def folder_and_parents(folder):
+    """The folder and each folder above it, up to the root."""
+    parent = os.path.dirname(folder)
+    return (folder,) if parent == folder else (folder, *folder_and_parents(parent))
 
 
 def address_family(rest):
@@ -741,12 +763,13 @@ def one_command_setting(options, setting):
 
 def shell_words(text, assignments, cwd, lookups):
     """The ssh command split into words by the shell, as git runs it with sh -c, with each $NAME and ~ filled in
-    from the push's variables. A shell mark that may run a program, a variable the shell fills in for the step
-    that the command may read, a $ other than the step's own names, HOME and USER, or a shell that fails stops the
-    step."""
+    from the push's variables. A shell mark that may run a program, a ~ that names a folder the shell has been in,
+    a variable the shell fills in for the step that the command may read, a $ other than HOME, USER and the step's
+    own names the shell does not set, or a shell that fails stops the step."""
     hidden_mark = unreadable_mark()
     may_read_a_variable = "$" in text or "~" in text
-    if (SSH_COMMAND_SHELL_MARKS.search(text) or reads_an_unshared_value(text, assignments) or hidden_mark in text
+    if (SSH_COMMAND_SHELL_MARKS.search(text) or SSH_COMMAND_FOLDER_TILDE.search(text)
+            or reads_an_unshared_value(text, assignments) or hidden_mark in text
             or (may_read_a_variable and any(hidden_mark in value for value in assignments.values()))):
         raise unreadable("ssh_command")
     done = lookups.run(["/bin/sh", "-c", "printf '%s\\0' " + text, text], cwd, GIT_SECONDS, assignments)
@@ -758,9 +781,15 @@ def shell_words(text, assignments, cwd, lookups):
 
 
 def reads_an_unshared_value(text, assignments):
-    """Whether the ssh command holds a $ that is not a plain $NAME for the step's own VAR= names, HOME or USER."""
-    shared = SSH_COMMAND_SHARED_VALUES | set(assignments)
+    """Whether the ssh command holds a $ that is not a plain $NAME for HOME, USER or the step's own VAR= names
+    that the shell does not fill in or change itself."""
+    shared = SSH_COMMAND_SHARED_VALUES | {name for name in assignments if not shell_sets(name)}
     return any(found.group(1) not in shared for found in SSH_COMMAND_VALUE.finditer(text))
+
+
+def shell_sets(name):
+    """Whether bash or zsh fill in or change the variable themselves."""
+    return name in SHELL_SET_NAMES or name.startswith(SHELL_SET_PREFIXES)
 
 
 def ssh_config_options(options):
