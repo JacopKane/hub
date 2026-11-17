@@ -1354,20 +1354,24 @@ def set_aside_heredocs(line, first=0):
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
-    gate can not tell a heredoc from a shift or inside an array's ( ) or a
-    ( ) glued to word text or read by zsh as a pattern, as in echo (a|b),
-    its end word is not plain, or its end line is missing. It is None too
-    when a # starts a word inside such a ( ) or comes right after its ),
-    as bash's extglob and zsh read it as word text. bash 3.2 reads a
-    line apart when it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc body at
-    another ) than zsh, such as a case pattern's ) or a ) inside a ${...}
-    (bash_3_2_ends_elsewhere), and when a # comes right after
-    the ) of an array assignment, which it reads as word text, not as a
-    comment.
+    gate can not tell a heredoc from a shift, its end word is not plain, or
+    its end line is missing. It is None too when a # starts a word in a
+    ((...)) or $((...)), which zsh and bash read apart, and when a # that
+    starts a word or a << comes after a ( on the same line of the same
+    command level (command_level) that is no $(...), <(...), >(...) or
+    =(...), not the () of a function and does not open a plain subshell
+    (opens_a_plain_subshell). The shell may read such a ( as a pattern or
+    word group, as in echo (a|b), x@(a) or an array's ( ), and then the #
+    as word text and the << as no heredoc. bash 3.2 reads a line apart when
+    it ends a $(...) inside double quotes, a ${...}, a $((...)) or a heredoc
+    body at another ) than zsh, such as a case pattern's ) or a ) inside a
+    ${...} (bash_3_2_ends_elsewhere).
     """
     out, bodies, pending, stack, index, apart = [], [], [], ["top"], 0, False
+    guessed = frozenset()  # the command levels whose line holds a ( the gate guesses at (opens_a_plain_subshell)
     while index < len(line):
         char, context = line[index], stack[-1]
+        guessed = still_guessed(guessed, stack, char)
         if char == "\n" and pending:
             if context not in ("top", "(", "$(", "`", ARRAY) + CASE_CONTEXTS:
                 return None  # a quoted string runs over the line that starts the heredoc
@@ -1392,8 +1396,10 @@ def set_aside_heredocs(line, first=0):
         line = joined_after(line, index)
         region = skipped_region(line, index, context)
         if region is not None:
-            if region == "":
-                return None
+            if region == "" or (region.lstrip("$").startswith("((") and SUM_COMMENT.search(region)):
+                return None  # zsh reads the # as part of the sum, bash and the gate's readers as a comment
+            if region.startswith("((") and not opens_a_plain_subshell(line, index):
+                guessed = guessed | {command_level(stack)}
             out.append(WordPart(region) if region.startswith("$") else region)
             apart = apart or bash_3_2_ends_one_elsewhere(region)
             index += len(region)
@@ -1409,12 +1415,13 @@ def set_aside_heredocs(line, first=0):
         step = case_step(line, index, stack)
         if step:
             stack, length = step
+            guessed = guessed | {command_level(stack)} if char == "(" else guessed  # a case pattern's (
             out.append(line[index:index + length])  # a pattern's ) is an operator, so a # right after it opens a comment
             index += length
             continue
         if char == "#" and starts_a_word(out):
-            if enclosing_command(stack) == WORD_GROUP:
-                return None  # bash's extglob and a zsh pattern read the # as pattern text, not as a comment
+            if command_level(stack) in guessed:
+                return None  # the shell may read the # as word or pattern text, not as a comment
             end = comment_end(line, index, context)
             out.append(line[index:end])
             index = end
@@ -1424,8 +1431,8 @@ def set_aside_heredocs(line, first=0):
             index += 3
             continue
         if line.startswith("<<", index):
-            if enclosing_command(stack) in (ARRAY, WORD_GROUP):
-                return None  # neither shell starts a heredoc there, and bash 3.2 runs the body lines as commands
+            if command_level(stack) in guessed:
+                return None  # the shell may start no heredoc there, and then runs the body lines as commands
             start = heredoc_start(line, index)
             if start is None:
                 return None
@@ -1446,10 +1453,9 @@ def set_aside_heredocs(line, first=0):
             stack = stack + ["$(" if opens_a_substitution(out) else ARRAY if assigns_an_array(out)
                              else "(" if starts_a_word(out) and not opens_a_pattern_group(line, index)
                              else WORD_GROUP]
+            if not (stack[-1] == "$(" or opens_a_plain_subshell(line, index) or EMPTY_GROUP.match(line, index + 1)):
+                guessed = guessed | {command_level(stack)}  # both shells read the () of f() as a function's
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
-            if context == WORD_GROUP and hash_follows(line, index + 1):
-                return None  # the word goes on past this ), so bash and zsh read the # as word text
-            apart = apart or (context == ARRAY and hash_follows(line, index + 1))
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         out.append(char)
         index += len(char)
@@ -1504,16 +1510,30 @@ def assigns_an_array(pieces):
     return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
 
 
-def enclosing_command(stack):
-    """The innermost array's ( ), word group, $(...), backtick command or top level the scan stands in. A ( )
-    inside an array or a word group belongs to it, while a $(...) or backtick command there runs its own
-    commands."""
-    return next(context for context in reversed(stack) if context in (ARRAY, WORD_GROUP, "$(", "`", "top"))
+COMMAND_LEVELS = ("top", "$(", "`")  # the contexts that start commands of their own
+SUM_COMMENT = re.compile(r"[\s;&|()<>]#")  # a # that starts a word inside a sum, which a comment would start at
 
 
-def hash_follows(line, index):
-    """Whether a # comes at index, perhaps after backslash and line end pairs, which the shell joins away."""
-    return bool(re.match(r"(?:\\\n)*#", line[index:]))
+def command_level(stack):
+    """Where on the stack the innermost command level is: the top level, a $(...) or a backtick command. A ( )
+    inside it belongs to it, while a $(...) inside a ( ) starts commands of its own."""
+    return max(spot for spot, context in enumerate(stack) if context in COMMAND_LEVELS)
+
+
+def still_guessed(guessed, stack, char):
+    """The command levels whose line still holds a guessed ( (set_aside_heredocs): those still open, without
+    the innermost one when a line end ends its line, where no ( ), quote or case part stays open."""
+    ended = len(stack) - 1 if char == "\n" and stack[-1] in COMMAND_LEVELS else None
+    return frozenset(level for level in guessed if level < len(stack) and stack[level] in COMMAND_LEVELS
+                     and level != ended)
+
+
+def opens_a_plain_subshell(line, index):
+    """Whether the ( or (( at index stands where a command surely starts: at the start, or past blanks right after
+    ;, &, |, ( or a line end that no backslash joins. The gate guesses how the shell reads every other (, which
+    may be a pattern or word group in zsh or bash, such as the ( after a keyword given as an argument."""
+    before = line[:index].rstrip(" \t")
+    return not before or before[-1] in ";&|(" or (before[-1] == "\n" and not before.endswith("\\\n"))
 
 
 def opens_a_substitution(pieces):

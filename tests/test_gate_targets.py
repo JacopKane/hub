@@ -801,6 +801,25 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "# right after a bash extglob group": "bash -O extglob <<'EOF'\necho x@(a)# ; "
                                                  "git commit -m 'Fix the save button'\nEOF",
         }
+        # zsh reads each ( below as a pattern group and the # as pattern text, so the next step runs. bash stops
+        # most of them with a syntax error, but runs the step after a (( )) that holds a #.
+        before_the_step = {
+            "a ( right after a group's )": "echo a(b)(#x)(N) ; ",
+            "a ( right after a backtick pair": "echo `echo a`(#x)(N) ; ",
+            "a ( right after a zsh pattern group": "echo (a|b)(#x)(N) ; ",
+            "a ( after a backslash and line end": "echo \\\n(#x)(N) ; ",
+            "a ( after a keyword given as an argument": "echo if (#x)(N) ; ",
+            "a ( after in given as an argument": "echo in (#x)(N) ; ",
+            "a ( that starts the list of a for loop": "for f in (#x)(N) ; do echo x ; done ; ",
+            "a # right after a (( )) inside a word": "echo ((a))#x(N) ; ",
+            "a # inside a (( )) command": "(( #x )) ; ",
+            "a # inside a $(( )) sum": "echo $(( #x )) ; ",
+            "a heredoc after a keyword given as an argument": "echo if (a <<END b)\n",
+        }
+        for shell in ("bash", "zsh"):
+            for name, start in before_the_step.items():
+                end = "\nEND\nEOF" if "<<END" in start else "\nEOF"
+                hidden[f"{name}, in {shell}"] = f"{shell} <<'EOF'\n{start}git commit -m 'Fix the save button'{end}"
         hidden_results = {name: [home.hook(tool, "PreToolUse", command) for _ in range(2)]
                           for name, command in hidden.items()}
     with then("each is refused on every try as unreadable"):
@@ -814,6 +833,8 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "bash <<'EOF'\nnotes() { cat <<END\nFix the save button\nEND\n}\nnotes\nEOF",
             "zsh <<'EOF'\nmake test && (cd docs # build the docs\nmake html)\nEOF",
             "bash <<'EOF'\n(make test)# run the tests\nEOF",
+            "bash <<'EOF'\n((1)) # count once\nmake test\nEOF",
+            "zsh <<'EOF'\nfiles=(a b)\n# list them\necho $files\nEOF",
         ]
         clean_results = [home.hook(tool, "PreToolUse", command) for command in clean]
     with then("each runs with no answer"):

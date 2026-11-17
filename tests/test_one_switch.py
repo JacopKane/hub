@@ -870,8 +870,8 @@ def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still
     with when("Claude writes a << after a # right after an array's ), and pushes main on the next line"):
         array = home.hook(tool, "PreToolUse", "a=(x)# <<EOF\ngit push origin main\nEOF", session="array")
     with then("zsh reads a comment and runs the push, while bash 3.2 reads the # as word text and starts the "
-              "heredoc, so the gate names the dash and finds the line unreadable"):
-        assert array.refused and array.findings == ["unreadable", "dashes"], array.reason
+              "heredoc, so the gate finds the line unreadable, as it does for any # after an array's ("):
+        assert array.refused and array.findings == ["unreadable"], array.reason
 
 
 def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_gh(home, tool):
@@ -889,14 +889,17 @@ def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_
               "so each call is unreadable"):
         for line, result in results.items():
             assert result.refused and "unreadable" in result.findings, (line, result.reason)
-    alike = ["a=(x)#; echo hi", "a=(x) #; git push origin main", "(echo x)#; git push origin main"]
-    with when("Claude runs echo after such an array, or writes the push in a comment after a blank or after a ( ) "
-              "group"):
-        results = hooks(home, tool, alike, "alike")
-    with then("nothing on the first line can run git or gh, and both shells read the others as comments, so each "
-              "call runs"):
+    after_an_array = ["a=(x)#; echo hi", "a=(x) #; git push origin main"]
+    with when("Claude runs echo after such an array, or writes the push in a comment after a blank after an array"):
+        results = hooks(home, tool, after_an_array, "after-an-array")
+    with then("the gate does not guess how the shell reads a # on the line of an array's (, so each call is "
+              "unreadable"):
         for line, result in results.items():
-            assert result.ran and result.output == {}, (line, result.reason)
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude writes the push in a comment right after a ( ) group"):
+        group = home.hook(tool, "PreToolUse", "(echo x)#; git push origin main", session="group")
+    with then("both shells read a comment there, so the call runs"):
+        assert group.ran and group.output == {}, group.reason
 
 
 def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_backslash(home, tool):
