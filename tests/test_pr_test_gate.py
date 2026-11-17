@@ -1835,6 +1835,56 @@ def test_an_ssh_alias_is_looked_up_with_the_ssh_config_that_gits_ssh_command_nam
             assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
 
 
+def test_an_ssh_alias_is_looked_up_with_the_steps_variables_and_a_command_that_reads_gits_ssh_arguments_is_refused(
+        home):
+    with given("branch feature with open PR 7 and a new commit with no report, a remote for alias work-only, and an "
+               "ssh config file where work-only is github.com, which ssh reads only when FAKE_SSH_CONFIG names it, "
+               "as a Match exec block can test a variable"):
+        with_github(home)
+        feature = pushed_branch(home)
+        on_github = head(home, "origin/feature")
+        fake_gh(home, open={"feature": 7})
+        fake = with_fake_ssh(home)
+        work_config = os.path.join(home.root, "work.json")
+        home.write_json(work_config, {"hosts": {"work-only": "github.com"}})
+        with open(work_config + ".name", "w") as handle:
+            handle.write(work_config)  # so a substitution that reads it names a real config
+        ssh_user = "git" + "@"
+        home.git("remote", "add", "work", f"{ssh_user}work-only:acme/demo.git")
+        push = "git push work feature"
+    with when("Claude pushes feature to work without the variable and with it"):
+        plain = bash(home, push)
+        with_variable = bash(home, f"FAKE_SSH_CONFIG={work_config} {push}")
+    with then("the plain push runs, and the push with the variable is judged as the push to GitHub it is, since "
+              "ssh -G reads the alias with the push's variables, as git's ssh would"):
+        assert quiet(plain), plain.reason
+        assert says(home, with_variable, "no_report.md", short=feature[:7], branch="feature"), with_variable.reason
+    with when("the variable's value is one the shell fills in or expands, or git's ssh command reads the "
+              "arguments git runs it with"):
+        unreadable_steps = {"filled value": bash(home, f"FAKE_SSH_CONFIG=$(cat {work_config}.name) {push}"),
+                            "home folder": bash(home, f"FAKE_SSH_CONFIG=~/work.json {push}")}
+        for argument in ("$1", "$@", "$*", "-l $#"):
+            home.env["GIT_SSH_COMMAND"] = f"{fake} {argument}"
+            unreadable_steps[argument] = bash(home, push)
+        home.env["GIT_SSH_COMMAND"] = fake
+    with then("each push is refused, since the gate can not tell which host git's ssh reaches"):
+        for case, result in unreadable_steps.items():
+            assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+    with when("feature's new commit gets a report, the local copy of work's feature is at it, and Claude opens a PR "
+              "that names no head, without the variable and with it"):
+        record(home)
+        home.git("update-ref", "refs/remotes/work/feature", feature)
+        fake_gh(home)
+        step = f"gh pr create --title T --body-file {body_file(home, CANONICAL)}"
+        plain_pr = bash(home, step)
+        pr_with_variable = bash(home, f"FAKE_SSH_CONFIG={work_config} {step}")
+    with then("only the PR with the variable is refused for the commit GitHub has, since gh reads the alias with "
+              "the variables of its step"):
+        assert quiet(plain_pr), plain_pr.reason
+        assert says(home, pr_with_variable, "github_head_differs.md", branch="feature", short=feature[:7],
+                    commit=on_github[:7]), pr_with_variable.reason
+
+
 def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
     with given("branch feature with open PR 7 and a new commit with no report, alias port-work that is github.com "
                "only on port 2222, as a Match exec block on %p can set, and remotes that reach port-work on "

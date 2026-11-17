@@ -149,6 +149,12 @@ SSH_OTHER_VARIANTS = {"plink", "putty", "tortoiseplink", "simple"}
 # Shell marks that may start a program, pipe, redirect, expand ${...} or match files. A command with none of them
 # can only quote and fill in a plain $NAME or a ~, so the shell that splits it into words runs nothing.
 SSH_COMMAND_SHELL_MARKS = re.compile(r"[`;&|<>(){}*?\[\]\n\r]")
+# The shell's names for the arguments a command runs with. git runs its ssh command as sh -c '<command> "$@"' with
+# its ssh arguments, which the gate's run of the command does not have, so it can not read them.
+SSH_COMMAND_ARGUMENTS = re.compile(r"\$[1-9@*#]")
+# What the shell may change in a VAR=value word's value that the parser leaves as text: a $( substitution, a
+# backtick, or a ~ at the start or after a colon, which the shell expands in an assignment
+SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)~")
 # The ssh options that change the config ssh -G prints for a host: a config file or setting, the port, user, tag
 # and jump host that Match blocks and %p, %r, %j can test, and the session type that Match sessiontype tests
 SSH_CONFIG_OPTIONS = {"-F", "-o", "-p", "-l", "-P", "-J", "-W"}
@@ -266,15 +272,16 @@ class Lookups:
             self.cache[key] = done[1].strip() if done[0] == 0 else None
         return self.cache[key]
 
-    def ssh_hostname(self, cwd, destination, ssh_words=GH_SSH, remote_command=()):
+    def ssh_hostname(self, cwd, destination, ssh_words=GH_SSH, remote_command=(), variables=None):
         """The host ssh connects to for a [user@]host, where host may be a Host alias, as ssh -G prints it after
-        reading ssh's config, without connecting. ssh_words are the program and the config options to ask with, and
+        reading ssh's config, without connecting. ssh_words are the program and the config options to ask with,
         remote_command the command the session runs, as git sends it, since Match command and Match sessiontype
-        blocks read it. A lookup that fails may hide GitHub, so it stops the step."""
-        key = ("ssh", tuple(ssh_words), destination, tuple(remote_command))
+        blocks read it, and variables the step's VAR=value words, which a Match exec block can read. A lookup that
+        fails may hide GitHub, so it stops the step."""
+        key = ("ssh", tuple(ssh_words), destination, tuple(remote_command), tuple(sorted((variables or {}).items())))
         if key not in self.cache:
             try:
-                done = self.run([*ssh_words, "-G", "--", destination, *remote_command], cwd, GIT_SECONDS)
+                done = self.run([*ssh_words, "-G", "--", destination, *remote_command], cwd, GIT_SECONDS, variables)
             except OSError:
                 done = None
             printed = done[1] if done and done[0] == 0 else ""
@@ -461,6 +468,11 @@ def written_out(step):
         raise Stop("other_repo.md")
 
 
+def step_variables(step):
+    """{name: value} for the step's VAR=value words, which written_out has let through."""
+    return dict(word.split("=", 1) for word in step.before)
+
+
 def git_place(step):
     """(the folder git runs in, the words after git's own options)."""
     cwd, words, index = step.cwd, step.words, 1
@@ -528,9 +540,10 @@ def pushed(step, lookups):
             raise unreadable("detached")
         remote = push_remote(cwd, branch, lookups)
     options = step.words[1:len(step.words) - len(words)]
-    assignments = dict(word.split("=", 1) for word in step.before)
+    assignments = step_variables(step)
     repos = github_repos(cwd, remote, lookups, lambda: (*lookups.git_ssh(cwd, options, assignments),
-                                                        receive_pack_program(cwd, remote, words[1:], lookups)))
+                                                        receive_pack_program(cwd, remote, words[1:], lookups),
+                                                        assignments))
     if not repos:
         return []
     sent = [pair for spec in specs or specs_of_a_bare_push(push_settings(cwd, remote, lookups), remote, branch)
@@ -542,16 +555,15 @@ def pushed(step, lookups):
 def github_repos(cwd, remote, lookups, ssh_command):
     """The REST paths of the GitHub repos a push to the remote word reaches, one for each of git's push URLs on
     GitHub, or [] when none is on GitHub. ssh_command gives the ssh program and options git reaches ssh hosts with,
-    git's ssh variant, and the program git runs on the remote."""
+    git's ssh variant, the program git runs on the remote, and the step's variables."""
     urls = [url for url in push_urls(cwd, remote, lookups) if is_a_github_url(url, cwd, lookups, ssh_command)]
     return list(dict.fromkeys(map(repo_path_of, urls)))
 
 
-def is_a_github_url(url, cwd, lookups, ssh_command=lambda: (GH_SSH, "ssh", None)):
+def is_a_github_url(url, cwd, lookups, ssh_command):
     """Whether a remote URL may reach GitHub: it names github.com, its host is github.com or a host under it, such
     as ssh.github.com, or it goes over ssh to a host or Host alias whose HostName is one of those. ssh_command is
-    asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either. gh asks ssh about a
-    host with no remote command, so by default none is sent."""
+    asked only for an ssh host, so a URL that needs no ssh lookup needs no ssh command either."""
     if GITHUB.search(url):
         return True
     authority, over_ssh = url_authority(url)
@@ -561,13 +573,16 @@ def is_a_github_url(url, cwd, lookups, ssh_command=lambda: (GH_SSH, "ssh", None)
         ssh_host_of(url, authority, cwd, lookups, *ssh_command())))
 
 
-def ssh_host_of(url, authority, cwd, lookups, ssh_words, variant, program):
+def ssh_host_of(url, authority, cwd, lookups, ssh_words, variant, program, variables):
     """The host ssh -G names for the [user@]host[:port] of the URL, asked with the ssh program and options, then
     the port as git adds it for its ssh variant, then the command git sends: the program and the URL's path in
-    single quotes, as one word. A program of None sends no command."""
+    single quotes, as one word. A program of None sends no command. ssh runs with the step's variables, so a
+    value the shell fills in stops the step."""
+    if any(unreadable_mark() in value or SHELL_CHANGED_VALUE.search(value) for value in variables.values()):
+        raise unreadable("ssh_command")
     remote_command = () if program is None else (f"{program} {git_quoted(git_ssh_path(url))}",)
     return lookups.ssh_hostname(cwd, ssh_destination(authority), (*ssh_words, *port_options(authority, variant)),
-                                remote_command)
+                                remote_command, variables)
 
 
 def receive_pack_program(cwd, remote, rest, lookups):
@@ -684,10 +699,10 @@ def one_command_setting(options, setting):
 def shell_words(text, assignments, cwd, lookups):
     """The ssh command split into words by the shell, as git runs it with sh -c, with each $NAME and ~ filled in
     from the push's variables. A shell mark that may run a program, a variable the shell fills in for the step
-    that the command may read, or a shell that fails stops the step."""
+    that the command may read, an argument git runs the command with, or a shell that fails stops the step."""
     hidden_mark = unreadable_mark()
     may_read_a_variable = "$" in text or "~" in text
-    if (SSH_COMMAND_SHELL_MARKS.search(text) or hidden_mark in text
+    if (SSH_COMMAND_SHELL_MARKS.search(text) or SSH_COMMAND_ARGUMENTS.search(text) or hidden_mark in text
             or (may_read_a_variable and any(hidden_mark in value for value in assignments.values()))):
         raise unreadable("ssh_command")
     done = lookups.run(["/bin/sh", "-c", "printf '%s\\0' " + text, text], cwd, GIT_SECONDS, assignments)
@@ -1188,19 +1203,20 @@ def new_pr(step, head, named_head, named_base, places, lookups):
     commit = (github_head(step.cwd, head, head_place, lookups) if named_head
               else head_of_branch(step.cwd, branch, lookups))
     if not named_head:
-        check_github_copies(step.cwd, commit, lookups)
+        check_github_copies(step.cwd, commit, lookups, step_variables(step))
     return [(branch, commit, step.cwd, pr_bases(named_base, step.cwd, branch, base_place, lookups), base_place)]
 
 
-def check_github_copies(cwd, commit, lookups):
+def check_github_copies(cwd, commit, lookups, variables):
     """Refuse a new PR whose head gh would take from a local copy of a GitHub branch at the commit, when GitHub has
     that branch at another commit or gives none. gh looks such a copy up as refs/remotes/<remote>/<branch>, and
-    only for a remote on GitHub."""
+    only for a remote on GitHub. gh asks ssh about a host with no remote command, and with the step's
+    variables."""
     for remote, branch in remote_copies_at(cwd, commit, lookups):
         url = lookups.git(cwd, "remote", "get-url", "--", remote)
         if url is None:
             raise unreadable("remote_url")
-        if not is_a_github_url(url, cwd, lookups):
+        if not is_a_github_url(url, cwd, lookups, lambda: (GH_SSH, "ssh", None, variables)):
             continue
         on_github = github_head(cwd, branch, ("rest", repo_path_of(url), {}), lookups)
         if on_github != commit:
