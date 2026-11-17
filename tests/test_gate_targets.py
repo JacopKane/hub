@@ -821,6 +821,8 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
             "a << on the line after an open $[": "echo $[1\n<<END ]\n",
             "a << on the line after an open subscript": "a[1\n<<END ]=2\n",
             "a << on the line after an open subscript of a variable": "echo $a[1\n<<END ]\n",
+            "a << on the line after an open subscript of a ${ } value": "echo ${a}[1\n<<END ]\n",
+            "a << on the line after a second open subscript": "echo $a[1][1\n<<END ]\n",
             "a << after a quote inside an open $[ in a string": "echo \"$[1\"\n<<END ]\" \"\n",
         }
         for shell in ("bash", "zsh"):
@@ -882,6 +884,19 @@ def test_the_usual_commit_and_pr_forms_run_while_a_comment_or_heredoc_after_an_u
         usual_results = [home.hook(tool, "PreToolUse", command) for command in usual]
     with then("each runs with no answer"):
         assert [result.output for result in usual_results] == [{}] * len(usual)
+    with when("Claude writes a file named by a plain ${name} from a heredoc, and notes a plain ${name} value"):
+        plain_names = ["cat > \"${DIR}/x\" <<'EOF'\nFix the save button\nEOF", "x=${DIR} # note"]
+        plain_results = [home.hook(tool, "PreToolUse", command) for command in plain_names]
+    with then("the gate reads the line after a plain ${name} like the line after a quote, so each runs with no "
+              "answer"):
+        assert [result.output for result in plain_results] == [{}] * len(plain_names)
+    with when("any other ${...} form comes before a heredoc or a comment on the same line"):
+        other_forms = ["cat > \"${DIR%/}/x\" <<'EOF'\nFix the save button\nEOF", "x=${DIR#a} # note",
+                       "x=${DIR:-a} # note", "x=${#DIR} # note"]
+        other_results = {command: home.hook(tool, "PreToolUse", command) for command in other_forms}
+    with then("the gate does not read them in full, so each is unreadable"):
+        assert {command: result.findings for command, result in other_results.items()} == {
+            command: ["unreadable"] for command in other_forms}
     with when("the heredoc message holds a home path"):
         private = home.hook(tool, "PreToolUse", heredoc_commit.format("See /home/sam/a.md"))
     with then("the gate read the heredoc body and refuses the home path"):

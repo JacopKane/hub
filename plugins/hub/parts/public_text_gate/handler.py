@@ -1358,8 +1358,8 @@ def set_aside_heredocs(line, first=0):
     its end line is missing. It is None too when a # starts a word inside a
     $((...)), ((...)) or ${...}, which the shells and the gate's readers
     read apart. The gate reads a # that starts a word as a comment, and a <<
-    as a heredoc, only after openers it reads in full: quotes, $(...) and a
-    ( that opens a plain subshell (opens_a_plain_subshell). Any other opener
+    as a heredoc, only after openers it reads in full: quotes, $(...), a
+    plain ${name} and a ( that opens a plain subshell (opens_a_plain_subshell). Any other opener
     earlier on the same line (unread_opener), or one still open around it,
     makes the answer None, since the shell may read the # as word or pattern
     text and the << as no heredoc. It is None as well when a [ the shell
@@ -1402,7 +1402,7 @@ def set_aside_heredocs(line, first=0):
         if region is not None:
             if region == "" or SUM_COMMENT.search(region):
                 return None  # the shell reads the # as part of the sum or value, the gate's readers as a comment
-            not_read = True
+            not_read = not_read or not PLAIN_NAME_VALUE.fullmatch(region)  # a plain ${name} reads like a quote
             out.append(WordPart(region) if region.startswith("$") else region)
             apart = apart or bash_3_2_ends_one_elsewhere(region)
             index += len(region)
@@ -1519,6 +1519,7 @@ def assigns_an_array(pieces):
     return bool(ASSIGNS_AN_ARRAY.search("".join(pieces)))
 
 
+PLAIN_NAME_VALUE = re.compile(r"\$\{[A-Za-z0-9_]+\}")  # a ${name} with only letters, digits and _ inside
 SUM_COMMENT = re.compile(r"[\s;&|()<>]#")  # a # that starts a word inside a sum or a ${...}, as a comment would
 REDIRECT_BEFORE_PAREN = (">|", "<&", ">&")  # redirects that end in a mark a plain subshell may follow, as in >|(
 
@@ -1533,8 +1534,10 @@ def bracket_left_open(line, index, quoted):
     """Whether the [ at index may run over a line end for the shell while the gate can not see its ] on this line.
 
     The shells read the [ of a $[...] sum and of a subscript glued to a name,
-    as in a[1]=x or $a[1], up to its ], over line ends too. Inside double
-    quotes only $[ and a [ glued to a $name count. The gate reads such a [
+    as in a[1]=x or $a[1], up to its ], over line ends too. zsh also reads a
+    subscript right after a ${...} value or another subscript, as in ${a}[1]
+    or $a[1][1]. Inside double quotes a [ glued to a name counts only after a
+    $, as in $a[1]. The gate reads such a [
     only when its ] follows on the same line with nothing but plain text
     between: no quote, backslash, backtick, $( or ${, which the shells may
     read apart from the gate.
@@ -1543,7 +1546,7 @@ def bracket_left_open(line, index, quoted):
     while start and line[start - 1].isascii() and (line[start - 1].isalnum() or line[start - 1] == "_"):
         start -= 1
     after_a_dollar = start > 0 and line[start - 1] == "$"
-    if not (line[index - 1:index] == "$" or (after_a_dollar if quoted else start < index)):
+    if not (line[index - 1:index] in ("$", "}", "]") or (after_a_dollar if quoted else start < index)):
         return False
     depth = 0
     for at in range(index, len(line)):
