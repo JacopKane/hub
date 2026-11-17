@@ -128,6 +128,7 @@ WHY = {
     "draft": "GitHub's REST update for a PR takes no draft field and can not change the draft state, so use "
              "gh pr ready or gh pr ready --undo instead",
     "remote_url": "git could not say which URL the remote names",
+    "url_host": "git may read the host of the remote's address differently than the gate does",
     "copies": "git could not list its copies of the remote's branches",
     "ssh_host": "ssh could not say which host the remote's address names",
     "ssh_command": "the gate can not read git's ssh command, so it can not tell which host the push reaches",
@@ -606,13 +607,20 @@ def git_ssh_path(url):
     scheme, separator, rest = url.partition("://")
     over_url = bool(separator) and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme) is not None
     text, mark = (git_url_decode(rest), "/") if over_url else (url, ":")
-    start = text.find("@[") + 1
-    close = text.find("]", start + 1) if text[start:start + 1] == "[" else -1
-    at = text.find(mark, max(close, 0))
+    at = git_path_start(text, mark)
     if at < 0:
         raise unreadable("remote_url")
     path = text[at + 1:] if mark == ":" else text[at:]
     return path[1:] if path[1:2] == "~" else path
+
+
+def git_path_start(text, mark):
+    """Where the path starts in a URL's text after its scheme, as git's connect.c finds it in host_end and
+    parse_connect_url. It is the first mark after a [bracketed] part, which begins at the first @[ anywhere in the
+    text, or at a [ that opens the text. -1 when there is no mark."""
+    start = text.find("@[") + 1
+    close = text.find("]", start + 1) if text[start:start + 1] == "[" else -1
+    return text.find(mark, max(close, 0))
 
 
 def git_quoted(text):
@@ -723,9 +731,19 @@ def url_authority(url):
     if separator and re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*", scheme):
         if scheme.lower() == "file":
             return None, False
-        return git_url_decode(rest).split("/", 1)[0], scheme.lower() in SSH_SCHEMES
+        text = git_url_decode(rest)
+        return same_host_as_git(text, "/", text.split("/", 1)[0]), scheme.lower() in SSH_SCHEMES
     scp_like = SCP_LIKE.match(url)
-    return (scp_like.group(0)[:-1], True) if scp_like else (None, False)
+    return (same_host_as_git(url, ":", scp_like.group(0)[:-1]), True) if scp_like else (None, False)
+
+
+def same_host_as_git(text, mark, authority):
+    """The authority as the gate read it from the URL's text, if git ends the host at the same place. git starts a
+    [bracketed] part at the first @[ anywhere in the text, so a host that git ends somewhere else stops the step."""
+    at = git_path_start(text, mark)
+    if (text[:at] if at >= 0 else text) != authority:
+        raise unreadable("url_host")
+    return authority
 
 
 def git_url_decode(text):

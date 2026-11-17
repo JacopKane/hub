@@ -1925,6 +1925,40 @@ def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to
                                                   ["-G", "--", f"{ssh_user}%67ithub.com", SCP_PUSH_COMMAND]]
 
 
+URL_HOST_WHY = "git may read the host of the remote's address differently than the gate does"
+
+
+def test_a_push_url_whose_host_git_ends_at_a_later_bracket_is_refused_and_a_bracketed_host_is_read(home):
+    with given("branch feature with open PR 7 and a new commit with no report, alias github-work for github.com, "
+               "and remotes with a [bracketed] host part, first in the address or after a / or a : that ends the "
+               "host as the gate reads it"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        with_fake_ssh(home, hosts={"github-work": "github.com"})
+        ssh_user = "git" + "@"
+        home.git("remote", "add", "bracketed", f"ssh://{ssh_user}[github-work]/acme/demo.git")
+        later = {"url": f"ssh://lab-host/x{ssh_user}[github-work]/acme/demo.git",
+                 "escaped": "ssh://lab-host/x%40%5Bgithub-work%5D/acme/demo.git",
+                 "scp_like": f"lab-host:x{ssh_user}[github-work]:acme/demo.git"}
+        for name, url in later.items():
+            home.git("remote", "add", name, url)
+    with when("Claude pushes feature to the remote whose host is in brackets at the start"):
+        calls_before = len(ssh_calls(home))
+        bracketed = bash(home, "git push bracketed feature")
+    with then("it is judged as the push to GitHub it is, and ssh -G is asked about the host without brackets"):
+        assert says(home, bracketed, "no_report.md", short=feature[:7], branch="feature"), bracketed.reason
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}github-work", URL_PUSH_COMMAND]]
+    with when("Claude pushes feature to each remote whose bracketed part comes after the host as the gate reads it"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in later}
+    with then("each is refused before ssh is asked, since git looks for that part anywhere in the address and may "
+              "end the host after it"):
+        for name, result in results.items():
+            assert says(home, result, "unreadable_push.md", why=URL_HOST_WHY), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == []
+
+
 def test_an_ssh_alias_is_looked_up_with_the_user_tag_jump_host_and_session_that_gits_ssh_command_names(home):
     with given("branch feature with open PR 7 and a new commit with no report, and aliases that are github.com only "
                "for user alice, tag t1, jump host jump1 or no session, as Match user, Match tagged, Match exec on "
