@@ -285,7 +285,8 @@ class Lookups:
         remote_command the command the session runs, as git sends it, since Match command and Match sessiontype
         blocks read it, and variables the step's VAR=value words, which a Match exec block can read. A lookup that
         fails may hide GitHub, so it stops the step."""
-        key = ("ssh", tuple(ssh_words), destination, tuple(remote_command), tuple(sorted((variables or {}).items())))
+        key = ("ssh", cwd, tuple(ssh_words), destination, tuple(remote_command),
+               tuple(sorted((variables or {}).items())))
         if key not in self.cache:
             try:
                 done = self.run([*ssh_words, "-G", "--", destination, *remote_command], cwd, GIT_SECONDS, variables)
@@ -565,11 +566,18 @@ def pushed(step, lookups):
 
 def work_tree_top(cwd, lookups):
     """The top folder of the work tree that holds cwd, where git runs a push's ssh command. A repo with no work
-    tree stops the step, since git may run its ssh command elsewhere then."""
+    tree, or a work tree that does not hold cwd, as when core.worktree names another folder, stops the step, since
+    git may run its ssh command elsewhere then."""
     top = lookups.git(cwd, "rev-parse", "--show-toplevel")
-    if not top:
+    if not top or not holds(top, cwd):
         raise unreadable("folder")
     return top
+
+
+def holds(top, folder):
+    """Whether folder is top or inside it, with links followed in both."""
+    real_top, real_folder = os.path.realpath(top), os.path.realpath(folder)
+    return os.path.commonpath([real_top, real_folder]) == real_top
 
 
 def address_family(rest):

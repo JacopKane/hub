@@ -11,6 +11,8 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
+import sys
 import time
 
 from conftest import REPO, commit
@@ -1936,6 +1938,42 @@ def test_gits_ssh_command_is_looked_up_at_the_top_of_the_work_tree_and_one_that_
     with then("each push is refused, since the shell that runs the step may give them other values"):
         for case, result in folder_steps.items():
             assert says(home, result, "unreadable_push.md", why=SSH_COMMAND_WHY), (case, result.reason)
+    with when("Claude pushes feature to work from inside the repo's .git folder, which is in no work tree, and from "
+              "the repo's folder when core.worktree names another folder"):
+        home.env["GIT_SSH_COMMAND"] = f"{fake} -F work.json"
+        from_git_folder = bash(home, "git push work feature", cwd=os.path.join(home.work, ".git"))
+        elsewhere = os.path.join(home.root, "elsewhere")
+        os.makedirs(elsewhere)
+        home.git("config", "core.worktree", elsewhere)
+        outside_the_work_tree = bash(home, "git push work feature")
+        home.git("config", "--unset", "core.worktree")
+    with then("each push is refused, since git may run its ssh command in a folder the gate does not know"):
+        for case, result in {"inside .git": from_git_folder, "outside the work tree": outside_the_work_tree}.items():
+            assert says(home, result, "unreadable_push.md",
+                        why="the folder it runs in is missing or not known"), (case, result.reason)
+
+
+def test_one_tool_calls_ssh_lookups_read_each_folders_own_config(home):
+    with given("the fake ssh, and two folders whose work.json files say alias work-only is a different host"):
+        fake = with_fake_ssh(home)
+        folders = []
+        for name, host in (("first", "github.com"), ("second", "gitlab.com")):
+            folders.append(os.path.join(home.root, name))
+            os.makedirs(folders[-1])
+            home.write_json(os.path.join(folders[-1], "work.json"), {"hosts": {"work-only": host}})
+    with when("the lookups of one tool call ask ssh -G for work-only with -F work.json in each folder in turn"):
+        code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import importlib.util as u; "
+                "spec = u.spec_from_file_location('gate', sys.argv[2]); gate = u.module_from_spec(spec); "
+                "spec.loader.exec_module(gate); lookups = gate.Lookups(); "
+                "print(json.dumps([lookups.ssh_hostname(folder, 'work-only', (sys.argv[3], '-F', 'work.json')) "
+                "for folder in sys.argv[4:]]))")
+        plugin = os.path.join(REPO, "plugins", "hub")
+        hosts = json.loads(subprocess.run(
+            [sys.executable, "-I", "-c", code, os.path.join(plugin, "lib"),
+             os.path.join(plugin, "parts", "pr_test_gate", "handler.py"), fake, *folders],
+            env=home.env, capture_output=True, text=True, check=True).stdout)
+    with then("each folder gets the host its own config names, not the answer the other folder got"):
+        assert hosts == ["github.com", "gitlab.com"]
 
 
 def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
