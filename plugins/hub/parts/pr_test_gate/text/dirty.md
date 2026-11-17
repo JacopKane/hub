@@ -1,1 +1,1 @@
-hub stopped this step, because the tests for {short} ran with uncommitted changes, so the report may not match the commit. Commit first, then run {{step}} pr-tested run again.
+hub stopped this step, because the tree or HEAD changed while the report for {short} was recorded, so the report may not match the commit. Make the run leave the tree and HEAD as they were, then run {{step}} pr-tested {verb} again.

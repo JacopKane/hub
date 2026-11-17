@@ -1,0 +1,1 @@
+hub stopped this step, because it names its repo with --git-dir, --work-tree, GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR, so the PR test gate can not tell which commit it sends. Run it from the repo's own folder, or name that folder with git -C, and send it again.

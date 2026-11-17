@@ -1,0 +1,1 @@
+hub stopped this step, because {why}, so the PR test gate can not tell which branches it sends. Name the remote and each branch in full, with no -c, --config-env or GIT_CONFIG settings, as in {example}, and send it again.
