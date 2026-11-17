@@ -139,6 +139,11 @@ def test_merges_closes_and_graphql_mutations_are_checked(home, tool):
         filled = home.hook(tool, "PreToolUse", "gh api graphql -f query='query { viewer { login } }' -f note=\"$NOTE\"")
     with then("each runs, since the gate reads the whole query and it names no mutation"):
         assert [(result.ran, result.output) for result in (query, filled)] == [(True, {})] * 2
+    with when("a graphql call names its query field with a word the shell fills in, and a field holds a home path"):
+        named = home.hook(tool, "PreToolUse", "gh api graphql -f \"$K\"='query { viewer { login } }' "
+                                              "-f note=/home/sam/d")
+    with then("the gate can not tell which field is the query, so it checks the fields and refuses the home path"):
+        assert named.findings == ["private_paths"], named.findings
 
 
 def test_a_graphql_mutation_is_checked_whatever_path_or_method_names_graphql(home, tool):
@@ -209,7 +214,8 @@ def test_gh_options_before_the_command_and_action_are_read_the_way_gh_reads_them
         assert [result.findings for result in results] == [["private_paths"]] * len(commands)
     with when("the shell fills in a word gh may read as its command or action"):
         hidden = [home.hook(tool, "PreToolUse", command) for command in
-                  ("gh pr $ACTION 7 --body 'See /home/sam/i.md'", "gh $GROUP create --body x", "gh -$FLAG pr create")]
+                  ("gh pr $ACTION 7 --body 'See /home/sam/i.md'", "gh $GROUP create --body x", "gh -$FLAG pr create",
+                   "gh pr -R\"$X\" create --title T --body x")]
     with then("each is refused, since the gate can not tell what gh runs"):
         assert [result.findings for result in hidden] == [["unreadable"]] * len(hidden)
     with when("an option takes the next word as its value, a value the shell fills in, and reads"):
