@@ -26,7 +26,8 @@ the JSON file it names in place of $FAKE_SSH_CONFIG, -o HostName=<name> (or
 -oHostName=<name>) names the host for any alias, -p <port> names the port, -l
 <user> the user, in place of the one before the @, -P <tag> the tag and -J
 <host> the jump host. Each also comes glued, as in -p<port>. As in the real
-ssh, the first -p, -l or -P wins, and a second -J fails.
+ssh, the first -p, -l or -P wins, and a second -J fails. -4 and -6 pick the
+address family, the last one winning, which changes nothing it prints.
 
 Each call's words go to $FAKE_SSH_LOG, one JSON list a line. Every other call
 exits 255, as when ssh can not connect.
@@ -48,13 +49,16 @@ VALUE_OPTIONS = {"-F": "config_file", "-p": "port", "-l": "user", "-P": "tag", "
 
 
 def read_options(options):
-    """{the setting each option names: config_file, hostname, port, user, tag, jump, session}, or None for any
-    other option or a second -J."""
+    """{the setting each option names: config_file, hostname, port, user, tag, jump, session, family}, or None for
+    any other option or a second -J."""
     read, index = {}, 0
     while index < len(options):
         option = options[index]
         if option == "-N":
             read, index = {**read, "session": "none"}, index + 1
+            continue
+        if option in ("-4", "-6"):
+            read, index = {**read, "family": option[1]}, index + 1
             continue
         if (option in VALUE_OPTIONS or option == "-o") and index + 1 < len(options):
             value, index = options[index + 1], index + 2

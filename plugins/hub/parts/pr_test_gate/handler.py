@@ -156,9 +156,12 @@ SSH_COMMAND_ARGUMENTS = re.compile(r"\$[1-9@*#]")
 # backtick, or a ~ at the start or after a colon, which the shell expands in an assignment
 SHELL_CHANGED_VALUE = re.compile(r"\$\(|`|(?:^|:)~")
 # The ssh options that change the config ssh -G prints for a host: a config file or setting, the port, user, tag
-# and jump host that Match blocks and %p, %r, %j can test, and the session type that Match sessiontype tests
+# and jump host that Match blocks and %p, %r, %j can test, the session type that Match sessiontype tests, and the
+# address family
 SSH_CONFIG_OPTIONS = {"-F", "-o", "-p", "-l", "-P", "-J", "-W"}
-SSH_CONFIG_SWITCHES = {"N"}
+SSH_CONFIG_SWITCHES = {"N", "4", "6"}
+# The switch git hands its ssh command for git push's last --ipv4 or --ipv6
+ADDRESS_FAMILY_SWITCHES = {"--ipv4": "-4", "--ipv6": "-6"}
 # -s makes git's remote command a subsystem name, a session the gate keeps refused
 SSH_UNREADABLE_SWITCHES = {"s"}
 # The git push options that name the program git runs on the remote; the last one wins, as in git
@@ -541,7 +544,9 @@ def pushed(step, lookups):
         remote = push_remote(cwd, branch, lookups)
     options = step.words[1:len(step.words) - len(words)]
     assignments = step_variables(step)
-    repos = github_repos(cwd, remote, lookups, lambda: (*lookups.git_ssh(cwd, options, assignments),
+    family = address_family(words[1:])
+    repos = github_repos(cwd, remote, lookups, lambda: (*with_address_family(lookups.git_ssh(cwd, options, assignments),
+                                                                             family),
                                                         receive_pack_program(cwd, remote, words[1:], lookups),
                                                         assignments))
     if not repos:
@@ -550,6 +555,21 @@ def pushed(step, lookups):
             for pair in sent_by(spec, cwd, branch, remote, lookups)]
     return [(target, commit, cwd, set(), ("rest", repo, {})) for target, commit in sent
             if not target.startswith("refs/") for repo in repos]
+
+
+def address_family(rest):
+    """("-4",) or ("-6",) for the last --ipv4 or --ipv6 of git push's words, or () when it names neither."""
+    shared = gate()
+    families = [option for option, _value in shared.push_items(shared.without_redirects(rest))
+                if option in ADDRESS_FAMILY_SWITCHES]
+    return (ADDRESS_FAMILY_SWITCHES[families[-1]],) if families else ()
+
+
+def with_address_family(ssh_command, family):
+    """git_ssh_words with git's address family switch after the ssh command's own options, where git puts it,
+    before the port."""
+    ssh_words, variant = ssh_command
+    return (*ssh_words, *family), variant
 
 
 def github_repos(cwd, remote, lookups, ssh_command):

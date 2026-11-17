@@ -1921,6 +1921,19 @@ def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
               "keeps the first one, so the push runs"):
         assert quiet(own_port), own_port.reason
         assert ssh_calls(home)[-1] == ["-p", "2223", "-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]
+    with when("Claude pushes to the remote on port 2222 with git push's -4, --ipv6 or -6 -4, and with -4 while git's "
+              "ssh command names -6 itself"):
+        calls_before = len(ssh_calls(home))
+        families = [bash(home, "git push -4 url feature"), bash(home, "git push --ipv6 url feature"),
+                    bash(home, "git push -6 -4 url feature"),
+                    bash(home, f"GIT_SSH_COMMAND='{fake} -6' git push -4 url feature")]
+    with then("each is judged as the push to GitHub it is, and ssh -G gets the command's own -6 first, then the "
+              "last address family of git push, then the port, in the order git runs ssh"):
+        for result in families:
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), result.reason
+        assert ssh_calls(home)[calls_before:] == [
+            [*options, "-p", "2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]
+            for options in (["-4"], ["-6"], ["-4"], ["-6", "-4"])]
     with when("the remotes name port 99999, which is no port, and port +2222, which git reads as 2222, and Claude "
               "pushes feature to each"):
         home.write_json(home.env["FAKE_SSH_CONFIG"], {"ports": {"2222": {"port-work": "github.com"},
