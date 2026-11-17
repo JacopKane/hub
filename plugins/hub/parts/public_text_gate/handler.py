@@ -1537,16 +1537,20 @@ def bracket_left_open(line, index, quoted):
     as in a[1]=x or $a[1], up to its ], over line ends too. zsh also reads a
     subscript right after a ${...} value or another subscript, as in ${a}[1]
     or $a[1][1]. Inside double quotes a [ glued to a name counts only after a
-    $, as in $a[1]. The gate reads such a [
-    only when its ] follows on the same line with nothing but plain text
-    between: no quote, backslash, backtick, $( or ${, which the shells may
-    read apart from the gate.
+    $, as in $a[1]. The shells join a backslash and line end before the [
+    to the text in front, as in a backslash and a line end before [1, so the look back
+    takes out every such pair. That only ever glues more text to the [, so a
+    pair the shell keeps leads to a refusal, never to a pass. The gate reads
+    such a [ only when its ] follows on the same line with nothing but plain
+    text between: no quote, backslash, backtick, $( or ${, which the shells
+    may read apart from the gate.
     """
-    start = index
-    while start and line[start - 1].isascii() and (line[start - 1].isalnum() or line[start - 1] == "_"):
+    before = line[:index].replace("\\\n", "")
+    start = len(before)
+    while start and before[start - 1].isascii() and (before[start - 1].isalnum() or before[start - 1] == "_"):
         start -= 1
-    after_a_dollar = start > 0 and line[start - 1] == "$"
-    if not (line[index - 1:index] in ("$", "}", "]") or (after_a_dollar if quoted else start < index)):
+    after_a_dollar = start > 0 and before[start - 1] == "$"
+    if not (before[-1:] in ("$", "}", "]") or (after_a_dollar if quoted else start < len(before))):
         return False
     depth = 0
     for at in range(index, len(line)):
