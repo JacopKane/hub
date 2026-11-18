@@ -3,6 +3,7 @@
 Every scenario runs the real engine, hubctl and the dispatcher as processes
 in a temporary HOME. Scenarios that feed hook input run once per tool.
 """
+import itertools
 import json
 import os
 import resource
@@ -10,7 +11,7 @@ import statistics
 import subprocess
 import sys
 
-from conftest import DASH, FIXTURES, PLUGIN, REPO, Home, commit, load_fixture
+from conftest import DASH, FIXTURES, GIT_OPTION_VALUES, PLUGIN, REPO, Home, commit, load_fixture
 from steps import and_, given, then, when
 
 GATE = "public_text_gate"
@@ -389,6 +390,35 @@ def test_a_push_is_checked_through_the_commits_it_sends(home, tool):
     with then("the same push runs, while a commit is still checked"):
         assert home.hook(tool, "PreToolUse", "git push origin main").ran
         assert home.hook(tool, "PreToolUse", commit(f"More {DASH} work")).refused
+
+
+def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home, tool):
+    with given("a repo with a local bare remote and a new commit whose message has a dash, the em dash check on, "
+               "and self-protection off, so only the gate reads each line"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        home.hubctl_from_mod("off", "self_protection")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    sessions = (f"00000000-0000-4000-8000-{number:012d}" for number in itertools.count(1))
+    with when("Claude pushes main after each of git's options that take a value, with the value as the next word, "
+              "each in its own session"):
+        pushes = {option: home.hook(tool, "PreToolUse", f"git {option} {value} push origin main",
+                                    session=next(sessions))
+                  for option, value in GIT_OPTION_VALUES.items()}
+    with then("git reads the next word as the option's value, so the gate reads the push and names the dash"):
+        for option, result in pushes.items():
+            assert result.refused and result.findings == ["dashes"], (option, result.reason)
+    with when("Claude commits after each option and its value, with a message that names a private path"):
+        commits = {option: home.hook(tool, "PreToolUse", f"git {option} {value} commit -m 'see /home/sam/notes'",
+                                     session=next(sessions))
+                   for option, value in GIT_OPTION_VALUES.items()}
+    with then("the gate reads the commit message and names the path"):
+        for option, result in commits.items():
+            assert result.refused and result.findings == ["private_paths"], (option, result.reason)
 
 
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):

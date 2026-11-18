@@ -37,6 +37,11 @@ PLUGIN = os.path.join(REPO, "plugins", "hub")
 with open(os.path.join(PLUGIN, "lib", "hub", "config_name")) as _name_file:
     CONFIG_NAME = _name_file.read().strip()  # the settings folder's name, under ~/.config
 DASH = chr(0x2014)  # the em dash, never typed as itself in this repo
+# git's own options that take the next word as their value, before its action, each with a value it could take.
+# They are the ones git.c reads this way today, and --super-prefix, which git read this way up to 2.39.
+GIT_OPTION_VALUES = {"-C": ".", "-c": "color.ui=always", "--config-env": "color.ui=TERM", "--git-dir": ".git",
+                     "--work-tree": ".", "--namespace": "main", "--attr-source": "HEAD", "--super-prefix": "sub/",
+                     "--shallow-file": "shallow"}
 
 CURSOR_EVENTS = {"PreToolUse": "preToolUse", "PostToolUse": "postToolUse", "SessionStart": "sessionStart",
                  "UserPromptSubmit": "beforeSubmitPrompt", "Stop": "stop"}
