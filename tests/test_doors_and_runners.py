@@ -28,6 +28,7 @@ import time
 
 import pytest
 
+from conftest import DASH, GIT_OPTION_VALUES
 from steps import and_, given, then, when
 
 PART = "self_protection"
@@ -251,6 +252,63 @@ def test_the_same_programs_with_ordinary_arguments_still_run(home, command):
         result = home.hook("claude_code", "PreToolUse", command)
     with then("it runs"):
         assert result.ran, result.reason
+
+
+def test_git_s_action_is_read_past_the_value_of_each_git_option_that_takes_one(home):
+    with given("hub is installed"):
+        home.install()
+    with when("the model runs git rebase -x with a hubctl script after each of git's options that take a value"):
+        scripts = {option: home.hook("claude_code", "PreToolUse",
+                                     f"git {option} {value} rebase -x 'hubctl off {GATE}' HEAD~1")
+                   for option, value in GIT_OPTION_VALUES.items()}
+    with then("self-protection reads rebase as git's action, finds the script and refuses each line"):
+        for option, result in scripts.items():
+            assert result.refused and f"({PART}." in (result.reason or ""), (option, result.reason)
+    with when("the model checks out hub's project settings file, plainly and after each option, "
+              "with log, an action that only reads, as the option's value"):
+        plain_checkout = home.hook("claude_code", "PreToolUse", "git checkout -- .hub/hub.json")
+        checkouts = {option: home.hook("claude_code", "PreToolUse", f"git {option} log checkout -- .hub/hub.json")
+                     for option in GIT_OPTION_VALUES}
+    with then("each is refused, since git's action is checkout and not the value"):
+        assert refused_by(plain_checkout, "settings_files"), plain_checkout.reason
+        for option, result in checkouts.items():
+            assert result.refused and f"({PART}." in (result.reason or ""), (option, result.reason)
+    # self-protection refuses --config-env on every line, since its value names a variable hub can not read.
+    ordinary = [line for option, value in GIT_OPTION_VALUES.items() if option != "--config-env"
+                for line in (f"git {option} {value} rebase -x 'make test' main", f"git {option} {value} log -3")]
+    with when("the model runs the same options before an ordinary rebase script and a log"):
+        results = {line: home.hook("claude_code", "PreToolUse", line) for line in ordinary}
+    with then("they run"):
+        for line, result in results.items():
+            assert result.ran, (line, result.reason)
+
+
+def test_both_guards_read_git_s_options_from_the_one_list_in_the_gate(home):
+    with given("hub is installed with the em dash check on, a pushed repo with a new commit whose message has a "
+               "dash, and a made-up option added to the gate's list of git options that take a value"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+        path = os.path.join(home.plugin, "parts", GATE, "handler.py")
+        with open(path) as handle:
+            code = handle.read()
+        assert code.count("\nGIT_VALUE_OPTIONS = {") == 1
+        with open(path, "w") as handle:
+            handle.write(code.replace("\nGIT_VALUE_OPTIONS = {", '\nGIT_VALUE_OPTIONS = {"--made-up", '))
+    with when("the model runs a rebase with a hubctl script, a checkout of hub's project file and a push, "
+              "each after the made-up option and its value"):
+        rebase = home.hook("claude_code", "PreToolUse", f"git --made-up HEAD rebase -x 'hubctl off {GATE}' HEAD~1")
+        checkout = home.hook("claude_code", "PreToolUse", "git --made-up log checkout -- .hub/hub.json")
+        push = home.hook("claude_code", "PreToolUse", "git --made-up HEAD push origin main")
+    with then("self-protection refuses the rebase and the checkout, and the gate refuses the push for the dash, "
+              "so both read past the value with the gate's list"):
+        assert rebase.refused and f"({PART}." in (rebase.reason or ""), rebase.reason
+        assert refused_by(checkout, "settings_files"), checkout.reason
+        assert push.refused and push.findings == ["dashes"], push.reason
 
 
 # Keys that tmux types

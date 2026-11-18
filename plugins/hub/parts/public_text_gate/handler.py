@@ -184,6 +184,10 @@ RELEASE_VALUE_OPTIONS = {"-t", "--title", "-n", "--notes", "-F", "--notes-file",
 # Short options of git commit and git tag that take the rest of the word as their value.
 VALUE_LETTERS = set("CctSu")
 BINARY_PEEK = 8000  # bytes; a NUL byte here marks a binary file, as in git
+# git's own options that take the next word as their value, before its action, as git.c reads them. git read
+# --super-prefix this way up to 2.39. self_protection reads this set too, so both find the same action.
+GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source",
+                     "--shallow-file", "--super-prefix"}
 GIST_VALUE_OPTIONS = {"-d", "--desc", "-f", "--filename", "-r", "--remove", "-a", "--add"}
 GH_FIELD_OPTIONS = {"-f", "-F", "--field", "--raw-field"}
 # REST endpoints by target, checked in order. Any other write is "api".
@@ -604,7 +608,7 @@ def git_target(words, command):
         if word == "-C" and index + 1 < len(words):
             cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
             index += 2
-        elif word in ("-c", "--git-dir", "--work-tree", "--namespace") and index + 1 < len(words):
+        elif word in GIT_VALUE_OPTIONS and index + 1 < len(words):
             index += 2
         elif word.startswith("-"):
             index += 1

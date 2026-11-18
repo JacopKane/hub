@@ -129,7 +129,6 @@ TMUX_RUNS = {"new", "new-session", "new-window", "neww", "split-window", "splitw
              "display-popup", "popup"}
 TMUX_GLOBAL_VALUES = {"-S", "-L", "-f", "-c", "-T"}
 SHELL_SYNTAX = re.compile(r"[\s;&|<>()$`'\"\\]")
-GIT_GLOBAL_VALUES = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path"}
 # git options whose value is a command line, by git command: the long name and its short letter.
 GIT_COMMAND_OPTIONS = {"rebase": {"--exec": "x"}, "difftool": {"--extcmd": "x"},
                        "clone": {"--upload-pack": "u"}, "fetch": {"--upload-pack": None},
@@ -702,8 +701,9 @@ def check_files(words, command, cwd):
                  or any(is_hub_path(word, cwd, globs="/" in word) for word in code.split())):
         raise Stop("settings_files", "interpreter code")
     if program == "git":
-        subcommand = next((plain(word) for word in operands if not plain(word).startswith("-")), "")
-        if subcommand in GIT_READS:
+        # A read only when git's action reads. The first word that is not an option must read too, as before.
+        first = next((plain(word) for word in operands if not plain(word).startswith("-")), "")
+        if first in GIT_READS and git_action(operands) in GIT_READS:
             return
     elif program == "sed":
         if not any(re.fullmatch(r"-[A-Za-z]*i.*", plain(word)) or plain(word).startswith("--in-place")
@@ -983,6 +983,24 @@ def option_value(words, spot, long_name, short):
     return None
 
 
+def git_option_words(option):
+    """How many words one of git's own options takes up: two when it takes the next word as its value.
+
+    The set of those options is the text gate's, so both find the same
+    action. A bare --exec-path makes git print a path and stop. It still
+    takes up two words here, as it did before the set was shared.
+    """
+    return 2 if option in gate().GIT_VALUE_OPTIONS or option == "--exec-path" else 1
+
+
+def git_action(words):
+    """git's action in the words after git: the first word past git's own options and their values."""
+    at = 0
+    while at < len(words) and plain(words[at]).startswith("-"):
+        at += git_option_words(plain(words[at]))
+    return plain(words[at]) if at < len(words) else ""
+
+
 def git_scripts(before, words):
     """The command lines git runs from its words, as (script, the word it comes from) pairs.
 
@@ -1003,7 +1021,7 @@ def git_scripts(before, words):
             raise Stop("lowering", "git --config-env, which reads a value hub can not see")
         if option == "-c" and at + 1 < len(words):
             pairs.append((plain(words[at + 1]).partition("=")[2], words[at + 1]))
-        at += 2 if option in GIT_GLOBAL_VALUES else 1
+        at += git_option_words(option)
     subcommand = plain(words[at]) if at < len(words) else ""
     rest = words[at + 1:]
     operands = [word for word in rest if not plain(word).startswith("-")]
