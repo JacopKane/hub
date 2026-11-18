@@ -136,7 +136,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | link_check | Sends a reply back once when it names a PR, issue or ticket without a link | off | Claude Code, Cursor | "turn on the link check" |
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |
-| pr | Planned, not in this version yet. Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
+| pr | Planned, not in this version yet. Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR, tests before each push and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
 | scout | A small, cheap agent for one mechanical job (Haiku) | on | Claude Code, Cursor | "turn off scout" |
 | researcher | A read-only agent for reading docs, pages and code (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on researcher" |
 | worker | An agent that carries out an exact plan (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on worker" |
@@ -154,6 +154,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
 | em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
 | pr_flow | Planned, not in this version yet. Sends a change to hub's own repo as a draft pull request, and holds every GitHub write there until you say yes to the exact lines | off | Claude Code | "turn on the PR flow" |
+| pr_test_gate | Planned, not in this version yet. Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |
 | sentry_write_gate | Experimental. Asks before a Sentry tool changes what the team sees | off | Claude Code | "turn on the Sentry gate" |

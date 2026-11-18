@@ -1,0 +1,1 @@
+- Before every push to a PR, draft or not, run a few broad behaviour scenarios that walk the real flow end to end and name their edge cases, and the repo's smoke run when it has one. The body's "How it was tested" part says what ran, what was not tested and why.
