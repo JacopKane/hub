@@ -16,6 +16,9 @@ from conftest import DASH, FIXTURES, GIT_OPTION_VALUES, PLUGIN, REPO, Home, comm
 from steps import and_, given, then, when
 
 GATE = "public_text_gate"
+# The options in GIT_OPTION_VALUES that point git at another repo, work tree or namespace. The gate reads a push's
+# commits from the folder git runs in, so it refuses a push after one of them as unreadable.
+OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace"}
 
 
 def gate_text(home, name):
@@ -475,9 +478,14 @@ def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home,
         pushes = {option: home.hook(tool, "PreToolUse", f"git {option} {value} push origin main",
                                     session=next(sessions))
                   for option, value in GIT_OPTION_VALUES.items()}
-    with then("git reads the next word as the option's value, so the gate reads the push and names the dash"):
+    with then("git reads the next word as the option's value, so the gate finds the push. It names the dash, or "
+              "refuses the push as unreadable after an option that points git at another repo, work tree or "
+              "namespace, whose commits it can not read from this folder"):
+        assert OTHER_REPO_OPTIONS < set(GIT_OPTION_VALUES), OTHER_REPO_OPTIONS - set(GIT_OPTION_VALUES)
         for option, result in pushes.items():
-            assert result.refused and result.findings == ["dashes"], (option, result.reason)
+            expected = ["unreadable"] if option in OTHER_REPO_OPTIONS else ["dashes"]
+            assert result.refused and result.findings == expected, (option, result.reason)
+            assert "stopped this push," in result.reason, (option, result.reason)
     with when("Claude commits after each option and its value, with a message that names a private path"):
         commits = {option: home.hook(tool, "PreToolUse", f"git {option} {value} commit -m 'see /home/sam/notes'",
                                      session=next(sessions))
