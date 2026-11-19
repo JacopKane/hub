@@ -918,6 +918,60 @@ def test_rarer_spellings_of_a_pr_step_get_the_answer_of_their_plain_form(home):
             assert says(home, result, "git_word_unreadable.md"), result.reason
 
 
+def test_a_push_that_names_a_ref_namespace_is_refused_like_one_that_names_another_git_folder(home, tool):
+    with given("a GitHub repo whose branch feature has open PR 7 and a passing report for its new commit, and the "
+               "text gate's unreadable check off, so this gate answers each push"):
+        with_github(home)
+        pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        record(home)
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+    other = os.path.join(home.root, "other")
+    git_dir = f"git --git-dir={other}/.git push origin feature"
+    namespaces = ["git --namespace=other push origin feature", "git --namespace other push origin feature",
+                  "GIT_NAMESPACE=other git push origin feature"]
+    with when("Claude pushes feature after --git-dir, after --namespace in both spellings, with GIT_NAMESPACE set, "
+              "and plainly"):
+        named_folder = home.hook(tool, "PreToolUse", git_dir)
+        results = {step: home.hook(tool, "PreToolUse", step) for step in namespaces}
+        plain = home.hook(tool, "PreToolUse", "git push origin feature")
+    with then("each push that names a namespace gets the same answer as the one that names another git folder, "
+              "which in Claude Code, where this gate runs, is the sentence that asks for the repo's own folder, "
+              "and the plain push runs"):
+        for step, result in results.items():
+            assert (result.refused, result.reason) == (named_folder.refused, named_folder.reason), \
+                (step, result.reason)
+        if tool == "claude_code":
+            assert says(home, named_folder, "other_repo.md"), named_folder.reason
+        assert plain.ran, plain.reason
+
+
+def test_this_gate_reads_the_text_gate_s_options_and_variables_that_point_git_elsewhere(home):
+    with given("a GitHub repo whose branch feature has open PR 7 and a passing report for its new commit, the text "
+               "gate's unreadable check off, and a made-up option and variable added to the text gate's lists of "
+               "what points git at another repo"):
+        with_github(home)
+        pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        record(home)
+        home.hubctl_from_mod("off", "public_text_gate.unreadable")
+        path = os.path.join(home.plugin, "parts", "public_text_gate", "handler.py")
+        with open(path) as handle:
+            code = handle.read()
+        for start in ("\nOTHER_REPO_OPTIONS = {", "\nOTHER_REPO_VARIABLES = {"):
+            assert code.count(start) == 1, start
+        with open(path, "w") as handle:
+            handle.write(code.replace("\nOTHER_REPO_OPTIONS = {", '\nOTHER_REPO_OPTIONS = {"--made-up", ')
+                         .replace("\nOTHER_REPO_VARIABLES = {", '\nOTHER_REPO_VARIABLES = {"GIT_MADE_UP", '))
+    with when("Claude pushes feature after the made-up option, and with the made-up variable set"):
+        option = bash(home, "git --made-up push origin feature")
+        variable = bash(home, "GIT_MADE_UP=1 git push origin feature")
+    with then("this gate refuses both with the sentence that asks for the repo's own folder, so it reads the text "
+              "gate's lists"):
+        assert says(home, option, "other_repo.md"), option.reason
+        assert says(home, variable, "other_repo.md"), variable.reason
+
+
 def test_without_gh_a_push_counts_as_having_an_open_pr_and_a_named_prs_head_is_unknown(home):
     with given("branch feature with a new commit and no report, and a PATH that holds git but no gh"):
         with_github(home)

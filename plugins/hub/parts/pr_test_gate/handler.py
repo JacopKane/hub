@@ -61,8 +61,6 @@ BRANCH_PREFIXES = ("refs/heads/", "heads/")
 # The flags that let gh fill the body from the commits or a web form
 FILLS = ("fill", "fill-first", "fill-verbose", "web")
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
-OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree"}
-OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
 GIT_OR_GH = re.compile(r"\b(?:git|gh)\b")
 GH_ALIASES = {("pr", "new"): ("pr", "create")}
 PR_REPO_OPTIONS = {"-R", "--repo"}
@@ -485,7 +483,7 @@ def written_out(step):
             raise unreadable("before")
     if any(not ASSIGNMENT.match(word) for word in step.before):
         raise unreadable("before")
-    if any(word.split("=", 1)[0] in OTHER_REPO_VARIABLES for word in step.before):
+    if any(word.split("=", 1)[0] in gate().OTHER_REPO_VARIABLES for word in step.before):
         raise Stop("other_repo.md")
 
 
@@ -502,7 +500,7 @@ def git_place(step):
         if word in gate().GIT_VALUE_OPTIONS and index + 1 < len(words):
             if unreadable_mark() in words[index + 1]:
                 raise unreadable("word")
-            if word in OTHER_REPO_OPTIONS:
+            if word in gate().OTHER_REPO_OPTIONS:
                 raise Stop("other_repo.md")
             if word == "-C":
                 cwd = os.path.join(cwd, os.path.expanduser(words[index + 1]))
@@ -510,7 +508,7 @@ def git_place(step):
         elif word.startswith("-"):
             if unreadable_mark() in word:
                 raise unreadable("word")  # such as --git-dir=... that the shell fills in
-            if word.split("=", 1)[0] in OTHER_REPO_OPTIONS:
+            if word.split("=", 1)[0] in gate().OTHER_REPO_OPTIONS:
                 raise Stop("other_repo.md")
             index += 1
         else:

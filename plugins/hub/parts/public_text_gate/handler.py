@@ -79,10 +79,12 @@ FALSE_WORDS = {"false", "no", "off", "0"}
 # The folders in a repo's git folder where git also reads a remote from a file
 REMOTE_FILE_FOLDERS = ("remotes", "branches")
 # git's own options and variables that point it at another repo, work tree, namespace or settings than the folder
-# it runs in, whose commits the gate reads
+# it runs in, whose commits the gate reads. The PR test gate reads both sets too. It reads the GIT_CONFIG variables
+# with its own check, so they stand only in REPO_VARIABLE.
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace", "--bare"}
-REPO_VARIABLE = re.compile(r"\bGIT_(?:DIR|WORK_TREE|COMMON_DIR|NAMESPACE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES"
-                           r"|CONFIG\w*)\b")
+OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY",
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
+REPO_VARIABLE = re.compile(r"\b(?:" + "|".join(sorted(OTHER_REPO_VARIABLES)) + r"|GIT_CONFIG\w*)\b")
 
 # The checks, in the order the tree lists them. A private item can not be
 # taken back once it is public, so these refuse every time, in warn and in
