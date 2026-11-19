@@ -5,18 +5,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# The links below go into $HOME. A real home must never get them.
-home="$(cd "$HOME" 2>/dev/null && pwd -P)" || home=""
-user_home="$(python3 -I -c 'import os, pwd; print(os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir))')"
-inside_temp=no
-for root in "${TMPDIR:-/tmp}" /tmp /var/folders; do
-  real_root="$(cd "$root" 2>/dev/null && pwd -P)" || continue
-  case "$home" in "$real_root"/?*) inside_temp=yes ;; esac
-done
-if [ -z "$home" ] || [ "$inside_temp" = no ] || [ "$home" = "$user_home" ]; then
-  echo "scaffold.sh stopped. HOME is $HOME, and that is not inside a temporary folder. Run it only with the eval run's own HOME." >&2
-  exit 1
-fi
+. "$here/../home_guard.sh"
 
 mkdir -p hub-home/config hub-home/state "$HOME/.config" "$HOME/.local/state"
 ln -s "$PWD/hub-home/config" "$HOME/.config/$(cat "$here/no-mods/hub/lib/hub/config_name")"

@@ -12,8 +12,8 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 7,
-    "parts_total": 34,
+    "parts_on": 8,
+    "parts_total": 35,
     "start_text": 1210
   },
   "strip": [
@@ -617,8 +617,8 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "rules",
-      "parts_on": 0,
-      "parts_total": 5,
+      "parts_on": 1,
+      "parts_total": 6,
       "parts": [
         {
           "id": "hub_style",
@@ -688,6 +688,24 @@ export const DAY9: HubScreen = /* json */ {
           "hidden_because": null,
           "cost": "",
           "next_session": false,
+          "claude_code_only": false,
+          "stage": null,
+          "children": []
+        },
+        {
+          "id": "pr",
+          "name": "pr",
+          "depth": 0,
+          "does": "Opens and updates pull requests the way each repo's guide asks. Steps that notify people wait for the user's order.",
+          "value": "on",
+          "effective": "on",
+          "runs": true,
+          "by": "default",
+          "scope": "shipped",
+          "relevant": true,
+          "hidden_because": null,
+          "cost": "",
+          "next_session": true,
           "claude_code_only": false,
           "stage": null,
           "children": []
