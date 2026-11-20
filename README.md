@@ -154,7 +154,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
 | em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
 | pr_flow | Planned, not in this version yet. Sends a change to hub's own repo as a draft pull request, and holds every GitHub write there until you say yes to the exact lines | off | Claude Code | "turn on the PR flow" |
-| pr_test_gate | Planned, not in this version yet. Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
+| pr_test_gate | Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report, which `pr-tested` records. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |
 | sentry_write_gate | Experimental. Asks before a Sentry tool changes what the team sees | off | Claude Code | "turn on the Sentry gate" |

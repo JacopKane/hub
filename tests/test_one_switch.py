@@ -3,6 +3,7 @@
 Every scenario runs the real engine, hubctl and the dispatcher as processes
 in a temporary HOME. Scenarios that feed hook input run once per tool.
 """
+import importlib.util
 import itertools
 import json
 import os
@@ -10,11 +11,15 @@ import resource
 import statistics
 import subprocess
 import sys
+import time
 
 from conftest import DASH, FIXTURES, GIT_OPTION_VALUES, PLUGIN, REPO, Home, commit, load_fixture
 from steps import and_, given, then, when
 
 GATE = "public_text_gate"
+# The options in GIT_OPTION_VALUES that point git at another repo, work tree or namespace. The gate reads a push's
+# commits from the folder git runs in, so it refuses a push after one of them as unreadable.
+OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace"}
 
 
 def gate_text(home, name):
@@ -474,9 +479,14 @@ def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home,
         pushes = {option: home.hook(tool, "PreToolUse", f"git {option} {value} push origin main",
                                     session=next(sessions))
                   for option, value in GIT_OPTION_VALUES.items()}
-    with then("git reads the next word as the option's value, so the gate reads the push and names the dash"):
+    with then("git reads the next word as the option's value, so the gate finds the push. It names the dash, or "
+              "refuses the push as unreadable after an option that points git at another repo, work tree or "
+              "namespace, whose commits it can not read from this folder"):
+        assert OTHER_REPO_OPTIONS < set(GIT_OPTION_VALUES), OTHER_REPO_OPTIONS - set(GIT_OPTION_VALUES)
         for option, result in pushes.items():
-            assert result.refused and result.findings == ["dashes"], (option, result.reason)
+            expected = ["unreadable"] if option in OTHER_REPO_OPTIONS else ["dashes"]
+            assert result.refused and result.findings == expected, (option, result.reason)
+            assert "stopped this push," in result.reason, (option, result.reason)
     with when("Claude commits after each option and its value, with a message that names a private path"):
         commits = {option: home.hook(tool, "PreToolUse", f"git {option} {value} commit -m 'see /home/sam/notes'",
                                      session=next(sessions))
@@ -486,10 +496,1179 @@ def test_a_push_or_commit_after_each_git_option_that_takes_a_value_is_read(home,
             assert result.refused and result.findings == ["private_paths"], (option, result.reason)
 
 
-def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
-    with given("hub is installed with the em dash check on, and a PR body file holds a dash"):
+def test_a_push_whose_remote_branch_or_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
+    with given("a repo with a local bare remote and a new commit"):
+        home.install()
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", "Late change")
+    pushes = ["git push origin $BRANCH", "git push $REMOTE main", "git -C $DIR push", "git -C ~$DIR push",
+              "git push origin ${BRANCH}:main", "git push origin $(git branch --show-current)",
+              "git -C $(pwd) push", "git -C `cd .; pwd` push", "git --git-dir=$(pwd)/.git push",
+              'git -c "$SETTING" push', "git -c $SETTING push origin main"]
+    with when("Claude sends pushes whose remote, branch, folder or git option comes from a variable or a substitution"):
+        results = {push: home.hook(tool, "PreToolUse", push) for push in pushes}
+    with then("the gate reads each one, finds it can not tell the commits, and refuses it as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+
+
+def test_a_push_is_checked_at_every_commit_it_names_split_as_git_splits_it_and_a_search_is_unreadable(home, tool):
+    with given("a repo with a local bare remote, a clean new commit on main, a branch draft whose new commit "
+               "message has a colon and a dash, and the em dash check on"):
         home.install()
         home.hubctl("on", f"{GATE}.dashes")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("checkout", "-q", "-b", "draft")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Draft: late {DASH} change")
+        home.git("checkout", "-q", "main")
+        home.git("commit", "-q", "--allow-empty", "-m", "Plain change")
+    named = ["git push origin main draft", "git push origin 'draft^{/Draft: late}:refs/heads/x'",
+             "git push origin main '+draft^{/Draft: late}:x'"]
+    searches = ["git push origin ':/Draft:refs/heads/x'", "git push origin '+:/Draft: late:x'",
+                "git push origin main ':/Draft:x'"]
+    with when("Claude pushes draft's commit as a second refspec, or by a revision whose text holds a colon, "
+              "each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"named-{index}")
+                   for index, push in enumerate(named)}
+    with then("the gate reads the commit each refspec sends, up to its last colon, and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pushes a commit that a search of commit messages picks, in any refspec, each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"search-{index}")
+                   for index, push in enumerate(searches)}
+    with then("the gate does not look the search up and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+    with when("Claude pushes main alone, and deletes a remote branch"):
+        plain = home.hook(tool, "PreToolUse", "git push origin main")
+        delete = home.hook(tool, "PreToolUse", "git push origin :old")
+    with then("both run, since main's new commit is clean"):
+        assert plain.ran, plain.reason
+        assert delete.ran, delete.reason
+
+
+def git_log_waits(home, seconds):
+    """A PATH whose git waits that long before git log, and runs every other git call at once."""
+    folder = os.path.join(home.root, "slow-log-bin")
+    os.makedirs(folder, exist_ok=True)
+    real = subprocess.run(["sh", "-c", "command -v git"], env=home.env, capture_output=True, text=True).stdout.strip()
+    with open(os.path.join(folder, "git"), "w") as handle:
+        handle.write(f'#!/bin/sh\nif [ "$1" = log ]; then sleep {seconds}; fi\nexec "{real}" "$@"\n')
+    os.chmod(os.path.join(folder, "git"), 0o755)
+    return folder + os.pathsep + home.env["PATH"]
+
+
+def test_a_push_is_read_by_gits_own_rules_for_its_words_and_one_whose_commits_git_can_not_list_is_unreadable(
+        home, tool):
+    with given("a repo with a local bare remote, tag v1 on main's pushed commit, a new commit on main whose "
+               "message has a dash, a branch docs at that commit that is also a folder, and the em dash check on"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        bare = os.path.join(home.root, "remote.git")
+        home.git("init", "-q", "--bare", bare)
+        home.git("remote", "add", "origin", bare)
+        home.git("push", "-q", "-u", "origin", "main")
+        home.git("tag", "v1")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+        home.git("branch", "docs")
+        os.makedirs(os.path.join(home.work, "docs"))
+    worded = ["git push origin main --recurse-submodules check", "git push origin main -o ci.skip",
+              "git push origin main --push-option ci.skip", "git push origin main -oci.skip",
+              "git push origin main --repo origin", "git push origin main tag v1", "git push origin tag v1 main",
+              "git push origin main '^refs/heads/none'", "git push origin main 2>&1",
+              "git push origin main > push.log", "git push origin docs", "git push origin -- main"]
+    with when("Claude pushes main with an option value, a tag word, a ^ entry or a redirect after it, or pushes "
+              "docs, each in its own session"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"worded-{index}")
+                   for index, push in enumerate(worded)}
+    with then("the gate reads the words as git push does, lists main's new commit and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    unclear = ["git push origin main nosuch", "git push origin 'ma*:main'",
+               "git push origin main --re origin", "git push origin -- main --output=listed.txt"]
+    with when("Claude pushes a branch git does not have, a pattern, a shortened option git can not tell apart, "
+              "or a word after -- that git log would read as its own option"):
+        results = {push: home.hook(tool, "PreToolUse", push, session=f"unclear-{index}")
+                   for index, push in enumerate(unclear)}
+    with then("the gate can not list the commits, refuses each one as unreadable, and runs no option of git log"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+        assert not os.path.exists(os.path.join(home.work, "listed.txt"))
+    with when("git log takes longer than the gate waits for it"):
+        kept = home.env["PATH"]
+        home.env["PATH"] = git_log_waits(home, 12)
+        try:
+            slow = home.hook(tool, "PreToolUse", "git push origin main", session="slow")
+        finally:
+            home.env["PATH"] = kept
+    with then("the gate stops waiting and refuses the push as unreadable"):
+        assert slow.refused and slow.findings == ["unreadable"], slow.reason
+    with when("Claude pushes tag v1 alone, or deletes the tag on the remote"):
+        tag = home.hook(tool, "PreToolUse", "git push origin tag v1", session="tag")
+        delete = home.hook(tool, "PreToolUse", "git push --delete origin tag v1", session="delete")
+    with then("both run, since v1's commit is clean"):
+        assert tag.ran, tag.reason
+        assert delete.ran, delete.reason
+    with when("tag late is at main's new commit, whose message has a dash, and Claude deletes late or docs on the "
+              "remote"):
+        home.git("tag", "late", "main")
+        deletes = hooks(home, tool, ["git push --delete origin tag late", "git push --delete origin docs",
+                                     "git push -d origin docs late"], "deletes")
+    with then("each runs, since a delete sends no commits"):
+        for push, result in deletes.items():
+            assert result.ran, (push, result.reason)
+    with when("main gets a newer commit with a file, the repo loses that file's content, so git log stops before "
+              "the commit with the dash, and Claude pushes main"):
+        with open(os.path.join(home.work, "notes.txt"), "w") as handle:
+            handle.write("Plain notes\n")
+        home.git("add", "notes.txt")
+        home.git("commit", "-q", "-m", "Add notes")
+        blob = home.git("rev-parse", "HEAD:notes.txt").stdout.strip()
+        os.remove(os.path.join(home.work, ".git", "objects", blob[:2], blob[2:]))
+        broken = home.hook(tool, "PreToolUse", "git push origin main", session="broken")
+    with then("git counts the commits but fails to list them, and the gate refuses the push as unreadable"):
+        assert broken.refused and broken.findings == ["unreadable"], broken.reason
+
+
+def pushed_repo(home):
+    """A repo whose main is pushed to a local bare remote, then gets a clean new commit, with the em dash check
+    on and the PR test gate off, since it answers first for some of the same pushes."""
+    home.install()
+    home.hubctl("on", f"{GATE}.dashes")
+    home.hubctl_from_mod("off", "pr_test_gate")
+    bare = os.path.join(home.root, "remote.git")
+    home.git("init", "-q", "--bare", bare)
+    home.git("remote", "add", "origin", bare)
+    home.git("push", "-q", "-u", "origin", "main")
+    home.git("commit", "-q", "--allow-empty", "-m", "Plain change")
+
+
+def hooks(home, tool, pushes, name):
+    return {push: home.hook(tool, "PreToolUse", push, session=f"{name}-{index}") for index, push in enumerate(pushes)}
+
+
+def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_or_a_pipe_carry_it_on(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    two_lines = ["git push origin main\ngit branch --delete old", "git push origin main # send it\ngit branch -d old",
+                 "git push origin main\ngit push --dry-run origin main"]
+    with when("Claude pushes main, and the next line of the same call is another command with a delete or dry run "
+              "option, each in its own session"):
+        results = hooks(home, tool, two_lines, "two-lines")
+    with then("the gate reads the push up to the end of its line, lists main's new commit and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    one_push = ["git push origin main -o 'note=one\ntwo --delete'", "git push origin main -o $'it\\'s\ntwo --delete'",
+                "git push origin \\\nmain", "git push origin \\\n  main # send it"]
+    with when("Claude pushes main with a new line inside quotes, even after an escaped quote in $'...', or with a "
+              "backslash that carries the push on to the next line"):
+        results = hooks(home, tool, one_push, "one-push")
+    with then("the gate reads one push of main and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    piped = ["printf 'git push origin main\\n' |\nbash", "printf 'git push origin main\\n' | # run it\nbash",
+             "printf 'git push origin main\\n' |&\nbash"]
+    with when("Claude pipes a push into a shell whose name stands on the next line, after | or |& and maybe a "
+              "comment"):
+        results = hooks(home, tool, piped, "piped")
+    with then("the shell still reads its script from the pipe, which the gate can not see, so the call is "
+              "unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+
+
+def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    touching = ["echo hi;# it's\ngit push origin main\necho ok;# that's",
+                "true &# it's\ngit push origin main\necho ok;# that's",
+                "true &&# it's\ngit push origin main\necho ok;# that's",
+                "(# it's\ngit push origin main\n)# that's",
+                "echo hi |# it's\ngit push origin main\necho ok;# that's",
+                "cat <# it's\ngit push origin main\necho ok ># that's"]
+    with when("Claude pushes main on the line after a comment that touches ;, &, &&, (, |, < or > and holds a quote "
+              "mark, each in its own session"):
+        results = hooks(home, tool, touching, "touching")
+    with then("the gate drops each comment at its line end, as the shell does, reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pipes a push into a shell whose name stands on the next line, after a pipe and a comment that "
+              "touches it"):
+        piped = home.hook(tool, "PreToolUse", "printf 'git push origin main\\n' |#c\nbash", session="piped")
+    with then("the shell still reads its script from the pipe, so the call is unreadable"):
+        assert piped.refused and piped.findings == ["unreadable"], piped.reason
+    with when("Claude commits with a message where a # stands inside a word outside quotes, after a letter or a "
+              "quote"):
+        inside = home.hook(tool, "PreToolUse", "git commit -m a#'Fix'#\"two\"#3 # it's", session="inside")
+    with then("the # does not start a comment, but zsh's extended globs may change a word with a # in it, so the "
+              "commit is unreadable"):
+        assert inside.refused and inside.findings == ["unreadable"], inside.reason
+    with when("Claude commits with a message where a # follows an escaped ; and comes before a dash"):
+        escaped = home.hook(tool, "PreToolUse", f"git commit -m Fix\\;#'Late {DASH} change'", session="escaped")
+    with then("the escaped ; and the # are word text, so the gate names the dash, and the # outside quotes makes "
+              "the word unreadable"):
+        assert escaped.refused and escaped.findings == ["unreadable", "dashes"], escaped.reason
+
+
+def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_lines(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    filled_in = ["echo hi # don't\ngit commit -m \"$MESSAGE\"", "echo hi # say \"x\ngit commit -m \"it's $MESSAGE\"",
+                 "git commit -m \"x\"#\"$MESSAGE\"", "echo a#b; git commit -m \"$MESSAGE\""]
+    with when("Claude commits with a message from a variable on the line after a comment that holds a quote mark, "
+              "or right after a # that stands inside a word, each in its own session"):
+        results = hooks(home, tool, filled_in, "filled-in")
+    with then("the shell drops only the comment and fills in the variable, so each commit is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude pushes main from a substitution on the line after a comment that holds a quote mark"):
+        substituted = home.hook(tool, "PreToolUse", "# it's late\necho \"$(git push origin main)\"",
+                                session="substituted")
+    with then("the gate reads the push inside the substitution and names the dash"):
+        assert substituted.refused and substituted.findings == ["dashes"], substituted.reason
+
+
+def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_own_end_line(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    no_heredoc = ["echo '<<EOF'\ngit push origin main\nEOF", "echo \"<<EOF\"\ngit push origin main\nEOF",
+                  "# <<EOF\ngit push origin main\nEOF", "echo hi # <<EOF\ngit push origin main\nEOF",
+                  "cat <<<EOF\ngit push origin main\nEOF", "echo $((1<<EOF))\ngit push origin main\nEOF",
+                  "echo ${x:-<<EOF}\ngit push origin main\nEOF"]
+    with when("Claude pushes main on the line after a << in quotes, in a comment, in a <<< here-string, in "
+              "arithmetic or in a ${...} default, each in its own session"):
+        results = hooks(home, tool, no_heredoc, "no-heredoc")
+    with then("none of them starts a heredoc in the shell, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    after_body = ["cat <<EOF\n EOF\n'\nEOF\ngit push origin main", "cat <<A <<B\na\nA\nb'\nB\ngit push origin main",
+                  "cat <<-EOF\n\t'\n\tEOF\ngit push origin main", "bash <<'EOF'\ngit push origin main\nEOF",
+                  "cat <<EOF; a=(x\nit's\nEOF\ny)\ngit push origin main"]
+    with when("Claude pushes main after a heredoc body that holds a quote mark and a line that only looks like its "
+              "end, after two heredocs on one line, after a <<- body, inside a body a shell runs, or after a body "
+              "that starts at a line end inside an array's ( )"):
+        results = hooks(home, tool, after_body, "after-body")
+    with then("the gate ends each body only at the line that holds its own end word, reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    in_array = ["a=(x $(cat <<EOF\nit's\nEOF\n))\ngit push origin main",
+                "a=(x `cat <<EOF\nit's\nEOF\n`)\ngit push origin main"]
+    with when("Claude pushes main after a heredoc in a $(...) or backtick command inside an array's ( )"):
+        results = hooks(home, tool, in_array, "in-array")
+    with then("the gate does not read inside the array, so it refuses the call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    with when("Claude writes a push inside a heredoc body whose end line has a space before the end word"):
+        in_body = home.hook(tool, "PreToolUse", "cat <<EOF\nx\n EOF\ngit push origin main\nEOF", session="in-body")
+    with then("the shell reads that push as body text, and so does the gate, so the call runs"):
+        assert not in_body.refused, in_body.reason
+    with when("Claude shifts a number in a $((...)) sum on the line and in a heredoc body, and pushes main from a "
+              "substitution inside another sum"):
+        shift = home.hook(tool, "PreToolUse", "echo $((1<<3)) && cat <<EOF\n$((2<<1))\nEOF", session="shift")
+        in_sum = home.hook(tool, "PreToolUse", "echo $(( $(git push origin main) + 1 ))", session="in-sum")
+    with then("the gate does not read a << after a sum on the same line, so it refuses that call as unreadable, "
+              "and it reads the push in the sum and names the dash"):
+        assert shift.refused and shift.findings == ["unreadable"], shift.reason
+        assert in_sum.refused and in_sum.findings == ["dashes"], in_sum.reason
+    odd = ["cat <<$END\ngit push origin main\n$END", "cat <<EOF\ngit push origin main",
+           "((cat <<EOF\ngit push origin main\nEOF\n))", "cat <<EOF \"a\nb\"\ngit push origin main\nEOF",
+           "cat <<EOF; git push origin main", "a=(x <<EOF\ngit push origin main\nEOF\n)",
+           "a=(x <<EOF y)\ngit push origin main\nEOF", "a=(x (y <<EOF\ngit push origin main\nEOF\n))"]
+    with when("Claude writes a << whose end word holds a $, whose end line is missing, also on the last line, that "
+              "stands in a (( )) part over several lines, whose line runs on inside quotes, or that stands inside "
+              "an array's ( ), where neither shell starts a heredoc and bash 3.2 runs the body lines"):
+        results = hooks(home, tool, odd, "odd")
+    with then("the gate can not tell where the heredoc starts or ends, so each call is unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+
+
+def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joins_them(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    joined = ["gi\\\nt push origin main", "git pu\\\nsh origin main", f"git commit -\\\nm 'Late {DASH} change'",
+              "cat <\\\n<EOF\n'\nEOF\ngit push origin main", "cat <<EOF\na\\\nEOF\n'\nEOF\ngit push origin main",
+              "cat <<EOF \\\n| cat\n'\nEOF\ngit push origin main", "git push \"orig\\\nin\" main"]
+    with when("Claude splits a program, an action, an option, a double-quoted remote or a << over two lines with a "
+              "backslash, or ends a line of a heredoc body, or the line that starts it, with a backslash"):
+        results = hooks(home, tool, joined, "joined")
+    with then("the gate joins the lines without a space, as the shell does, reads the step and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    kept = ["cat <<'EOF'\na\\\nEOF\ngit push origin main", "# a note \\\ngit push origin main",
+            "echo 'a\\\n' ; git push origin main"]
+    with when("Claude ends a line with a backslash in a heredoc whose end word is quoted, in a comment or in single "
+              "quotes, and pushes main after it"):
+        results = hooks(home, tool, kept, "kept")
+    with then("the shell keeps that backslash and the line end as they are, so the gate reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude pushes to a remote whose name comes from a variable split over two lines"):
+        split_variable = home.hook(tool, "PreToolUse", "git push $\\\nREMOTE main", session="split-variable")
+    with then("the shell fills in the variable, so the push is unreadable"):
+        assert split_variable.refused and split_variable.findings == ["unreadable"], split_variable.reason
+    split_messages = ["git commit -m \"Fix $\\\nMESSAGE\"", "git commit -m Fix$\\\nMESSAGE"]
+    with when("Claude commits with a message whose variable is split over two lines, in double quotes or bare"):
+        results = hooks(home, tool, split_messages, "split-message")
+    with then("the shell joins the lines and fills in the variable, so each commit is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+
+
+def test_a_backslash_right_after_a_comment_or_an_opening_quote_joins_no_lines(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    after_comment = ["true #\\\ngit push origin main", "#x\\\ngit push origin main", "# \\\ngit push origin main",
+                     "true &&\n#\\\ngit push origin main", "echo a;#\\\ngit push origin main"]
+    with when("Claude pushes main on the line after a short comment that ends in a backslash, each in its own "
+              "session"):
+        results = hooks(home, tool, after_comment, "after-comment")
+    with then("the comment ends at its line end, as the shell ends it, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude commits with a single-quoted message whose first letter ends a line with a backslash and "
+              "whose next line names a private path"):
+        quoted = home.hook(tool, "PreToolUse", "git commit -m 'a\\\n/Users/sam/notes'", session="quoted")
+    with then("single quotes keep the backslash and the line end, so the gate reads the path and names it"):
+        assert quoted.refused and quoted.findings == ["private_paths"], quoted.reason
+    with when("Claude commits with a $'...' message that opens with a backslash at a line end"):
+        dollar_quoted = home.hook(tool, "PreToolUse", "git commit -m $'\\\nFix it'", session="dollar-quoted")
+    with then("bash keeps that backslash and zsh drops it, so the commit is unreadable"):
+        assert dollar_quoted.refused and dollar_quoted.findings == ["unreadable"], dollar_quoted.reason
+    with when("Claude pushes main with a remote written as a $'...' string whose $ ends a line"):
+        split_quote = home.hook(tool, "PreToolUse", "git push $\\\n'origin' main", session="split-quote")
+    with then("the shell joins the $ and the quote, so the gate reads the push and names the dash"):
+        assert split_quote.refused and split_quote.findings == ["dashes"], split_quote.reason
+
+
+def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still_starts(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    word_text = ["echo $(echo a)#x <<EOF\nit's\nEOF\ngit push origin main"]
+    with when("Claude pushes main after a heredoc whose body holds a quote mark, where a # on the heredoc's line "
+              "follows a $(...) substitution"):
+        results = hooks(home, tool, word_text, "word-text")
+    with then("the shell keeps that # as word text, so the heredoc starts, and the gate reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    not_read = ["echo $((1))#x <<EOF\nit's\nEOF\ngit push origin main",
+                "cat <(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "echo a>(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "cat =(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                "echo `echo a # x` <<EOF\nit's\nEOF\ngit push origin main"]
+    with when("Claude writes a # and a << on a line after a $((...)) sum, a <(...), >(...) or =(...) substitution, "
+              "or a backtick part, each in its own session"):
+        results = hooks(home, tool, not_read, "not-read")
+    with then("the gate does not read past that opener, so it refuses each call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    comments = ["(true)# <<EOF\ngit push origin main\nEOF"]
+    with when("Claude writes a << in a comment that follows a ( ) group, and pushes main on the next line"):
+        results = hooks(home, tool, comments, "comments")
+    with then("that # opens a comment in both shells, so no heredoc starts, and the gate reads the push and names "
+              "the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a << in a comment that follows a ((...)) sum, and pushes main on the next line"):
+        sum_comment = home.hook(tool, "PreToolUse", "((1))# <<EOF\ngit push origin main\nEOF", session="sum-comment")
+    with then("the gate does not read past the sum on that line, so it refuses the call as unreadable"):
+        assert sum_comment.refused and sum_comment.findings == ["unreadable"], sum_comment.reason
+    with when("Claude writes a << after a # right after an array's ), and pushes main on the next line"):
+        array = home.hook(tool, "PreToolUse", "a=(x)# <<EOF\ngit push origin main\nEOF", session="array")
+    with then("zsh reads a comment and runs the push, while bash 3.2 reads the # as word text and starts the "
+              "heredoc, so the gate finds the line unreadable, as it does for any # after an array's ("):
+        assert array.refused and array.findings == ["unreadable"], array.reason
+
+
+def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_gh(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    apart = ["a=(x)#; git push origin main", "files=(a b)#list; git push origin main",
+             "a+=(x)#; git push origin main", "a[1]=(x)#; git push origin main",
+             "f() { local a=(x)#; git push origin main; }; f", "a=(x)\\\n#; git push origin main",
+             "echo \"$(a=(x)#; git push origin main)\"", "a=(x)#; $STEP"]
+    with when("Claude pushes main, or runs a word the shell fills in, after a # right after the ) of an array "
+              "assignment, each in its own session"):
+        results = hooks(home, tool, apart, "apart")
+    with then("zsh reads a comment that holds the push, while bash 3.2 reads the # as word text and runs the push, "
+              "so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    after_an_array = ["a=(x)#; echo hi", "a=(x) #; git push origin main"]
+    with when("Claude runs echo after such an array, or writes the push in a comment after a blank after an array"):
+        results = hooks(home, tool, after_an_array, "after-an-array")
+    with then("the gate does not guess how the shell reads a # on the line of an array's (, so each call is "
+              "unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude writes the push in a comment right after a ( ) group"):
+        group = home.hook(tool, "PreToolUse", "(echo x)#; git push origin main", session="group")
+    with then("both shells read a comment there, so the call runs"):
+        assert group.ran and group.output == {}, group.reason
+
+
+def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_backslash(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    joined = ["printf '[%s]' 'a'\\\n#b\ngit push origin main", "echo $((1))\\\n#b\ngit push origin main",
+              "\\\n#x\ngit push origin main", "echo a \\\n# don't\ngit push origin main",
+              "echo a;\\\n# don't\ngit push origin main"]
+    with when("Claude pushes main on the line after a # that follows a backslash and line end, where the text before "
+              "the backslash is a closing quote, a $((...)) sum, the line start, a blank or a ;, each in its own "
+              "session"):
+        results = hooks(home, tool, joined, "joined")
+    with then("the shell joins the lines, so the # goes with the text before the backslash, and the gate reads the "
+              "push and names the dash without an error"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a # and a << after a > that the joined line turns into >(...)"):
+        redirect = home.hook(tool, "PreToolUse", "echo a >\\\n(true)#x <<EOF\nit's\nEOF\ngit push origin main",
+                             session="redirect")
+    with then("the gate does not read past that >(...), so it refuses the call as unreadable"):
+        assert redirect.refused and redirect.findings == ["unreadable"], redirect.reason
+
+
+def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_quoted_escapes(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    substitutions = ["out=\"$(git push origin main 2>&1 # it's fine\n)\"; echo \"$out\"",
+                     "echo \"$(git push origin main; printf $'it\\'s')\"",
+                     "cat <<EOF\n$(git push origin main # don't\n)\nEOF",
+                     "cat <(printf $'it\\'s)'; git push origin main\n)",
+                     "cat <<EOF\n$(echo hi # a)\ngit push origin main\n)\nEOF",
+                     "echo \"$(echo $(echo a)#'x)'; git push origin main)\""]
+    with when("Claude pushes main inside or after a $(...) or <(...) whose comment holds a quote mark or a ), or whose "
+              "$'...' string holds an escaped quote, in double quotes, bare or in a heredoc body, or after a # right "
+              "after the ) of an inner $(...), each in its own session"):
+        results = hooks(home, tool, substitutions, "substitutions")
+    with then("the gate ends each substitution where the shell ends it, reads a # right after an inner $(...) as word "
+              "text, reads the push inside and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    unread = ["cat <(echo hi # it's\n) 'a)'; git push origin main",
+              "x=1; echo \"$(echo ${#x} $((16#ff)) # it's\ngit push origin main\n)\""]
+    with when("Claude writes a # with a quote mark inside a <(...), or after a ${#x} and a $((...)) sum in a $(...)"):
+        results = hooks(home, tool, unread, "unread")
+    with then("the gate does not read past that <(...) or sum, so it refuses each call as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    with when("Claude pushes main inside a heredoc body's $(...) whose own heredoc holds a quote mark"):
+        nested = home.hook(tool, "PreToolUse", "cat <<EOF\n$(git push origin main; cat <<X\nit's\nX\n)\nEOF",
+                           session="nested")
+    with then("the gate finds no end for that $(...), so it reads the rest of the body as its command and names "
+              "the dash"):
+        assert nested.refused and nested.findings == ["dashes"], nested.reason
+
+
+def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    cases = ["echo \"$(case a in a) git push origin main;; esac)\"",
+             "cat <<EOF\n$(case a in a) git push origin main;; esac)\nEOF",
+             "echo \"$(case b in a) echo A;; b|c) git push origin main;; esac)\"",
+             "echo \"$(case a in\n a) git push origin main;;\nesac)\"",
+             "echo $(( $(case a in a) git push origin main;; esac) + 1 ))",
+             "echo \"$(if true; then case a in a) git push origin main;; esac; fi)\"",
+             "echo \"$(for i in 1; do case a in a) git push origin main;; esac; done)\"",
+             "echo \"$({ case a in a) echo A;; esac; } && git push origin main)\"",
+             "echo \"$(case a in a) echo A;| b) echo B;; esac; git push origin main)\"",
+             "echo \"$(case a { a) git push origin main;; })\"",
+             "echo \"$(case b { a) { echo A }; echo A;; b) git push origin main;; })\"",
+             "echo \"$(case a in (a|b)) git push origin main;; esac)\"",
+             "echo \"$(case a in a) case b in b) echo B;; esac;; esac; git push origin main)\"",
+             "echo \"$(case a in (a) echo esac;; a) echo A;; esac)\"; git push origin main"]
+    with when("Claude pushes main inside a $(...) that holds a case command, after a pattern's ) or after the esac, "
+              "or after a case whose arm after a (a) pattern prints the word esac, each in its own session"):
+        results = hooks(home, tool, cases, "cases")
+    with then("the gate reads a pattern's ) as part of the case command, as zsh does, so the substitution ends at "
+              "its own ), and it reads the push and names the dash. bash 3.2 ends each of these at a pattern's ), so "
+              "each is unreadable too"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable", "dashes"], (push, result.reason)
+    with when("Claude writes a # with a quote mark right after a case pattern's ) inside a $(...)"):
+        pattern_comment = home.hook(tool, "PreToolUse", "echo \"$(case a in a)#it's\n git push origin main;; esac)\"",
+                                    session="pattern-comment")
+    with then("the gate does not read a comment after a case part, so it refuses the call as unreadable"):
+        assert pattern_comment.refused and pattern_comment.findings == ["unreadable"], pattern_comment.reason
+    with when("Claude runs echo with the words case, a, in and a) inside a $(...), and then text that names a push"):
+        argument = home.hook(tool, "PreToolUse", "echo \"$(echo case a in a) git push origin main)\"",
+                             session="argument")
+    with then("it runs, since case is a keyword only where a command starts, so the ) ends the $(...) and the "
+              "rest is quoted text"):
+        assert argument.ran and argument.output == {}, argument.reason
+    outside = ["v=$(case a in a) echo A;| case) echo B;; esac)#'\n'; git push origin main"]
+    with when("Claude pushes main after a case in a $(...) outside quotes, whose ;| is followed by a pattern named "
+              "case and the $(...) by a #"):
+        results = hooks(home, tool, outside, "outside")
+    with then("the gate reads the case word after ;| as a pattern, so the $(...) ends at its own ), and it reads "
+              "the push, names the dash and finds nothing unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude writes a # with a quote mark after a case pattern's ) outside quotes, before a heredoc"):
+        outside_comment = home.hook(tool, "PreToolUse",
+                                    "v=$(case a in a)#x'\n echo A;; esac); cat <<X\nit's\nX\ngit push origin main",
+                                    session="outside-comment")
+    with then("the gate does not read a comment after a case part, so it refuses the call as unreadable"):
+        assert outside_comment.refused and outside_comment.findings == ["unreadable"], outside_comment.reason
+
+
+def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    early = ["echo \"$(case a in a) echo \";git push origin main;\" ;; esac)\"",
+             "echo \"$(case a in a) echo '$(git push origin main)' ;; esac)\"",
+             "echo $(echo \"$(case a in a) echo \";git push origin main;\" ;; esac)\")",
+             "echo \"${x:-$(case a in a) echo '$(git push origin main)' ;; esac)}\"",
+             "echo ${x:-$(case a in a) echo '$(git push origin main)' ;; esac)}",
+             "cat <<EOF\n$(case a in a) echo '$(git push origin main)';; esac)\nEOF"]
+    with when("Claude runs a case command with a plain pattern inside a $(...) in double quotes, in a ${...} or in a "
+              "heredoc body, whose arm holds a push in quotes, each in its own session"):
+        results = hooks(home, tool, early, "early")
+    with then("bash 3.2 ends that $(...) at the pattern's ) and runs the push in the text after it, while zsh reads "
+              "the push as quoted text, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    alike = ["echo \"$(case a in (a) echo A;; esac)\"; git push origin main",
+             "v=$(case a in a) echo A;; esac); git push origin main"]
+    with when("Claude pushes main after a case whose pattern starts with its own (, in double quotes, or after a "
+              "case with a plain pattern in a $(...) outside quotes"):
+        results = hooks(home, tool, alike, "alike")
+    with then("bash 3.2 reads the first as zsh does and can not run the second at all, so the gate reads the push, "
+              "names the dash and finds nothing unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (line, result.reason)
+    hidden = ["echo \"$(case a in a) echo \";$STEP;\" ;; esac)\"",
+              "echo \"$(case a in a) echo \";printf x | sh;\" ;; esac)\"",
+              "echo \"$(case a in a) echo \";GIT push origin main;\" ;; esac)\"",
+              "cat <<EOF\n$(case a in a) echo ';$STEP;';; esac)\nEOF"]
+    with when("Claude runs such an early-ending case whose arm holds a word the shell fills in, a shell or an "
+              "uppercase GIT, each in its own session"):
+        results = hooks(home, tool, hidden, "hidden")
+    with then("bash 3.2 may run git or gh in the text after the early end, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    plain = ["echo \"$(case a in a) echo A;; esac)\"", "cat <<EOF\n$(case a in a) echo hi;; esac)\nEOF"]
+    with when("Claude runs such an early-ending case with no git, gh, shell or filled-in word on the line"):
+        results = hooks(home, tool, plain, "plain")
+    with then("nothing on the line can run git or gh in either shell, so each call runs"):
+        for line, result in results.items():
+            assert result.ran and result.output == {}, (line, result.reason)
+
+
+def test_a_bracket_inside_a_brace_that_bash_3_2_ends_a_substitution_at_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    early = ["echo \"$(echo ${x:-a) echo '$(git push origin main)' b})\"",
+             "echo \"$(echo ${x:-a) echo \";git push origin main;\" b})\"",
+             "echo \"${y:-$(echo ${x:-a) echo '$(git push origin main)' b})}\"",
+             "cat <<EOF\n$(echo ${x:-a) echo '$(git push origin main)' b})\nEOF",
+             "echo \"$(echo ${x/a)/b} '$(git push origin main)' c)\"",
+             "echo \"$(echo ${x:-a) echo \";$STEP;\" b})\""]
+    with when("Claude runs a ${...} that holds a ) inside a $(...) in double quotes, in a ${...} or in a heredoc "
+              "body, with a push or a word the shell fills in quoted after that ), each in its own session"):
+        results = hooks(home, tool, early, "early")
+    with then("bash 3.2 ends that $(...) at the ) inside the ${...} and runs the text after it, while zsh reads it "
+              "as quoted text, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+    with when("Claude runs a ${...} that holds a ( inside a $(...) in double quotes, and pushes main after its )"):
+        later = home.hook(tool, "PreToolUse", "echo \"$(echo ${x:-(}) '$(git push origin main)' c)\"",
+                          session="later")
+    with then("zsh ends the $(...) at that ) and runs the push, while bash 3.2 reads the push as part of the "
+              "$(...), so the gate names the dash and finds the line unreadable"):
+        assert later.refused and later.findings == ["unreadable", "dashes"], later.reason
+    alike = ["echo \"$(echo ${x:-HEAD} '(a)')\"; git push origin main", "echo $(echo ${x:-a) b}); git push origin main"]
+    with when("Claude pushes main after a ${...} with no bracket in a quoted $(...), or after a ${...} with a ) in "
+              "a $(...) outside quotes"):
+        results = hooks(home, tool, alike, "alike")
+    with then("bash 3.2 ends the first where zsh does and can not run the second at all, so the gate reads the push, "
+              "names the dash and finds nothing unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (line, result.reason)
+    plain = ["echo \"$(git rev-parse ${ref:-HEAD})\"", "echo \"$(echo ${x:-(a)} b)\""]
+    with when("Claude runs a ${...} with no bracket, or with a ( and its ), inside a $(...) in double quotes"):
+        results = hooks(home, tool, plain, "plain")
+    with then("both shells end the $(...) at the same ), so each call runs"):
+        for line, result in results.items():
+            assert result.ran and result.output == {}, (line, result.reason)
+
+
+def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    broken = ["git push origin main\necho 'oops", "git push origin main \\", "g''it push origin main\necho 'oops",
+              "$CMD origin main\necho 'oops", "gh pr comment 3 --body-file note.md\necho \"oops"]
+    with when("Claude pushes main or comments on a PR, with the program written out, split by quote marks or filled "
+              "in by a variable, and a later line opens a quote that never closes or the call ends in a backslash"):
+        results = hooks(home, tool, broken, "broken")
+    with then("bash runs the lines before the broken quote and drops the last backslash, so each call is "
+              "unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude commits with a message that names a home folder and never closes its quote"):
+        message = home.hook(tool, "PreToolUse", "git commit -m 'Fix /home/sam/notes", session="message")
+    with then("the gate still names the path, and the commit is unreadable too"):
+        assert message.refused and message.findings == ["private_paths", "unreadable"], message.reason
+    with when("Claude sends a broken line that names neither git nor gh and has nothing the shell fills in"):
+        plain = home.hook(tool, "PreToolUse", "echo hi\necho 'oops", session="plain")
+    with then("the gate lets it run, since it can make no text public"):
+        assert plain.ran, plain.reason
+
+
+GIT_WORD_NOTE_START = "A variable or a substitution fills in a word that git may read as its action or as an option"
+
+
+def says_git_word_note(home, result):
+    """Whether a refusal gives the note for a git word the shell fills in, without the general hint."""
+    return (GIT_WORD_NOTE_START in result.reason and "Write the word in full" in result.reason
+            and gate_text(home, "unreadable_hint.md") not in result.reason)
+
+
+def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    actions = ["git $(echo push) origin main", "git $ACTION origin main", "git $'\\p'ush origin main",
+               "git pu$REST origin main", "git -$OPTION push origin main", "git $OPTION commit -m Fix",
+               "git -$OPTION commit -m Fix"]
+    with when("Claude sends git with an action, or an option before it, that a substitution, a variable or a $'...' "
+              "escape that zsh reads as a plain letter fills in"):
+        results = hooks(home, tool, actions, "action")
+    with then("the gate can not tell which action runs, so each call is unreadable, with a note that names the "
+              "case and asks for the word in full instead of the general hint"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+            assert says_git_word_note(home, result), (line, result.reason)
+    options = ["git commit $FLAG 'Fix it'", "git commit $'-\\m' 'Fix it'", "git commit -a$FLAG 'Fix it'",
+               "git commit --$OPTION 'Fix it'", "git commit -m Fix \"$FILE\"", "git tag $'-\\m' 'Fix it' v1",
+               "git tag $FLAG v1"]
+    with when("Claude commits or tags with a word before -- that the shell fills in, where git may read an option "
+              "such as -m or -F"):
+        results = hooks(home, tool, options, "option")
+    with then("the message could be text the gate never reads, so each call is unreadable, with the same note"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+            assert says_git_word_note(home, result), (line, result.reason)
+    with when("Claude commits with a message that a variable fills in, and with that and a filled-in option too"):
+        message = home.hook(tool, "PreToolUse", "git commit -m \"$MESSAGE\"", session="message")
+        both = home.hook(tool, "PreToolUse", "git commit -m \"$MESSAGE\" $FLAG", session="both")
+    with then("the message alone gets the general hint and no note, and with both the call gets each"):
+        assert message.refused and message.findings == ["unreadable"], message.reason
+        assert gate_text(home, "unreadable_hint.md") in message.reason, message.reason
+        assert GIT_WORD_NOTE_START not in message.reason, message.reason
+        assert both.refused and both.findings == ["unreadable"], both.reason
+        assert gate_text(home, "unreadable_hint.md") in both.reason, both.reason
+        assert GIT_WORD_NOTE_START in both.reason and "Write the word in full" in both.reason, both.reason
+    values = ["git commit --author \"$AUTHOR\" -m Fix", "git commit --author=\"$AUTHOR\" -m Fix",
+              "git commit -m Fix -- \"$FILE\"", "git commit -am Fix --date \"$WHEN\"", "git commit -S\"$KEY\" -m Fix",
+              "git tag -u \"$KEY\" -m Fix v1", "git tag -a v\"$VERSION\" -m Fix", "git -C \"$FOLDER\" status"]
+    with when("Claude commits or tags with a clean message, where the shell fills in only an option's value, a "
+              "path after --, or a tag name after other text"):
+        results = hooks(home, tool, values, "value")
+    with then("each call runs"):
+        for line, result in results.items():
+            assert not result.refused, (line, result.reason)
+
+
+CHANGED_WORD_NOTE_START = "The shell may change a word before gh or git gets it"
+
+
+def text_gate_handler():
+    """The text gate's own module, so a row can ask its marked reader for a line directly."""
+    sys.path.insert(0, os.path.join(PLUGIN, "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "public_text_gate_handler", os.path.join(PLUGIN, "parts", GATE, "handler.py"))
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+    return handler
+
+
+def says_changed_word_note(home, result):
+    """Whether a refusal gives the note for a word the shell may change, without the general hint."""
+    return (result.refused and result.findings == ["unreadable"] and CHANGED_WORD_NOTE_START in result.reason
+            and gate_text(home, "unreadable_hint.md") not in result.reason)
+
+
+def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, tool):
+    with given("hub is installed with the PR test gate off; in the work folder a notes file names a home folder, a "
+               "file is named like an option, and folders named ~+ and ~ hold notes files, one clean and one not, "
+               "while the home folder holds a clean notes file"):
+        home.install()
+        home.hubctl_from_mod("off", "pr_test_gate")
+        private, clean = "See /home/sam/log.txt\n", "A clean note.\n"
+        files = {"private.md": private, "--body-file=private.md": private, "body.md": clean,
+                 os.path.join("~+", "private.md"): clean, os.path.join("~", "notes.md"): private}
+        for name, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(home.work, name)), exist_ok=True)
+            with open(os.path.join(home.work, name), "w") as handle:
+                handle.write(text)
+        with open(os.path.join(home.root, "notes.md"), "w") as handle:
+            handle.write(clean)
+    changed = ["gh issue create --title {Fix,--body-file=private.md}", "gh issue comment 4 --body a{1..3}",
+               "gh issue comment 4 --body=x{,' --body-file=private.md'}", "{gh,issue} comment 4 --body hi",
+               "gh pr {create,x} --title t", "gh issue comment 4 --body ok x*",
+               "gh issue comment 4 --body ok ?-body-file=private.md",
+               "gh issue comment 4 --body ok [-]-body-file=private.md", "gh issue comment 4 --body ok x(N)",
+               "gh issue comment 4 --body ok (--body-file=private.md|x)", "gh issue comment 4 --body ok <1-5>",
+               "gh issue comment 4 --body issue#12", "gh issue comment 4 --body ok ^x",
+               "gh issue comment 4 --body-file ~+/private.md", "gh issue comment 4 --body-file=~/notes.md",
+               'gh issue comment 4 --body-file "~/notes.md"', "gh issue comment 4 --body-file \\~/notes.md",
+               'gh issue comment 4 --body "$~T"', 'gh issue comment 4 --body "$^T"',
+               "gh api repos/acme/demo/issues/4/comments -f body=~", "=gh issue comment 4 --body hi",
+               'gh issue comment 4 --body "$=T"', "gh issue comment 4 --body ok $X",
+               'gh issue comment 4 --body ok "$X"', 'gh api repos/acme/demo/issues "$X"',
+               "git commit {-F,private.txt}", "git commit -S$KEY -m Fix", "git tag -a v$VERSION -m Fix",
+               "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT",
+               'gh issue comment 4 --body-file="~/notes.md"',
+               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"']
+    split_apart = ["\\{ (A=1); gh issue comment 4 --body hi", "\\{ (A=1); git commit -m Tidy"]
+    with when("Claude sends git or gh steps where the shell may change a word before git or gh gets it: a brace "
+              "list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$=T\" or "
+              "\"$~T\", a variable outside quotes, or a variable in quotes that fills in a whole word of a gh step"):
+        results = hooks(home, tool, changed, "changed")
+    with then("git or gh may get options or text the gate never read, so each call is unreadable, with a note that "
+              "names the case instead of the general hint"):
+        assert [(line, result.reason) for line, result in results.items()
+                if not says_changed_word_note(home, result)] == []
+    with when("Claude sends lines that the gate's two readings split into a different number of commands, as they "
+              "split an escaped { before a subshell today"):
+        counted = hooks(home, tool, split_apart, "counted")
+    with and_("the gate's marked reader is asked for a clean commit line, once with its own count of one command "
+              "and once with a count of two"):
+        handler = text_gate_handler()
+        same_count = handler.marked_reader("git commit -m Tidy", home.work, 1)
+        other_count = handler.marked_reader("git commit -m Tidy", home.work, 2)
+    with then("each line is unreadable with the note, and the reader gives the words for the same count but the "
+              "changed mark for every command at another count, so the count check holds whatever line makes "
+              "the readings differ"):
+        assert [(line, result.reason) for line, result in counted.items()
+                if not says_changed_word_note(home, result)] == []
+        assert same_count(0) == ["git", "commit", "-m", "Tidy"]
+        assert [other_count(0), other_count(1)] == [[handler.WORD_CHANGE]] * 2
+    with when("Claude sends a title that a variable fills in, in quotes, and zsh's split form inside ${...}"):
+        title = home.hook(tool, "PreToolUse", 'gh pr edit 5 --title "$T"', session="title")
+        split = home.hook(tool, "PreToolUse", 'gh issue comment 4 --body "${=a}"', session="split")
+    with then("each is unreadable as before, with the general hint and not the note"):
+        for result in (title, split):
+            assert result.refused and result.findings == ["unreadable"], result.reason
+            assert gate_text(home, "unreadable_hint.md") in result.reason, result.reason
+            assert CHANGED_WORD_NOTE_START not in result.reason, result.reason
+    kept = ['gh pr create --title "Fix #12" --body-file body.md',
+            'gh pr create --title "Fix: why? *now*" --body-file body.md', 'git commit -m "a, b"',
+            "gh pr view 5 --json title", "gh api repos/{owner}/{repo}/pulls",
+            "gh api repos/{owner}/{repo}/issues/4/comments -f body=ok",
+            'gh pr create --base "$B" --title t --body-file body.md',
+            'gh pr create --head "$H" --label "$L" --reviewer "$R" --title t --body-file body.md',
+            "gh issue comment 4 --body-file ~/notes.md", 'gh issue comment 4 --body "a ~/x"',
+            "case x in x*) gh issue comment 4 --body hi;; esac",
+            "[ -n x ] && gh issue comment 4 --body hi", "~/bin/tool && gh issue comment 4 --body hi",
+            "git add *.py && git commit -m x", "f() { gh issue comment 4 --body hi; }",
+            "if (true); then gh issue comment 4 --body hi; fi", "NOTE={a,b} gh issue comment 4 --body hi",
+            "echo {a,b} && gh issue comment 4 --body hi", "{ gh issue comment 4 --body hi; }",
+            "gh issue create --title '{Fix,--body-file=private.md}'", 'gh issue comment 4 --body "a{1..3}"',
+            "gh issue comment 4 --body {x}", "gh issue comment 4 --body x\\{a,b\\}"]
+    with when("Claude sends steps whose words the shell keeps: quoted or escaped marks, a variable as an option's "
+              "value, ~/ at the start of a word, a brace with one item, and patterns, groups, tests and functions "
+              "around the step or in another command"):
+        results = hooks(home, tool, kept, "kept")
+    with then("each call runs, since git and gh get exactly the words the gate reads"):
+        assert [(line, result.reason) for line, result in results.items() if result.refused] == []
+
+
+def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    apart = ["$'\\g\\i\\t' push origin main", "git push origin $'ma\\\nin'", "git commit -m $'Fix \\q it'",
+             "git commit -m $'Fix\\0 it'", "git commit -m $'Fix\\x00 it'", "git commit -m $'Fix \\cA it'",
+             "git commit -m $'Fix \\xZ it'", "git commit -m $'Fix \\400 it'", "git commit -m $'Fix \\8 it'",
+             "git commit -m $'Fix \\U110000 it'", "git commit -m $'Fix \\u00e9 it'",
+             ". $'./x\\x00\\x01'"]
+    with when("Claude writes a $'...' string with an escape that bash and zsh fill in differently, such as an "
+              "unknown letter, a backslash at a line end, a NUL, \\c, \\x with no digit, an octal past 377, \\8, "
+              "or a \\u or \\U code point, which macOS bash 3.2 keeps as written"):
+        results = hooks(home, tool, apart, "apart")
+    with then("the gate can not tell which text the shell makes, so each call is unreadable"):
+        for line, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (line, result.reason)
+    with when("Claude commits with a $'...' message whose escapes both shells fill in the same way"):
+        same = home.hook(tool, "PreToolUse", "git commit -m $'It\\'s \\\"fixed\\\"\\t\\x41\\101\\e\\?\\\\'",
+                         session="same")
+    with then("the commit runs"):
+        assert not same.refused, same.reason
+    with when("Claude pushes main with a program name written as a $\"...\" string"):
+        locale_quoted = home.hook(tool, "PreToolUse", '$"git" push origin main', session="locale-quoted")
+    with then("the gate drops the $ as bash does, reads the push and names the dash"):
+        assert locale_quoted.refused and locale_quoted.findings == ["dashes"], locale_quoted.reason
+
+
+def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    with when("Claude pushes main between two echo commands, where the first echo's $'...' string holds an "
+              "escaped quote and the second echo prints a quote"):
+        hidden_push = home.hook(tool, "PreToolUse", "echo $'\\'' ; git push origin main ; echo \\'",
+                                session="hidden-push")
+    with then("the gate reads the push between them, as the shell runs it, and names the dash"):
+        assert hidden_push.refused and hidden_push.findings == ["dashes"], hidden_push.reason
+    messages = ["git commit -m $'Late \\xe2\\x80\\x94 change'", "git commit -m $'Late \\342\\200\\224 change'"]
+    with when("Claude commits with a message whose dash is written as hex or octal escapes of its bytes in $'...'"):
+        results = hooks(home, tool, messages, "escaped-dash")
+    with then("the gate reads the dash the shell writes and names it"):
+        for message, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (message, result.reason)
+    with when("Claude commits with a plain $'...' message that has a new line and an escaped quote"):
+        plain = home.hook(tool, "PreToolUse", "git commit -m $'It\\'s fixed\\n\\nNo dash here'", session="plain")
+    with then("the commit runs"):
+        assert not plain.refused, plain.reason
+
+
+def commit_notes(home, text, message):
+    with open(os.path.join(home.work, "notes.txt"), "w") as notes:
+        notes.write(text)
+    home.git("add", "notes.txt")
+    home.git("commit", "-q", "-m", message)
+
+
+def merge_side_into_main(home, resolved):
+    """Merge branch side into main, where both changed the second line of notes.txt, and settle the conflict by
+    writing resolved as that line."""
+    home.run(["git", "merge", "-q", "side", "-m", "Merge side"], check=False)
+    with open(os.path.join(home.work, "notes.txt"), "w") as notes:
+        notes.write(f"one\n{resolved}\n")
+    home.git("add", "notes.txt")
+    home.git("commit", "-q", "--no-edit")
+
+
+def test_a_merge_whose_conflict_is_settled_with_new_text_is_read_like_any_other_commit(home, tool):
+    with given("a pushed main with notes.txt, then a branch side and main that each change its second line, and "
+               "the PR test gate off"):
+        pushed_repo(home)
+        commit_notes(home, "one\ntwo\n", "Add notes")
+        home.git("push", "-q", "origin", "main")
+        home.git("checkout", "-q", "-b", "side")
+        commit_notes(home, "one\nside two\n", "Side change")
+        home.git("checkout", "-q", "main")
+        commit_notes(home, "one\nmain two\n", "Main change")
+        before_merge = home.git("rev-parse", "HEAD").stdout.strip()
+    with and_("side merged into main, with the conflict settled by a line that has a dash"):
+        merge_side_into_main(home, f"Settled {DASH} line")
+    with when("Claude pushes main"):
+        dashed = home.hook(tool, "PreToolUse", "git push origin main", session="merge-dash")
+    with then("the gate reads the text the merge commit itself adds and names the dash"):
+        assert dashed.refused and dashed.findings == ["dashes"], dashed.reason
+    with when("main goes back to before the merge, merges side again with a plain line, and Claude pushes it"):
+        home.git("reset", "-q", "--hard", before_merge)
+        merge_side_into_main(home, "Settled line")
+        plain = home.hook(tool, "PreToolUse", "git push origin main", session="merge-plain")
+    with then("the push runs"):
+        assert not plain.refused, plain.reason
+
+
+def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_tags_are_read(home, tool):
+    with given("a repo whose main has a clean new commit, a branch draft and a tag v2 at a new commit whose "
+               "message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("checkout", "-q", "-b", "draft")
+        home.git("commit", "-q", "--allow-empty", "-m", f"Draft {DASH} change")
+        home.git("tag", "v2")
+        home.git("checkout", "-q", "main")
+    every = ["git push --all", "git push --all origin", "git push --branches origin", "git push --mirror origin",
+             "git push --mirr origin", "git push origin :", "git push origin +:", "git push origin main :"]
+    with when("Claude pushes every branch, mirrors the repo, or pushes the branches that match on the remote"):
+        results = hooks(home, tool, every, "every")
+    with then("the gate can not tell which commits go out and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+    settings = [("push.default", "matching"), ("remote.origin.push", "refs/heads/draft:refs/heads/draft"),
+                ("remote.origin.mirror", "true")]
+    with when("the repo's settings send more than the current branch, and Claude pushes with no branch named"):
+        results = {}
+        for index, (key, value) in enumerate(settings):
+            home.git("config", key, value)
+            results[key] = [home.hook(tool, "PreToolUse", push, session=f"setting-{index}-{position}")
+                            for position, push in enumerate(["git push", "git push origin"])]
+            named = home.hook(tool, "PreToolUse", "git push origin main", session=f"named-{index}")
+            home.git("config", "--unset", key)
+            assert named.ran, (key, named.reason)
+        results["-c"] = [home.hook(tool, "PreToolUse", "git -c push.default=matching push", session="one")]
+    with then("each push with no branch named is refused as unreadable, and a push that names main runs"):
+        for key, found in results.items():
+            for result in found:
+                assert result.refused and result.findings == ["unreadable"], (key, result.reason)
+    with when("an old-style remotes file names remote old, and Claude pushes to it with no branch named"):
+        os.makedirs(os.path.join(home.work, ".git", "remotes"))
+        with open(os.path.join(home.work, ".git", "remotes", "old"), "w") as handle:
+            handle.write(f"URL: {os.path.join(home.root, 'remote.git')}\nPush: refs/heads/draft:refs/heads/draft\n")
+        from_file = home.hook(tool, "PreToolUse", "git push old", session="file")
+        os.remove(os.path.join(home.work, ".git", "remotes", "old"))
+    with then("it is refused as unreadable"):
+        assert from_file.refused and from_file.findings == ["unreadable"], from_file.reason
+    with when("Claude pushes every tag, and pushes with settings that send only the current branch, then with no "
+              "push setting left"):
+        tags = hooks(home, tool, ["git push --tags", "git push origin --tags"], "tags")
+        home.git("config", "remote.origin.mirror", "false")
+        plain = hooks(home, tool, ["git push", "git -c user.name=Ann push", "git push origin"], "plain")
+        home.git("config", "--unset", "remote.origin.mirror")
+        unset = hooks(home, tool, ["git push", "git push origin"], "unset")
+    with then("the tag pushes are refused for v2's dash, and the others run, since main's new commit is clean, also "
+              "once the repo has no push setting at all"):
+        for push, result in tags.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+        for push, result in [*plain.items(), *unset.items()]:
+            assert result.ran, (push, result.reason)
+
+
+def test_a_push_that_git_runs_on_another_repo_is_unreadable(home, tool):
+    with given("a repo whose main has a clean new commit, a second repo whose new commit has a dash, and the PR "
+               "test gate off"):
+        pushed_repo(home)
+        other = os.path.join(home.root, "other")
+        home.git("init", "-q", "-b", "main", other)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Other {DASH} change", cwd=other)
+    elsewhere = [f"git --git-dir={other}/.git push origin main", f"git --git-dir {other}/.git push",
+                 f"git --work-tree={other} push", f"git --work-tree {other} push origin main",
+                 "git --namespace=other push origin main", "git --namespace other push",
+                 f"git --bare push {other}/.git main",
+                 f"GIT_DIR={other}/.git git push origin main", f"GIT_WORK_TREE={other} git push",
+                 f"GIT_COMMON_DIR={other}/.git git push", "GIT_NAMESPACE=other git push origin main",
+                 f"GIT_OBJECT_DIRECTORY={other}/.git/objects git push",
+                 f"GIT_CONFIG_GLOBAL={other}/.gitconfig git push origin main",
+                 f"export GIT_DIR={other}/.git; git push origin main",
+                 f"env GIT_DIR={other}/.git git push origin main",
+                 f"GIT_DIR={other}/.git bash -c 'git push origin main'"]
+    with when("Claude pushes with a git option or a variable that points git at another repo or namespace"):
+        results = hooks(home, tool, elsewhere, "elsewhere")
+    with then("the gate can not read that repo's commits from this folder and refuses each one as unreadable"):
+        for push, result in results.items():
+            assert result.refused and "unreadable" in result.findings, (push, result.reason)
+    with when("Claude pushes main plainly"):
+        plain = home.hook(tool, "PreToolUse", "git push origin main", session="plain")
+    with then("it runs, since main's new commit is clean"):
+        assert plain.ran, plain.reason
+
+
+def test_a_push_or_commit_after_git_s_attr_source_option_is_read(home, tool):
+    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+        pushed_repo(home)
+        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
+    pushes = ["git --attr-source HEAD push origin main", "git --attr-source=HEAD push origin main",
+              "git -C . --attr-source HEAD push origin main"]
+    with when("Claude pushes main after git's --attr-source option, with its tree as the next word or after =, "
+              "each in its own session"):
+        results = hooks(home, tool, pushes, "pushes")
+    with then("git reads the word after --attr-source as its value, so the gate reads the push and names the dash"):
+        for push, result in results.items():
+            assert result.refused and result.findings == ["dashes"], (push, result.reason)
+    with when("Claude commits after --attr-source and its tree, with a message that names a private path"):
+        commit = home.hook(tool, "PreToolUse", "git --attr-source HEAD commit -m 'see /Users/sam/notes'",
+                           session="commit")
+    with then("the gate reads the commit message and names the path"):
+        assert commit.refused and commit.findings == ["private_paths"], commit.reason
+    changed = ["git --attr-source HEAD pu{sh,ll} origin main", "git --attr-source HEAD com{mit,pare} -m x"]
+    with when("Claude runs git after --attr-source and its tree, with an action the shell may change, each in its "
+              "own session"):
+        changed_results = hooks(home, tool, changed, "changed")
+    with then("the gate finds the action past the tree, sees the shell may change it, and refuses it as unreadable"):
+        for line, result in changed_results.items():
+            assert result.refused and "unreadable" in result.findings, (line, result.reason)
+
+
+def empty_commits(home, count):
+    """count empty commits on top of main, written at once by git fast-import, since one git commit each is slow."""
+    commits = [f"commit refs/heads/main\ncommitter Ann <ann@example.com> {1_700_000_000 + number} +0000\n"
+               f"data {len(f'Change {number}')}\nChange {number}\n" + ("from refs/heads/main^0\n" if number == 0 else "")
+               for number in range(count)]
+    subprocess.run(["git", "fast-import", "--quiet"], cwd=home.work, env=home.env, input="".join(commits), text=True,
+                   check=True)
+
+
+def test_a_push_too_long_to_read_in_full_is_refused_and_asked_to_go_in_smaller_parts(home, tool):
+    with given("a repo whose main has 1,000 clean new commits, and the PR test gate off"):
+        pushed_repo(home)
+        empty_commits(home, 999)
+    with when("Claude pushes main"):
+        most = home.hook(tool, "PreToolUse", "git push origin main", session="most")
+    with then("it runs, since the gate read every commit"):
+        assert most.ran, most.reason
+    with when("main gets one more commit, and Claude pushes it"):
+        home.git("commit", "-q", "--allow-empty", "-m", "One more")
+        many = home.hook(tool, "PreToolUse", "git push origin main", session="many")
+    with then("it is refused, since the gate reads at most 1,000 commits, and asked to push fewer commits at a time, "
+              "with a large commit left to the user's own switch"):
+        assert many.refused and many.findings == ["unreadable"], many.reason
+        assert "Push fewer commits at a time" in many.reason, many.reason
+        assert 'only the user can let it through, by saying "turn off public_text_gate.unreadable"' in many.reason
+        assert "do not change the setting yourself" in many.reason, many.reason
+        assert gate_text(home, "unreadable_hint.md") not in many.reason
+    with when("main's first 1,000 commits are pushed, and the next commit adds a file longer than the gate reads"):
+        home.git("push", "-q", "origin", "main~1:main")
+        with open(os.path.join(home.work, "long.txt"), "w") as handle:
+            handle.write("plain line\n" * 20_000)
+        home.git("add", "long.txt")
+        home.git("commit", "-q", "-m", "Add a long file")
+        long_change = home.hook(tool, "PreToolUse", "git push origin main", session="long")
+    with then("it is refused the same way"):
+        assert long_change.refused and long_change.findings == ["unreadable"], long_change.reason
+        assert "Push fewer commits at a time" in long_change.reason, long_change.reason
+    with when("the next commit adds a file twenty times longer than the gate reads, and Claude pushes main"):
+        with open(os.path.join(home.work, "huge.txt"), "w") as handle:
+            handle.write("plain line\n" * 400_000)
+        home.git("add", "huge.txt")
+        home.git("commit", "-q", "-m", "Add a huge file")
+        started = time.monotonic()
+        huge_change = home.hook(tool, "PreToolUse", "git push origin main", session="huge")
+        took = time.monotonic() - started
+    with then("the gate stops git once it has read past its limit and refuses the same way, at once, not as too "
+              "slow"):
+        assert huge_change.refused and huge_change.findings == ["unreadable"], huge_change.reason
+        assert "Push fewer commits at a time" in huge_change.reason, huge_change.reason
+        assert "git did not list the commits of this push in time" not in huge_change.reason, huge_change.reason
+        assert took < 6, took
+    remote = os.path.join(home.root, "remote.git")
+    with when("Claude pushes main by the remote's folder and by its file URL, which have no remote-tracking "
+              "branches, and to origin after its remote-tracking branches are gone"):
+        by_place = hooks(home, tool, [f"git push {remote} main~1:main", f"git push file://{remote} main~1:main"],
+                         "place")
+        home.git("update-ref", "-d", "refs/remotes/origin/main")
+        unfetched = home.hook(tool, "PreToolUse", "git push origin main~1:main", session="unfetched")
+    with then("each is refused, since every commit of main counts as new, and asked to add the remote by name and "
+              "fetch it first"):
+        for push, result in [*by_place.items(), ("unfetched", unfetched)]:
+            assert result.refused and result.findings == ["unreadable"], (push, result.reason)
+            assert "Add the remote by name and fetch it first" in result.reason, (push, result.reason)
+            assert "Push fewer commits at a time" not in result.reason, (push, result.reason)
+            assert gate_text(home, "unreadable_hint.md") not in result.reason, (push, result.reason)
+
+
+def lock_held(path, seconds):
+    """Another process that holds the lock file for that many seconds, as a second call of the same chat does while
+    its own hook runs. It returns once the lock is held."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-I", "-c",
+                               "import fcntl, sys, time; handle = open(sys.argv[1], 'a'); "
+                               "fcntl.flock(handle, fcntl.LOCK_EX); print('held', flush=True); "
+                               "time.sleep(float(sys.argv[2]))", path, str(seconds)],
+                              stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def test_a_push_gets_only_the_time_the_hook_has_left_after_earlier_parts_and_earlier_pushes(home):
+    slow_note = "git did not list the commits of this push in time"
+    with given("a repo whose main has a clean new commit, the PR test gate off, the context budget on, a chat "
+               "transcript, and a git whose log takes 5 seconds"):
+        pushed_repo(home)
+        home.hubctl("on", "context_budget")
+        transcript = os.path.join(home.root, "chat.jsonl")
+        open(transcript, "w").close()
+        kept = home.env["PATH"]
+        home.env["PATH"] = git_log_waits(home, 5)
+    try:
+        with when("Claude pushes main, then pushes it again in a script a shell reads from a heredoc"):
+            started = time.monotonic()
+            twice = home.hook("claude_code", "PreToolUse",
+                              "git push origin main\nbash <<'EOF'\ngit push origin main\nEOF", session="twice")
+            took = time.monotonic() - started
+        with then("the second push gets only what the first left of the gate's 8 seconds, so it is refused as too "
+                  "slow, inside the hook's time"):
+            assert twice.refused and twice.findings == ["unreadable"], twice.reason
+            assert slow_note in twice.reason, twice.reason
+            assert took < 9.5, took
+        with when("another call of the same chat holds the context budget's lock for 5 seconds, and Claude pushes "
+                  "main once"):
+            holder = lock_held(os.path.join(home.state, "context_budget", "budget.json.lock"), 5)
+            data = home.hook_input("claude_code", "PreToolUse", "git push origin main", session="budget")
+            data["transcript_path"] = transcript
+            started = time.monotonic()
+            waited = home.send("claude_code", "PreToolUse", data)
+            took = time.monotonic() - started
+            holder.wait()
+        with then("the gate gets only the 3 seconds the hook has left after the context budget waited, so git log "
+                  "is too slow, and the answer still comes inside the hook's time"):
+            assert waited.refused and waited.findings == ["unreadable"], waited.reason
+            assert slow_note in waited.reason, waited.reason
+            assert took < 9.5, took
+    finally:
+        home.env["PATH"] = kept
+
+
+def test_a_commit_whose_message_file_sits_in_a_folder_the_shell_fills_in_is_refused_as_unreadable_without_a_crash(home, tool):
+    with given("a repo with a message file in it"):
+        home.install()
+        with open(os.path.join(home.root, "body.txt"), "w") as handle:
+            handle.write("Plain change\n")
+    commits = ["git -C $DIR commit -F body.txt", "git -C $(pwd) commit -F body.txt"]
+    with when("Claude commits with that message file, inside a folder that comes from a variable or a substitution"):
+        results = {commit: home.hook(tool, "PreToolUse", commit) for commit in commits}
+    with then("the gate can not read the message before the command runs and refuses each one as unreadable"):
+        for commit, result in results.items():
+            assert result.refused and result.findings == ["unreadable"], commit
+
+
+def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits():
+    import tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        with given("a git first on PATH that logs each call before it runs the real git"):
+            log = os.path.join(folder, "calls.txt")
+            real = subprocess.run(["sh", "-c", "command -v git"], capture_output=True, text=True).stdout.strip()
+            with open(os.path.join(folder, "git"), "w") as handle:
+                handle.write(f"#!/bin/sh\necho \"$*\" >> '{log}'\nexec '{real}' \"$@\"\n")
+            os.chmod(os.path.join(folder, "git"), 0o755)
+            code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import importlib.util as u; "
+                    "spec = u.spec_from_file_location('gate', sys.argv[2]); gate = u.module_from_spec(spec); "
+                    "spec.loader.exec_module(gate); "
+                    "print(json.dumps(gate.public_steps('git push origin main && bash -c \"git push\"', "
+                    "sys.argv[3], log=sys.argv[4] == 'yes')))")
+            env = dict(os.environ, PATH=folder + os.pathsep + os.environ["PATH"])
+
+            def steps(log_too):
+                return json.loads(subprocess.run(
+                    [sys.executable, "-I", "-c", code, os.path.join(PLUGIN, "lib"),
+                     os.path.join(PLUGIN, "parts", GATE, "handler.py"), folder, "yes" if log_too else "no"],
+                    env=env, capture_output=True, text=True, check=True).stdout)
+        with when("the gate's parser reads two pushes, one inside a wrapper, without the log"):
+            skipped = steps(False)
+        with then("it names both pushes and never runs git"):
+            assert [target for target, _text in skipped] == ["push", "push"]
+            assert not os.path.exists(log)
+        with when("it reads them with the log, as the gate itself does"):
+            steps(True)
+        with then("git runs for each push: it counts the commits of the named push, which fails here outside a repo, "
+                  "so no log follows, and reads the settings of the push with no branch named"):
+            with open(log) as handle:
+                assert [line.split()[0] for line in handle] == ["rev-list", "config", "rev-parse"]
+
+
+def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
+    with given("hub is installed with the em dash check on and the PR test gate off, and a PR body file holds a dash"):
+        home.install()
+        home.hubctl("on", f"{GATE}.dashes")
+        home.hubctl_from_mod("off", "pr_test_gate")
         with open(os.path.join(home.work, "body.md"), "w") as handle:
             handle.write(f"Adds the thing {DASH} finally\n")
     with when("Claude creates a PR from that file, comments on an issue and posts a review comment"):

@@ -685,7 +685,8 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         home.hubctl("on", "tier_rule.guard")
     with then("the doctor has no Cursor section"):
         assert cursor_section(home.hubctl("doctor").stdout) is None
-    with when("the profile lists Cursor with the Cursor beta on, and the guard, the cap, the budget and the band run in Claude Code"):
+    with when("the profile lists Cursor with the Cursor beta on, and the guard, the cap, the budget, the PR test "
+              "gate and the band run in Claude Code"):
         os.makedirs(home.config, exist_ok=True)
         use_cursor_beta(home)
         home.hubctl("apply")
@@ -697,6 +698,7 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         assert section == [f"context_budget: {reason('context_budget', 'context_budget')}",
                            f"handback_cap: {reason('handback_cap', 'handback_cap')}",
                            f"tier_rule.guard: {reason('tier_rule', 'tier_rule.guard')}",
+                           f"pr_test_gate: {reason('pr_test_gate', 'pr_test_gate')}",
                            f"status_band: {reason('status_band', 'status_band')}"]
         lines = output.splitlines()
         warnings = [index for index, line in enumerate(lines) if line.startswith("warning:")]
@@ -706,9 +708,10 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         assert [f"{gap['flag']}: {gap['reason']}" for gap in gaps] == section
         assert {(gap["part"], gap["tool"]) for gap in gaps} == {
             ("context_budget", "cursor"), ("handback_cap", "cursor"), ("tier_rule", "cursor"),
-            ("status_band", "cursor")}
+            ("pr_test_gate", "cursor"), ("status_band", "cursor")}
     with when("the user switches the guard off"):
         home.hubctl_from_mod("off", "tier_rule.guard")
         section = cursor_section(home.hubctl("doctor").stdout)
     with then("the doctor no longer names it, because it does not run in Claude Code either"):
-        assert [line.split(":")[0] for line in section] == ["context_budget", "handback_cap", "status_band"]
+        assert [line.split(":")[0] for line in section] == ["context_budget", "handback_cap", "pr_test_gate",
+                                                              "status_band"]

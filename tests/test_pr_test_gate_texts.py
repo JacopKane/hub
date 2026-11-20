@@ -101,14 +101,14 @@ def test_the_pr_body_asks_how_it_was_tested_and_the_rules_and_findings_say_what_
         assert DASH not in rule + finding
 
 
-def test_the_readme_lists_the_gate_as_planned_and_the_pr_part_as_testing_before_each_push():
+def test_the_readme_lists_the_gate_with_the_command_that_records_reports_and_the_pr_part_as_testing_before_each_push():
     with given("the README's table of parts"):
         rows = {line.split("|")[1].strip(): line for line in read(os.path.dirname(os.path.dirname(PLUGIN)),
                                                                   "README.md").split("\n")
                 if line.startswith("| ") and line.count("|") == 6}
     with then("the pr row says it tests before each push"):
         assert "tests before each push" in rows["pr"]
-    with and_("the gate has its own row, planned, on from the start, for Claude Code only"):
+    with and_("the gate has its own row, shipped, naming pr-tested, on from the start, for Claude Code only"):
         cells = [cell.strip() for cell in rows["pr_test_gate"].split("|")[1:-1]]
-        assert cells[1].startswith("Planned, not in this version yet.")
+        assert not cells[1].startswith("Planned") and "`pr-tested` records" in cells[1]
         assert cells[2:4] == ["on", "Claude Code"]

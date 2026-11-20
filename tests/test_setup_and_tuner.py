@@ -17,7 +17,7 @@ from conftest import FIXTURES, PLUGIN, load_fixture
 from steps import and_, given, then, when
 
 ANSWERS = os.path.join(FIXTURES, "agent_answers")
-STARTING_SET = {"core", "tuner", "scout", "public_text_gate", "self_protection", "status_band", "pr"}
+STARTING_SET = {"core", "tuner", "scout", "public_text_gate", "self_protection", "status_band", "pr", "pr_test_gate"}
 # Parts a new user turns on by hand. Setup never turns them on.
 OPT_IN = {"builder", "tier_rule"}
 
