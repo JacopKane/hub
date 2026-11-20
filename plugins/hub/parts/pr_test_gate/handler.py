@@ -850,11 +850,9 @@ def decoded_escape(escape):
 
 
 def ssh_destination(authority):
-    """[user@]host as git hands it to ssh, with the port and brackets gone. The URL's user stays, so ssh -G reads
-    the config for that user, as a Match user block needs."""
-    user = authority.rpartition("@")[0].lstrip("[")
-    host = bare_host(authority)
-    return f"{user}@{host}" if user else host
+    """[user@]host as git hands it to ssh. The URL's user stays, so ssh -G reads the config for that user, as a
+    Match user block needs, and a port git does not take stays in the host, so ssh -G reads the same Host block."""
+    return git_ssh_target(authority)[0]
 
 
 def port_options(authority, variant):
@@ -862,25 +860,41 @@ def port_options(authority, variant):
     or (). ssh keeps the first port it is given, so ssh -G gets them in the same order. A Match exec block on %p
     can make the port pick the host. git's other ssh variants pass the port as -P, which OpenSSH reads as a tag, or
     stop, so a port with one of them stops the step."""
-    port = git_port(authority)
+    port = git_ssh_target(authority)[1]
     if port is not None and variant != "ssh":
         raise unreadable("ssh_command")
     return ("-p", port) if port is not None else ()
 
 
-def git_port(authority):
-    """The port git hands ssh for [user@]host[:port], as connect.c finds it: after the first colon behind a
-    [bracketed] part, else after the first colon of the host with its brackets gone."""
+def git_ssh_target(authority):
+    """([user@]host, port or None) as git hands them to ssh for [user@]host[:port], as connect.c's host_end,
+    get_host_and_port and get_port find them. A [bracketed] part at the start or after the first @[ loses its
+    brackets and ends the host there, and its port comes after the first colon behind it. Else, or when that is
+    no port, the port comes after the first colon of the host, which then ends before it. Text after a colon that
+    is no port, such as :99999, stays in the host, and only an unbracketed host loses a colon at its very end."""
     start = authority.find("@[") + 1
     close = authority.find("]", start + 1) if authority[start:start + 1] == "[" else -1
-    if close < 0:
-        return port_after_colon(authority)
-    return port_after_colon(authority[close + 1:]) or port_after_colon(authority[:start] + authority[start + 1:close])
+    if close >= 0:
+        host, port = authority[:start] + authority[start + 1:close], port_after_colon(authority[close + 1:])
+    else:
+        host, port = without_a_last_lone_colon(authority), None
+    if port is None and port_after_colon(host) is not None:
+        host, _colon, port = host.partition(":")
+    return host, port
+
+
+def without_a_last_lone_colon(host):
+    """The host without its first colon when that colon is its last character, as get_host_and_port drops it."""
+    return host[:-1] if host.find(":") == len(host) - 1 else host
 
 
 def port_after_colon(text):
-    """The text after the first colon when all of it is a port from 0 to 65535 as strtol reads it, else None."""
+    """The text after the first colon when all of it is a port from 0 to 65535 as strtol reads it, else None. Text
+    after the colon with a byte outside ASCII stops the step, since git and ssh may read a port in it differently
+    than the gate does."""
     value = text.partition(":")[2]
+    if ":" in text and not value.isascii():
+        raise unreadable("url_host")
     return value if ":" in text and GIT_PORT.fullmatch(value) and 0 <= int(value) < 65536 else None
 
 

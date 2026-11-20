@@ -2152,13 +2152,86 @@ def test_an_ssh_alias_is_looked_up_for_the_port_the_remote_url_names(home):
         calls_before = len(ssh_calls(home))
         out_of_range = bash(home, "git push big feature")
         with_a_sign = bash(home, "git push plus feature")
-    with then("the first runs, since git passes it to ssh with no -p, and the second is judged as the push to GitHub "
-              "it is, with ssh -G getting the port as written"):
+    with then("the first runs, since git hands ssh port-work:99999 as the host with no -p, and ssh -G gets that "
+              "same host, and the second is judged as the push to GitHub it is, with ssh -G getting the port as "
+              "written"):
         assert quiet(out_of_range), out_of_range.reason
         assert says(home, with_a_sign, "no_report.md", short=feature[:7], branch="feature"), with_a_sign.reason
         assert ssh_calls(home)[calls_before:] == [
-            ["-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}port-work:99999", URL_PUSH_COMMAND],
             ["-p", "+2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]]
+
+
+def test_a_port_git_does_not_take_stays_in_the_host_the_gate_asks_ssh_about(home):
+    with given("branch feature with open PR 7 and a new commit with no report, an ssh config that makes each host "
+               "git hands ssh with a port still in it github.com, as a Host port-work* block can, port-work that "
+               "is github.com only on ports 65535, 0 and \" 2222\", and plain port-work that is no GitHub host"):
+        with_github(home)
+        feature = pushed_branch(home)
+        fake_gh(home, open={"feature": 7})
+        kept = ["port-work:99999", "port-work:65536", "port-work:-1", "port-work:2222:3", "port-work:2222",
+                "port-work:"]
+        with_fake_ssh(home, hosts={host: "github.com" for host in kept},
+                      ports={"65535": {"port-work": "github.com"}, "0": {"port-work": "github.com"},
+                             " 2222": {"port-work": "github.com"}})
+        ssh_user = "git" + "@"
+        on_github = {"past_the_range": f"ssh://{ssh_user}port-work:99999/acme/demo.git",
+                     "one_past_the_last": f"ssh://{ssh_user}port-work:65536/acme/demo.git",
+                     "below_zero": f"ssh://{ssh_user}port-work:-1/acme/demo.git",
+                     "two_colons": f"ssh://{ssh_user}port-work:2222:3/acme/demo.git",
+                     "colon_in_the_user": "ssh://us:er@port-work:2222/acme/demo.git",
+                     "inside_brackets": f"ssh://{ssh_user}[port-work:99999]/acme/demo.git",
+                     "empty_inside_brackets": f"ssh://{ssh_user}[port-work:]/acme/demo.git",
+                     "scp_like_inside_brackets": f"{ssh_user}[port-work:99999]:acme/demo.git",
+                     "last_port": f"ssh://{ssh_user}port-work:65535/acme/demo.git",
+                     "port_zero": f"ssh://{ssh_user}port-work:0/acme/demo.git",
+                     "space_before_the_port": f"ssh://{ssh_user}port-work:%202222/acme/demo.git",
+                     "last_port_after_brackets": f"ssh://{ssh_user}[port-work]:65535/acme/demo.git"}
+        elsewhere = {"after_brackets": f"ssh://{ssh_user}[port-work]:99999/acme/demo.git",
+                     "colon_at_the_end": f"ssh://{ssh_user}port-work:/acme/demo.git"}
+        for name, url in {**on_github, **elsewhere}.items():
+            home.git("remote", "add", name, url)
+    with when("Claude pushes feature to each remote that git reaches at a GitHub host"):
+        calls_before = len(ssh_calls(home))
+        results = {name: bash(home, f"git push {name} feature") for name in on_github}
+    with then("each is judged as the push to GitHub it is, since ssh -G gets the host and port git hands ssh: a "
+              "port out of range or with more text after it stays in the host with no -p, and a port in range "
+              "comes off as -p"):
+        for name, result in results.items():
+            assert says(home, result, "no_report.md", short=feature[:7], branch="feature"), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [
+            *(["-G", "--", f"{ssh_user}{host}", URL_PUSH_COMMAND] for host in kept[:4]),
+            ["-G", "--", "us:er@port-work:2222", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}port-work:99999", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}port-work:", URL_PUSH_COMMAND],
+            ["-G", "--", f"{ssh_user}port-work:99999", SCP_PUSH_COMMAND],
+            ["-p", "65535", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-p", "0", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-p", " 2222", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND],
+            ["-p", "65535", "-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]]
+    with when("Claude pushes feature to the remotes where git drops the text after the colon"):
+        calls_before = len(ssh_calls(home))
+        dropped = {name: bash(home, f"git push {name} feature") for name in elsewhere}
+    with then("each runs, since git hands ssh plain port-work with no port, and ssh -G gets that same host"):
+        for name, result in dropped.items():
+            assert quiet(result), (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == [["-G", "--", f"{ssh_user}port-work", URL_PUSH_COMMAND]] * 2
+    with when("the remotes put a byte outside ASCII after the colon of the host, inside its brackets or after "
+              "them, and Claude pushes feature to each"):
+        outside_ascii = {"after_the_host": f"ssh://{ssh_user}port-work:%A02222/acme/demo.git",
+                         "inside_brackets": f"ssh://{ssh_user}[port-work:%A02222]/acme/demo.git",
+                         "after_brackets": f"ssh://{ssh_user}[port-work]:%A02222/acme/demo.git"}
+        for name, url in outside_ascii.items():
+            home.git("remote", "add", f"outside_ascii_{name}", url)
+        calls_before = len(ssh_calls(home))
+        stopped = {name: bash(home, f"git push outside_ascii_{name} feature") for name in outside_ascii}
+    with then("each stops as unreadable before ssh -G is asked, since git may read a port in that text differently "
+              "than the gate does"):
+        for name, result in stopped.items():
+            assert says(home, result, "unreadable_push.md",
+                        why="git may read the host of the remote's address differently than the gate does"), \
+                (name, result.reason)
+        assert ssh_calls(home)[calls_before:] == []
 
 
 def test_an_ssh_url_with_percent_escapes_is_judged_at_the_host_git_decodes_it_to(home):
