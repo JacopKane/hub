@@ -18,20 +18,27 @@ STEP = "{{step}} pr-tested"
 # Each message and the values the gate fills into it.
 GATE_MESSAGES = {
     "no_report.md": {"short", "branch"},
-    "failed.md": {"short", "which"},
-    "dirty.md": {"short"},
+    "failed.md": {"short", "which", "verb"},
+    "dirty.md": {"short", "verb"},
     "no_smoke.md": {"short"},
     "no_not_tested.md": {"short"},
     "texts_has_code.md": {"short", "file"},
+    "texts_base.md": {"short", "base", "into"},
+    "texts_base_missing.md": {"short", "base", "commit"},
     "unreadable_push.md": {"why"},
+    "git_word_unreadable.md": set(),
+    "push_config.md": {"why", "example"},
     "pr_head_unknown.md": {"number", "why"},
+    "branch_head_unknown.md": {"branch", "why"},
+    "github_head_differs.md": {"branch", "short", "commit"},
     "report_unreadable.md": {"short"},
     "near_miss.md": {"heading"},
     "slow.md": set(),
+    "other_repo.md": set(),
 }
 # The refusals a new test run or a new report fixes, so they name the step that records one.
 NAMES_THE_STEP = {"no_report.md", "failed.md", "dirty.md", "no_smoke.md", "no_not_tested.md",
-                  "texts_has_code.md", "report_unreadable.md"}
+                  "texts_has_code.md", "texts_base.md", "report_unreadable.md"}
 VALUE = re.compile(r"(?<!\{)\{([a-z_]+)\}(?!\})")
 
 
@@ -65,6 +72,12 @@ def test_the_gate_messages_are_one_line_each_fill_their_values_and_point_to_the_
         for words in ("draft or not", "scenarios", "smoke run", "outermost seam", f"{STEP} run",
                       f"{STEP} texts", "--not-tested", "--no-smoke", "How it was tested"):
             assert words in no_report, words
+    with then("the refusals for a failing or changed run name the verb that recorded the report, run or texts"):
+        for name in ("failed.md", "dirty.md"):
+            assert f"{STEP} {{verb}} again" in read(GATE_TEXT, name), name
+    with and_("the one for a changed run says the tree or HEAD changed while it ran, not that it started dirty"):
+        dirty = read(GATE_TEXT, "dirty.md")
+        assert "changed while" in dirty and "uncommitted" not in dirty
 
 
 def test_the_pr_body_asks_how_it_was_tested_and_the_rules_and_findings_say_what_was_not():
