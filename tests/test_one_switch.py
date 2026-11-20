@@ -3,6 +3,7 @@
 Every scenario runs the real engine, hubctl and the dispatcher as processes
 in a temporary HOME. Scenarios that feed hook input run once per tool.
 """
+import importlib.util
 import itertools
 import json
 import os
@@ -1195,6 +1196,16 @@ def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool
 CHANGED_WORD_NOTE_START = "The shell may change a word before gh or git gets it"
 
 
+def text_gate_handler():
+    """The text gate's own module, so a row can ask its marked reader for a line directly."""
+    sys.path.insert(0, os.path.join(PLUGIN, "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "public_text_gate_handler", os.path.join(PLUGIN, "parts", GATE, "handler.py"))
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+    return handler
+
+
 def says_changed_word_note(home, result):
     """Whether a refusal gives the note for a word the shell may change, without the general hint."""
     return (result.refused and result.findings == ["unreadable"] and CHANGED_WORD_NOTE_START in result.reason
@@ -1232,8 +1243,8 @@ def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, t
                "git commit {-F,private.txt}", "git commit -S$KEY -m Fix", "git tag -a v$VERSION -m Fix",
                "bash <<'SCRIPT'\ngh issue create --title {Fix,--body-file=private.md}\nSCRIPT",
                'gh issue comment 4 --body-file="~/notes.md"',
-               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"',
-               "\\{ (A=1); gh issue comment 4 --body hi", "\\{ (A=1); git commit -m Tidy"]
+               'gh api repos/acme/demo/issues/4/comments -F body=@"~/notes.md"']
+    split_apart = ["\\{ (A=1); gh issue comment 4 --body hi", "\\{ (A=1); git commit -m Tidy"]
     with when("Claude sends git or gh steps where the shell may change a word before git or gh gets it: a brace "
               "list, a pattern, a ~ or = the shells fill in or the gate reads apart from gh, zsh's \"$=T\" or "
               "\"$~T\", a variable outside quotes, or a variable in quotes that fills in a whole word of a gh step"):
@@ -1242,6 +1253,21 @@ def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, t
               "names the case instead of the general hint"):
         assert [(line, result.reason) for line, result in results.items()
                 if not says_changed_word_note(home, result)] == []
+    with when("Claude sends lines that the gate's two readings split into a different number of commands, as they "
+              "split an escaped { before a subshell today"):
+        counted = hooks(home, tool, split_apart, "counted")
+    with and_("the gate's marked reader is asked for a clean commit line, once with its own count of one command "
+              "and once with a count of two"):
+        handler = text_gate_handler()
+        same_count = handler.marked_reader("git commit -m Tidy", home.work, 1)
+        other_count = handler.marked_reader("git commit -m Tidy", home.work, 2)
+    with then("each line is unreadable with the note, and the reader gives the words for the same count but the "
+              "changed mark for every command at another count, so the count check holds whatever line makes "
+              "the readings differ"):
+        assert [(line, result.reason) for line, result in counted.items()
+                if not says_changed_word_note(home, result)] == []
+        assert same_count(0) == ["git", "commit", "-m", "Tidy"]
+        assert [other_count(0), other_count(1)] == [[handler.WORD_CHANGE]] * 2
     with when("Claude sends a title that a variable fills in, in quotes, and zsh's split form inside ${...}"):
         title = home.hook(tool, "PreToolUse", 'gh pr edit 5 --title "$T"', session="title")
         split = home.hook(tool, "PreToolUse", 'gh issue comment 4 --body "${=a}"', session="split")

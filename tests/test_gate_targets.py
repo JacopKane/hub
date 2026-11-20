@@ -8,10 +8,12 @@ pipe, a wrapped shell or a file that is not there, it refuses the command
 every time and asks for the text in a file.
 """
 import base64
+import importlib.util
 import os
 import shlex
+import sys
 
-from conftest import commit
+from conftest import PLUGIN, commit
 from steps import and_, given, then, when
 
 GATE = "public_text_gate"
@@ -20,6 +22,16 @@ GATE = "public_text_gate"
 def gate_text(home, name):
     with open(os.path.join(home.plugin, "parts", GATE, "text", name)) as handle:
         return handle.read().strip()
+
+
+def text_gate_handler():
+    """The text gate's own module, so a row can name the mark it puts in place of a heredoc."""
+    sys.path.insert(0, os.path.join(PLUGIN, "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "public_text_gate_handler", os.path.join(PLUGIN, "parts", GATE, "handler.py"))
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+    return handler
 
 
 def write(home, name, text):
@@ -206,7 +218,7 @@ def test_a_body_read_from_standard_input_is_the_heredoc_the_step_itself_reads(ho
             "file after the heredoc": "gh pr comment 3 -F - <<'A' < notes.md\nclean\nA",
             "cat into a pipe": "cat <<'A' | gh pr comment 3 -F -\nclean\nA",
             "dev stdin": "echo 'See /home/sam/a.md' | git commit -F /dev/stdin\ncat <<'B' > /dev/null\nclean\nB",
-            "heredoc number past the last": "gh pr comment 3 -F - __hub_heredoc_3__",
+            "heredoc number past the last": "gh pr comment 3 -F - " + text_gate_handler().PLACEHOLDER.format(3),
         }
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in commands.items()}
     with then("each is refused as unreadable, since the gate can not tell what the step reads"):
