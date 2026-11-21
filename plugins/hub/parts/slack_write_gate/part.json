@@ -13,6 +13,6 @@
     {"id": "server_pattern", "kind": "option", "type": "text", "check": "pattern", "default": "mcp__slack__.*",
      "does": "A pattern for the full tool names of your Slack server, such as mcp__slack__.*."},
     {"id": "read_tools_only", "kind": "behavior", "default": "on", "signals": ["refused"], "cost": "per use",
-     "does": "Only the read tools of the tested server version pass. Every other tool is refused, and so are unknown tools and broken input."}
+     "does": "Only the read tools of the tested server version and the two claude.ai Slack sign-in tools pass. Every other tool is refused, and so are unknown tools and broken input."}
   ]
 }
