@@ -15,12 +15,16 @@ SessionStart or UserPromptSubmit, whichever parts run.
 
 A second run of the same tool call (the same session, event and call id), as
 when two copies of the plugin load, waits for the first, returns its stored
-answer and logs nothing. After hubctl uninstall it does nothing at all. At
+answer and logs nothing. When the first still holds the call's lock after
+CALL_LOCK_WAIT seconds, the second run ends in an error, as below. After hubctl uninstall it does nothing at all. At
 SessionStart it also does its own work, see session_start. An error goes to
-errors.log in the state folder. Then a call that touches hub itself is refused, because self_protection
-could not check it, and so is a public step, because the gate could not check it. In Claude Code, a Slack
-call off the Slack gate's read list is refused, and a Sentry call off the Sentry gate's read list asks the
-user first, even when those gates are off. Every other call runs, so a broken hub never stops ordinary work.
+errors.log in the state folder. When hub can not store an answer, that answer still counts. After any other
+error, a call that touches hub itself is refused, because self_protection could not check it, and so is a
+public step, because the gate could not check it. In Claude Code, a Slack call off the Slack gate's read
+list is refused, and a Sentry call off the Sentry gate's read list asks the user first, even when those gates
+are off. A builder or reviewer call is refused while a review loop file holds a stop or can not be read, even
+when the review loop's handler can not load. A reviewer's hand-back that the loop would record is refused
+too, and its end is blocked once, so a failed review is never lost. Every other call runs, so a broken hub never stops ordinary work.
 """
 import contextlib
 import hashlib
@@ -36,10 +40,11 @@ LIB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
 
-from hub import chat_notices, files, resolve, signals, uninstall  # noqa: E402
+from hub import chat_notices, files, resolve, settings, signals, uninstall  # noqa: E402
 
 CALLS = "calls"
 CALL_AGE = 24 * 3600  # stored answers older than this are removed
+CALL_LOCK_WAIT = 5  # seconds, so a lock that stays held ends in an error well inside the 15 s hook time
 GATE = "public_text_gate"
 SELF_PROTECTION = "self_protection"
 # Used only when self_protection itself can not load: a call that names the switch step, a marker or a hub file.
@@ -50,6 +55,14 @@ BROKEN = ("hub could not read its settings or parts, so it stopped this public s
           "Fix the error below, then send the command again.")
 BROKEN_SELF = ("hub could not read its settings or parts, so it stopped this call, which touches hub itself. "
                "Ask the user to fix hub.")
+REVIEW_LOOP = "review_loop"
+# Used only when the review loop's own text can not be read.
+BROKEN_REVIEW_LOOP = ("hub could not read its settings or parts, so it stopped this builder or reviewer call, "
+                      "because a review loop may be stopped. Fix the error below, then start the call again.")
+HAND_BACK_HELD = ("hub could not read its settings or parts, so it could not record this review and stopped this "
+                  "hand-back. A failed review must count. Hand back again once the error below is fixed.")
+END_HELD = ("hub could not read its settings or parts, so it could not record this review and kept the agent going "
+            "once. A failed review must count. End again once the error below is fixed.")
 # Each write gate for MCP tools, with the word in its server names and its answer when hub fails before
 # the gate can decide. A call whose server name has that word gets that answer, unless the gate's read
 # list shows it is a read.
@@ -268,12 +281,16 @@ def answer_for(event, hook_input, tool):
     if key is None:
         return dict(handle_all(event, hook_input, parts, flags), **extra)
     stored_path = files.state_path(os.path.join(CALLS, key + ".json"))
-    with files.locked(os.path.join(CALLS, key + ".lock")):
+    with files.locked(os.path.join(CALLS, key + ".lock"), wait=CALL_LOCK_WAIT):
         stored = files.read_json(stored_path)
         if stored is not None:
             return stored
         result = handle_all(event, hook_input, parts, flags)
-        files.write_json(stored_path, result)
+        try:
+            files.write_json(stored_path, result)
+        except Exception:  # noqa: BLE001  the parts' answer stands, so a refusal they made is never dropped
+            log_error()
+            return result
     if int.from_bytes(os.urandom(1), "big") < 8:  # about one run in 32
         prune_calls(os.path.dirname(stored_path))
     return result
@@ -345,17 +362,162 @@ def self_protection_refusal(hook_input, raw):
         return BROKEN_SELF if ROUGH_HUB.search(text or "") else None
 
 
+def listed_names(values):
+    """The agent names in these flag values, skipping any value that is not a list of names."""
+    return {name for value in values if isinstance(value, list) for name in value if isinstance(name, str)}
+
+
+def review_loop_set_names(ids):
+    """The agent names set for these review loop ids in resolved.json, or none when it can not be read."""
+    try:
+        with open(files.state_path(resolve.RESOLVED), encoding="utf-8") as handle:
+            flags = json.load(handle)["tools"]["claude_code"]["flags"]
+        values = [flags.get(f"{REVIEW_LOOP}.{child_id}", {}).get("value") for child_id in ids]
+    except Exception:  # noqa: BLE001
+        return set()
+    return listed_names(values)
+
+
+def review_loop_repo_names(ids, cwd):
+    """The agent names that the repo's project and local settings files add for these review loop ids.
+
+    resolved.json holds only the user file, and lists add up across scopes, so a repo file can add a name. It
+    raises when one of these files exists and can not be read.
+    """
+    entries = [settings.entry(settings.read(settings.scope_path(scope, cwd)), f"{REVIEW_LOOP}.{child_id}")
+               for scope in ("project", "local") for child_id in ids]
+    return listed_names([entry.get("value") for entry in entries if entry])
+
+
+def review_loop_agents(ids=("reviewers", "builders"), cwd=None):
+    """The review loop's agent names for these ids, from its part.json defaults, the values set in resolved.json
+    and the names the repo's settings files add.
+
+    Without resolved.json, only the defaults and the repo's names. None when part.json or a repo settings file can
+    not be read, so every agent counts.
+    """
+    try:
+        with open(os.path.join(files.PARTS_DIR, REVIEW_LOOP, "part.json"), encoding="utf-8") as handle:
+            children = json.load(handle)["children"]
+        defaults = {name for child in children if child["id"] in ids for name in child["default"]}
+        repo_names = review_loop_repo_names(ids, cwd)
+    except Exception:  # noqa: BLE001
+        return None
+    return defaults | review_loop_set_names(ids) | repo_names
+
+
+def rough_stop_in(path):
+    """Whether a review loop file, read without its handler, does not parse or holds a stop."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            state = json.load(handle)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return not isinstance(state, dict) or bool(state.get("stop"))
+
+
+def rough_review_loop_hold(folder):
+    """Used only when the review loop's handler can not check. The first file that may hold a stop, or None."""
+    try:
+        names = sorted(name for name in os.listdir(folder) if name.endswith(".json"))
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return folder
+    return next((path for path in (os.path.join(folder, name) for name in names) if rough_stop_in(path)), None)
+
+
+def review_loop_hold():
+    """The review loop file that holds a stop or can not be read, or None when no stop can be open."""
+    folder = files.state_path(REVIEW_LOOP)
+    try:
+        part = load_handler(REVIEW_LOOP)
+        stopped = [state for state in part.all_states() if state.get("stop")]
+    except Exception as error:  # noqa: BLE001
+        unreadable = getattr(error, "path", None)
+        return unreadable if isinstance(unreadable, str) else rough_review_loop_hold(folder)
+    return part.state_path(stopped[0]["area"]) if stopped else None
+
+
+def review_loop_text(path):
+    """The review loop's own text for a file it can not read, or a short one when that text can not be read."""
+    try:
+        with open(os.path.join(files.PARTS_DIR, REVIEW_LOOP, "text", "state_unreadable.md"),
+                  encoding="utf-8") as handle:
+            text = handle.read().strip().replace("{path}", path)
+    except OSError:
+        text = BROKEN_REVIEW_LOOP
+    return f"{text} ({REVIEW_LOOP}.stop_after)"
+
+
+def review_loop_failure(hook_input):
+    """A refusal for a builder or reviewer call while a review loop stop may be open, or None."""
+    tool_input = hook_input.get("tool_input") if isinstance(hook_input, dict) else None
+    if not isinstance(tool_input, dict) or hook_input.get("tool_name") != "Agent":
+        return None
+    name = str(tool_input.get("subagent_type") or "").rsplit(":", 1)[-1]
+    agents = review_loop_agents(cwd=hook_input.get("cwd"))
+    if agents is not None and name not in agents:  # without the names, every agent call counts
+        return None
+    path = review_loop_hold()
+    return None if path is None else review_loop_text(path)
+
+
+def review_loop_records(hook_input):
+    """Whether the review loop would record this reviewer's hand-back or end, so hub holds it while it fails.
+
+    Any error counts as yes.
+    """
+    name = str(hook_input.get("agent_type") or "").rsplit(":", 1)[-1]
+    reviewers = review_loop_agents(("reviewers",), hook_input.get("cwd"))
+    if (reviewers is not None and name not in reviewers) or not hook_input.get("agent_id"):
+        return False
+    try:
+        part = load_handler(REVIEW_LOOP)
+        parsed = part.list_of_brief(part.agent_brief(hook_input))
+        return bool(parsed) and not part.ledger.agent_of(part.read_state(parsed["area"]),
+                                                         str(hook_input["agent_id"]))["counted"]
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def review_loop_end_failure(event, hook_input):
+    """The text for a reviewer's hand-back, or its first end, that the review loop would record, or None."""
+    if not isinstance(hook_input, dict):
+        return None
+    if event == "PreToolUse" and hook_input.get("tool_name") == "SubagentHandback":
+        text = HAND_BACK_HELD
+    elif event == "SubagentStop" and not hook_input.get("stop_hook_active"):
+        text = END_HELD  # only once, so no agent is kept going without end
+    else:
+        return None
+    return f"{text} ({REVIEW_LOOP}.stop_after)" if review_loop_records(hook_input) else None
+
+
 def failure(event, hook_input, raw, error, tool="claude_code"):
-    """The neutral answer after an error: a refusal for a call that touches hub or a public step, a write
-    gate's answer, else nothing."""
+    """The neutral answer after an error.
+
+    It refuses a call that touches hub, a public step, a builder or reviewer call that a review loop stop may
+    hold, and a reviewer's hand-back the review loop would record. At SubagentStop it keeps that reviewer going
+    once. A call a write gate checks gets that gate's answer, and every other call gets nothing.
+    """
+    detail = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    if event == "SubagentStop":
+        ended = review_loop_end_failure(event, hook_input) if tool == "claude_code" else None
+        return {"refusal": f"{ended}\n{detail}"} if ended else None
     if event != "PreToolUse":
         return None
-    detail = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
     own = self_protection_refusal(hook_input, raw)
     if own:
         return {"refusal": f"{own}\n{detail}"}
     if is_public_step(hook_input, raw):
         return {"refusal": f"{BROKEN}\n{detail}"}
+    held = (review_loop_failure(hook_input) or review_loop_end_failure(event, hook_input)) \
+        if tool == "claude_code" else None
+    if held:
+        return {"refusal": f"{held}\n{detail}"}
     gate = write_gate_failure(hook_input) if tool == "claude_code" else None
     if gate is None:
         return None
@@ -381,7 +543,8 @@ def main(argv):
         raw = sys.stdin.read()
         hook_input = json.loads(raw)
         output = claude_output(event, run(event, hook_input))
-    except Exception as error:  # a broken hub stops only public steps and the calls a write gate would check
+    except Exception as error:  # a broken hub stops only public steps, calls that touch hub, a write gate's
+        # calls, calls a review loop stop may hold and reviews it would record
         log_error()
         output = claude_output(event, failure(event, hook_input, raw, error))
     if output:

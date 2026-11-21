@@ -393,10 +393,16 @@ def tool_marker(home, tool):
 
 def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_part_names(home):
     with given("hub is installed as it ships, where the gate names Bash, self_protection names Bash, Delete, "
-               "Edit and Write, and tier_rule, which names Agent, is off"):
+               "Edit and Write, the review loop names Agent and SubagentHandback, and tier_rule is off"):
         home.install()
+    with then("apply marks those six tools, with the review loop on Agent and SubagentHandback"):
+        assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == [
+            "Agent", "Bash", "Delete", "Edit", "SubagentHandback", "Write"]
+        assert [tool_marker(home, tool) for tool in ("Agent", "SubagentHandback")] == [["review_loop"]] * 2
+    with when("the user turns the review loop off in /hub, so no running part names Agent"):
+        home.hubctl_from_mod("off", "review_loop")
         group = EveryToolGroup(home, "PreToolUse", 1)
-    with then("apply marks those four tools, and no other"):
+    with then("apply marks only the four tools of the gate and self_protection"):
         assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == ["Bash", "Delete", "Edit", "Write"]
         assert tool_marker(home, "Agent") is None
         assert [tool_marker(home, tool) for tool in ("Delete", "Edit", "Write")] == [["self_protection"]] * 3

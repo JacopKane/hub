@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import tempfile
+import time
 import unicodedata
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -181,13 +182,35 @@ def read_lines(path):
         return []
 
 
+LOCK_TRY_GAP = 0.05  # seconds between tries while a lock with a wait is held
+
+
+def take_lock(handle, wait):
+    """Take the lock, waiting for it when wait is None, else for at most wait seconds, then raise TimeoutError."""
+    if wait is None:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"{handle.name} stayed locked for {wait} s") from None
+            time.sleep(LOCK_TRY_GAP)
+
+
 @contextlib.contextmanager
-def locked(name="settings.lock"):
-    """Hold one lock file in the state folder for the length of the block."""
+def locked(name="settings.lock", wait=None):
+    """Hold one lock file in the state folder for the length of the block.
+
+    With wait, a lock another process holds longer than wait seconds raises TimeoutError.
+    """
     path = state_path(name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        take_lock(handle, wait)
         try:
             yield
         finally:
