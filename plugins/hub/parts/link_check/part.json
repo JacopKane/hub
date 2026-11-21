@@ -7,7 +7,7 @@
   "offer_when": "true",
   "runs_in": ["claude_code", "cursor"],
   "handlers": {"Stop": {"tools": []}},
-  "does": "Sends a reply back once when it names a PR, issue or ticket without a link, so every reference can be opened.",
+  "does": "Sends a reply back once when it names a PR, issue or ticket without a link, or a local file the terminal can not open, so every reference can be opened.",
   "children": [
     {"id": "prs", "kind": "behavior", "default": "on", "signals": ["sent_back"], "cost": "per use",
      "does": "Finds PR numbers such as #123 or PR 123."},
@@ -26,6 +26,23 @@
         {"id": "skip", "kind": "option", "type": "list",
          "default": ["UTF", "SHA", "ISO", "AES", "RSA", "TLS", "SSL", "HTTP", "IPV", "MP", "ES"],
          "does": "Prefixes that are never tickets, such as UTF in UTF-8."}
+      ]
+    },
+    {
+      "id": "local_paths",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/local_paths.md",
+      "signals": ["sent_back"],
+      "cost": "per use",
+      "does": "Finds local files that do not open with a click, such as a path that starts with ~/, ./ or a home folder, or a name such as shot.png with no folder.",
+      "children": [
+        {"id": "folders", "kind": "option", "type": "list",
+         "default": ["scratchpad", "Desktop", "Documents", "Downloads", "Library"],
+         "does": "Folder names that mark a path as relative when it starts with one, such as Desktop in Desktop/report.pdf."},
+        {"id": "media", "kind": "option", "type": "list",
+         "default": ["png", "jpg", "jpeg", "gif", "mp4", "mov", "pdf", "pptx", "docx", "xlsx"],
+         "does": "File endings that mark a name with no folder, such as shot.png, as a local file."}
       ]
     }
   ]

@@ -135,7 +135,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | hub_style | An output style with a status block, short replies and linked sources | off | Claude Code, Cursor | "turn on the hub style" |
 | humanize | Hands writing work to your own writing skill, or says how to add one | off | Claude Code, Cursor | "turn on humanize" |
 | pr_gif | A skill for a GIF or an image in a PR body or comment. It records the real product, checks each frame for private data and embeds it with a caption | on | Claude Code, Cursor | "turn off pr_gif" |
-| link_check | Sends a reply back once when it names a PR, issue or ticket without a link | off | Claude Code, Cursor | "turn on the link check" |
+| link_check | Sends a reply back once when it names a PR, issue or ticket without a link, or a local file the terminal can not open | off | Claude Code, Cursor | "turn on the link check" |
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |
 | pr | Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR, tests before each push and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
