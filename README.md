@@ -146,6 +146,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | planner | An agent for plans and specs that writes only the plan file (Opus, high effort) | off | Claude Code, Cursor | "turn on planner" |
 | critic | A read-only agent for reviews where a miss is expensive (Opus, high effort) | off | Claude Code, Cursor | "turn on critic" |
 | tier_rule | Start text that says which agent tier fits a job | off | Claude Code, Cursor | "turn on the tier rule" |
+| review_loop | Planned, not in this version yet. Keeps a build and review loop on a written list, and stops it after two failed reviews of one area until you decide | off | Claude Code, Cursor (texts only) | "turn on the review loop" |
 | context_budget | Tells a chat or an agent when its context gets big | off | Claude Code | "turn on the context budget" |
 | handback_cap | Keeps an agent's report under a word cap | off | Claude Code | "turn on the hand-back cap" |
 | live_notes | Gives each agent the chat's live notes file, so new rules reach it | off | Claude Code | "turn on live notes" |

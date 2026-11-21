@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "review_loop",
+  "family": "tiers",
+  "kind": "rule",
+  "stage": "beta",
+  "default": "off",
+  "privacy": "guard",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "Keeps a build and review loop on a written acceptance list, and stops it after two failed reviews of one area until the user decides. It is not a sandbox.",
+  "children": [
+    {"id": "reviewers", "kind": "option", "type": "list", "default": ["critic", "reviewer"],
+     "does": "Agent names whose briefs need an acceptance list and whose reports end with verdict lines."},
+    {"id": "builders", "kind": "option", "type": "list", "default": ["builder", "worker"],
+     "does": "Agent names that a stop holds when their brief names the stopped area, or names no list in the chat that ran the loop."},
+    {"id": "write_list_first", "kind": "instruction", "default": "on", "text": "text/write_list_first.md",
+     "cost": "start text",
+     "does": "Tells the main chat to write the acceptance list before the build and name it in every brief."},
+    {"id": "threat_model", "kind": "instruction", "default": "on", "text": "text/threat_model.md",
+     "cost": "start text", "does": "Tells the main chat to say which threats are in scope and which are out."},
+    {"id": "stop_means_ask", "kind": "instruction", "default": "on", "text": "text/stop_means_ask.md",
+     "cost": "start text", "does": "Tells the main chat to ask the user what to do when hub stops a loop."},
+    {"id": "require_list", "kind": "behavior", "default": "on", "runs_in": ["claude_code"], "cost": "per use",
+     "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
+     "does": "Stops a review call whose brief names no acceptance list and gives no reason for having none."},
+    {
+      "id": "verdict_check",
+      "kind": "behavior",
+      "default": "on",
+      "runs_in": ["claude_code"],
+      "cost": "per use",
+      "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
+      "does": "Sends a review back when its report under a list has no valid verdict lines.",
+      "children": [
+        {"id": "tries", "kind": "option", "type": "number", "default": 2, "range": [1, 5],
+         "does": "How many times one report is sent back before hub counts it as a failed review."}
+      ]
+    },
+    {
+      "id": "stop_after",
+      "kind": "behavior",
+      "default": "on",
+      "runs_in": ["claude_code"],
+      "cost": "per use",
+      "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
+      "does": "Stops the next build or review on an area after a number of failed reviews in a row, until the user decides.",
+      "children": [
+        {"id": "rounds", "kind": "option", "type": "number", "default": 2, "range": [1, 10],
+         "does": "How many failed reviews in a row stop the loop."}
+      ]
+    },
+    {
+      "id": "same_area",
+      "kind": "behavior",
+      "default": "on",
+      "runs_in": ["claude_code"],
+      "cost": "per use",
+      "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
+      "does": "Warns the next builder when the failures of one review cluster in one function.",
+      "children": [
+        {"id": "findings", "kind": "option", "type": "number", "default": 3, "range": [2, 10],
+         "does": "How many failures in one function in one review count as a cluster."}
+      ]
+    },
+    {"id": "serious_outside", "kind": "behavior", "default": "on", "runs_in": ["claude_code"], "cost": "per use",
+     "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
+     "does": "Tells the main chat to ask the user at once about a High or Critical problem outside the list. Nothing waits for the answer."}
+  ]
+}

@@ -1,0 +1,1 @@
+In each acceptance list, say which threats count and which do not, such as a user who clicks twice by accident in scope and someone who sets out to misuse the feature out of scope. A review judges only the threats in scope, so a finding out of scope never fails it.
