@@ -146,6 +146,10 @@
       "type": "string",
       "description": "When true, a part that is off is offered."
     },
+    "never_offered": {
+      "type": "boolean",
+      "description": "When true, hub never offers the part. It starts on for every user who did not turn it off, and an open offer for it is dropped."
+    },
     "handlers": {
       "type": "object",
       "description": "The events the part's handler.py takes, with the tools it watches.",

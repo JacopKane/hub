@@ -12,7 +12,9 @@ list, such as the private words, adds up over every scope.
 
 Apply also keeps seen.json. A part that is new in an update goes to
 offers.json and stays off. A new behavior of a part that is on takes its
-default and goes to update-summary.json.
+default and goes to update-summary.json. A part marked never_offered is
+never offered, and apply drops an open offer for it, so it takes its
+default for every user who did not turn it off.
 """
 import calendar
 import os
@@ -139,7 +141,7 @@ def resolve(tree, layer_list, profile, offers=()):
         facts = facts_for(tool, profile)
         values, records = {}, {}
         for node in tree.nodes.values():
-            if node.parent is None and node.id in offers:
+            if node.parent is None and node.id in offers and not never_offered(tree, node.id):
                 value, by, scope = "off", "offer", "shipped"
             else:
                 value, by, scope = default_value(node, profile, facts), "default", "shipped"
@@ -199,12 +201,18 @@ def resolve(tree, layer_list, profile, offers=()):
     return result
 
 
+def never_offered(tree, part_id):
+    """Whether a part starts on for everyone who did not turn it off, so hub never offers it."""
+    return part_id in tree.nodes and tree.nodes[part_id].data.get("never_offered") is True
+
+
 def new_offers(tree, seen, offered):
-    """Ids of the parts an apply offers now: new since seen.json, not offered yet and not beta."""
+    """Ids of the parts an apply offers now: new since seen.json, not offered yet, not beta and not never_offered."""
     if seen is None:
         return []
     return [part.id for part in tree.parts
-            if part.id not in seen["parts"] and part.id not in offered and tree.nodes[part.id].stage != tree_module.BETA]
+            if part.id not in seen["parts"] and part.id not in offered and tree.nodes[part.id].stage != tree_module.BETA
+            and not never_offered(tree, part.id)]
 
 
 def in_memory(cwd=None):
@@ -237,6 +245,7 @@ def apply(tree=None, write=True):
     summary_path = files.state_path("update-summary.json")
     seen = files.read_json(seen_path)
     offers = files.read_json(offers_path, {"offers": []})
+    offers = {"offers": [offer for offer in offers["offers"] if not never_offered(tree, offer["id"])]}
     summary = files.read_json(summary_path, {"changes": []})
     part_ids = [part.id for part in tree.parts]
     child_ids = [node.id for node in tree.nodes.values() if node.parent is not None]
