@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 from conftest import DASH, REPO, load_fixture
 from steps import and_, given, then, when
@@ -269,6 +270,62 @@ def test_link_check_sends_a_reply_back_once_for_a_bare_pr_number(home):
         assert "APP-42" in reason and "#123" not in reason
     with and_("a common upper-case word with a number is not a ticket"):
         assert reply_ends(home, "It reads UTF-8 and checks SHA-256.") == ""
+
+
+def test_link_check_sends_a_reply_back_once_for_a_local_file_the_terminal_can_not_open(home):
+    with given("link_check is on, with its local_paths check on by default"):
+        home.install()
+        home.hubctl("on", "link_check")
+    with when("a reply names files from the home folder, a scratch folder and a home subfolder"):
+        reason = reply_ends(home, "I saved the plan to ~/notes/plan.md and the log to scratchpad/build/tests.log. "
+                                  "The report is in Desktop/report.pdf.")
+    with then("link_check sends it back once, names each path and asks for full paths"):
+        for path in ("~/notes/plan.md", "scratchpad/build/tests.log", "Desktop/report.pdf"):
+            assert path in reason, reason
+        assert "full path" in reason and reason.endswith("(link_check)")
+        assert reply_ends(home, "I saved the plan to ~/notes/plan.md.", active=True) == ""
+    with when("a reply names a screenshot by its file name only, and a path in inline code"):
+        reason = reply_ends(home, "See shot.png, and the config is at `~/.config/app/app.json`.")
+    with then("both go back in the reply's order, because neither opens with a click"):
+        assert "shot.png" in reason and "~/.config/app/app.json" in reason, reason
+        assert reason.index("shot.png") < reason.index("~/.config/app/app.json"), reason
+    with when("a reply names a home path after a full path with spaces, then a screenshot, on one line"):
+        reason = reply_ends(home, "I moved /tmp/old notes to ~/notes/new.md and took shot.png")
+    with then("the home path and the screenshot both go back, and the full path does not"):
+        assert "~/notes/new.md" in reason and "shot.png" in reason and "/tmp" not in reason, reason
+    with when("the reply gives every file as a full path, even one with spaces in its name"):
+        absolute = reply_ends(home, "I saved the plan to /home/sam/notes/plan.md and the shot to "
+                                    "/Users/sam/Desktop/Screen Shot 2026-11-20 at 10.00.png.")
+    with then("nothing is said"):
+        assert absolute == ""
+    with and_("a full path with a home folder name inside it, after a space, is not read as a relative path"):
+        assert reply_ends(home, "It synced to /Users/sam/Library/Mobile Documents/com~apple~CloudDocs/plan.pdf.") == ""
+    with and_("the home folder sign alone, a web page and a table file named in prose are not local files"):
+        assert reply_ends(home, "Every tool keeps its files under ~/ on each machine.") == ""
+        assert reply_ends(home, "Edit index.html and export data.csv.") == ""
+    with and_("a path inside a code block, a URL and a link are not local files"):
+        assert reply_ends(home, "Run this:\n\n```\ncat ~/notes/plan.md > scratchpad/out.csv\n```\n") == ""
+        assert reply_ends(home, "The page is https://example.com/files/shot.png and "
+                                "[the chart](https://example.com/chart.png) is up.") == ""
+    with and_("a very long reply full of slashes is read well inside the hook's 15 seconds"):
+        started = time.monotonic()
+        assert reply_ends(home, " /x" * 40000) == ""
+        assert time.monotonic() - started < 10
+    with when("a bare PR number and a home path are in one reply"):
+        reason = reply_ends(home, "The fix is in #123, and the notes are in ~/notes/fix.md.")
+    with then("one send-back names both"):
+        assert "#123" in reason and "~/notes/fix.md" in reason, reason
+    with when("the user adds a folder of their own to link_check.local_paths.folders"):
+        home.hubctl("set", "link_check.local_paths.folders", "Desktop", "Projects")
+    with then("a path from that folder goes back, and a folder taken off the list passes"):
+        assert "Projects/app/README.md" in reply_ends(home, "It is in Projects/app/README.md.")
+        assert reply_ends(home, "The draft is in Documents/draft.md.") == ""
+    with when("link_check.local_paths is off"):
+        home.hubctl("off", "link_check.local_paths")
+    with then("local paths and file names pass, and a bare PR number still goes back"):
+        assert reply_ends(home, "I saved it to ~/notes/plan.md and shot.png.") == ""
+        reason = reply_ends(home, "The fix is in #123, see ~/notes/fix.md.")
+        assert "#123" in reason and "~/notes/fix.md" not in reason, reason
 
 
 def test_cursor_gets_the_style_as_rule_text(home):
