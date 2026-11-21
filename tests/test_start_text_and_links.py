@@ -480,6 +480,144 @@ def test_the_dispatcher_asks_for_a_skill_reload_after_apply_changed_a_skill_link
         assert "reloadSkills" not in json.dumps(third)
 
 
+def test_a_built_skill_asks_for_a_reload_only_when_its_built_text_changes(home):
+    with given("a skill part whose text names hub's step command, so hub builds a copy of it, switched on"):
+        shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
+        add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "on",
+                                 "does": "A fixture skill."},
+                 {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n",
+                  "skill/references/more.md": "More notes.\n"})
+        home.hubctl("apply")
+        session_start(home)
+        link = os.path.join(home.root, ".claude", "skills", "hub-notes")
+        assert os.readlink(link) != os.path.join(home.plugin, "parts", "notes", "skill")
+    with when("apply runs again with nothing changed, and a session starts"):
+        home.hubctl("apply")
+        _, quiet = session_start(home)
+    with then("the session start asks for nothing"):
+        assert "reloadSkills" not in json.dumps(quiet)
+    with when("the shipped text changes, apply runs and a session starts"):
+        with open(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"), "a") as handle:
+            handle.write("\nKeep them short.\n")
+        home.hubctl("apply")
+        _, changed = session_start(home)
+    with then("the dispatcher asks for a reload, and the built copy holds the new text"):
+        assert changed["hookSpecificOutput"]["reloadSkills"] is True
+        with open(os.path.join(link, "SKILL.md")) as handle:
+            assert "Keep them short." in handle.read()
+        with open(os.path.join(link, "references", "more.md")) as handle:
+            assert handle.read() == "More notes.\n"
+    with when("a reference file changes, apply runs and a session starts"):
+        with open(os.path.join(home.plugin, "parts", "notes", "skill", "references", "more.md"), "w") as handle:
+            handle.write("Even more notes.\n")
+        home.hubctl("apply")
+        _, reference = session_start(home)
+    with then("the dispatcher asks for a reload again"):
+        assert reference["hookSpecificOutput"]["reloadSkills"] is True
+    shipped_text = read(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"))
+    with when("the user deletes the built copy, apply runs and a session starts"):
+        shutil.rmtree(os.path.realpath(link))
+        home.hubctl("apply")
+        _, deleted = session_start(home)
+    with then("apply builds the copy again, and the dispatcher asks for a reload"):
+        assert deleted["hookSpecificOutput"]["reloadSkills"] is True
+        assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
+        assert read(os.path.join(link, "references", "more.md")) == "Even more notes.\n"
+    with and_("the apply after that leaves the new copy alone"):
+        home.hubctl("apply")
+        assert "reloadSkills" not in json.dumps(session_start(home)[1])
+    with when("the user edits the built copy by hand, apply runs and a session starts"):
+        with open(os.path.join(link, "SKILL.md"), "a") as handle:
+            handle.write("\nMy own line.\n")
+        home.hubctl("apply")
+        _, edited = session_start(home)
+    with then("apply puts the built text back, and the dispatcher asks for a reload"):
+        assert edited["hookSpecificOutput"]["reloadSkills"] is True
+        assert "My own line." not in read(os.path.join(link, "SKILL.md"))
+        assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
+    with and_("the apply after that leaves the copy alone"):
+        home.hubctl("apply")
+        assert "reloadSkills" not in json.dumps(session_start(home)[1])
+    with and_("the shipped skill was never touched"):
+        assert read(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md")) == shipped_text
+
+
+def test_an_apply_that_stops_after_it_rebuilt_a_skill_still_asks_for_a_reload(home):
+    stop = os.path.join(home.root, "stop")
+    with given("a built skill is installed and a session has started"):
+        shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
+        add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "on",
+                                 "does": "A fixture skill."},
+                 {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n"})
+        home.hubctl("apply")
+        session_start(home)
+        link = os.path.join(home.root, ".claude", "skills", "hub-notes")
+    with and_("swapping in the skill's link stops apply with an error"):
+        os.makedirs(stop)
+        with open(os.path.join(stop, "sitecustomize.py"), "w") as handle:
+            handle.write(
+                "import os\n"
+                "real_replace = os.replace\n"
+                "def replace(source, target, *args, **kwargs):\n"
+                "    if str(target).endswith('hub-notes'):\n"
+                "        raise OSError('stopped')\n"
+                "    return real_replace(source, target, *args, **kwargs)\n"
+                "os.replace = replace\n")
+        home.env["PYTHONPATH"] = stop
+    with when("the shipped text changes and apply stops at that step"):
+        with open(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"), "a") as handle:
+            handle.write("\nKeep them short.\n")
+        assert home.hubctl("apply", check=False).returncode != 0
+        del home.env["PYTHONPATH"]
+    with then("the built copy already holds the new text"):
+        assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
+    with when("a session starts"):
+        _, after_the_stop = session_start(home)
+    with then("the dispatcher asks for a reload, because the copy changed before the stop"):
+        assert after_the_stop["hookSpecificOutput"]["reloadSkills"] is True
+    with when("apply runs again without the stop, and a session starts"):
+        home.hubctl("apply")
+        _, settled = session_start(home)
+    with then("nothing is left to rebuild, so the dispatcher asks for nothing"):
+        assert "reloadSkills" not in json.dumps(settled)
+
+
+def test_turning_off_a_skill_that_stops_while_its_link_goes_still_asks_for_a_reload(home):
+    stop = os.path.join(home.root, "stop")
+    with given("a built skill is installed and a session has started"):
+        shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
+        add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "on",
+                                 "does": "A fixture skill."},
+                 {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n"})
+        home.hubctl("apply")
+        session_start(home)
+        link = os.path.join(home.root, ".claude", "skills", "hub-notes")
+        assert os.path.islink(link)
+    with and_("deleting the skill's link stops hub with an error"):
+        os.makedirs(stop)
+        with open(os.path.join(stop, "sitecustomize.py"), "w") as handle:
+            handle.write(
+                "import os\n"
+                "real_unlink = os.unlink\n"
+                "def unlink(path, *args, **kwargs):\n"
+                "    if str(path).endswith('hub-notes') and os.path.islink(path):\n"
+                "        raise OSError('stopped')\n"
+                "    return real_unlink(path, *args, **kwargs)\n"
+                "os.unlink = unlink\n")
+        home.env["PYTHONPATH"] = stop
+    with when("the user turns the skill off and hub stops at that step"):
+        assert home.hubctl("off", "notes", check=False).returncode != 0
+        del home.env["PYTHONPATH"]
+    with then("the link is still there, and the mark the next session start reads is already left"):
+        assert os.path.islink(link)
+        assert os.path.exists(os.path.join(home.state, "reload-skills"))
+    with when("a session starts"):
+        _, after_the_stop = session_start(home)
+    with then("the dispatcher asks for a reload, and the skill's link is gone"):
+        assert after_the_stop["hookSpecificOutput"]["reloadSkills"] is True
+        assert not os.path.lexists(link)
+
+
 def test_apply_makes_the_agents_folder_and_the_doctor_says_a_new_session_is_needed(home):
     with given("a HOME with no ~/.claude/agents"):
         assert not os.path.exists(os.path.join(home.root, ".claude", "agents"))

@@ -402,22 +402,62 @@ def copy_entry(kind, part, path, shipped, built, changed):
     return entry
 
 
+def filled_in_skill_files(entry):
+    """{path in a built skill folder: its filled-in text}, for SKILL.md and each changed reference file."""
+    return dict(entry.get("built_files") or {}, **{"SKILL.md": entry["built"]})
+
+
 def write_built(entry):
-    """Write a built copy. Returns whether its text changed."""
+    """Write a built copy, replacing whatever is in its place."""
     target = entry["target"]
     if entry["kind"] in ("agent", "style"):
-        if files.read_text(target) == entry["built"]:
-            return False
         files.write_text(target, entry["built"])
-        return True
+        return
     if os.path.isdir(target):
         shutil.rmtree(target)
     shutil.copytree(entry["shipped"], target, symlinks=True)
-    for relative, text in dict(entry.get("built_files") or {}, **{"SKILL.md": entry["built"]}).items():
+    for relative, text in filled_in_skill_files(entry).items():
         path = os.path.join(target, relative)
         os.unlink(path)
         files.write_text(path, text)
-    return True
+
+
+def built_copy_matches(entry):
+    """Whether a built copy already holds what write_built would write."""
+    if entry["kind"] in ("agent", "style"):
+        return files.read_text(entry["target"]) == entry["built"]
+    return built_folder_matches(entry)
+
+
+def folder_listing(root):
+    """{path in the folder: ("link", its target) or ("file", its bytes)} for every file and link under root."""
+    found = {}
+    for folder, names, file_names in os.walk(root):
+        for name in names + file_names:
+            path = os.path.join(folder, name)
+            relative = os.path.relpath(path, root)
+            if os.path.islink(path):
+                found[relative] = ("link", os.readlink(path))
+            elif os.path.isfile(path):
+                with open(path, "rb") as handle:
+                    found[relative] = ("file", handle.read())
+    return found
+
+
+def built_folder_matches(entry):
+    """Whether a built skill folder already holds what write_built would write."""
+    target = entry["target"]
+    if os.path.islink(target) or not os.path.isdir(target):
+        return False
+    wanted = folder_listing(entry["shipped"])
+    for relative, text in filled_in_skill_files(entry).items():
+        wanted[relative] = ("file", text.encode("utf-8"))
+    return folder_listing(target) == wanted
+
+
+def ask_for_skill_reload():
+    """Leave the mark that makes the next Claude Code session start reload its skills."""
+    files.write_text(files.state_path(RELOAD_SKILLS), "1\n")
 
 
 def link_root(entry):
@@ -434,12 +474,17 @@ def put(entry, before, lines, blocked):
     """
     path, record = entry["path"], {key: entry[key] for key in ("path", "part", "kind", "type")}
     if entry["type"] == "link":
-        rebuilt = write_built(entry) if "built" in entry else False
+        rebuild = "built" in entry and not built_copy_matches(entry)
+        relink = rebuild or not os.path.islink(path) or os.readlink(path) != entry["target"]
+        # Written before the change, so an apply that stops halfway still asks for a reload.
+        if relink and entry["kind"] == "skill":
+            ask_for_skill_reload()
+        if rebuild:
+            write_built(entry)
         record.update(target=entry["target"], root=link_root(entry))
-        if rebuilt or not os.path.islink(path) or os.readlink(path) != entry["target"]:
+        if relink:
             replace_link(path, entry["target"])
-            return record, True
-        return record, False
+        return record, relink
     if entry["type"] == "file":
         record["sha"] = sha(entry["content"])
         if files.read_text(path) != entry["content"]:
@@ -516,8 +561,10 @@ def reconcile(tree, resolved, lines):
         if is_own(entry):
             old[path] = dict(entry, state="removing")
             save()
+            if entry["kind"] == "skill":
+                ask_for_skill_reload()
+                skills_changed = True
             remove(entry, lines)
-            skills_changed = skills_changed or entry["kind"] == "skill"
         elif os.path.lexists(path):
             lines.append(f"hub left {path} as it is, because it changed since hub made it.")
         del old[path]
@@ -527,8 +574,9 @@ def reconcile(tree, resolved, lines):
     if blocked:
         files.write_json(files.state_path(CLASHES), {"clashes": clashes() + blocked})
     files.write_json(files.state_path(OFFERS), {"offers": offers})
+    # Written again at the end, in case a session that started during this apply already took the first mark.
     if skills_changed:
-        files.write_text(files.state_path(RELOAD_SKILLS), "1\n")
+        ask_for_skill_reload()
     return listing
 
 
