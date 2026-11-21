@@ -157,7 +157,8 @@ WHAT = {
     "lowering": ("lower one of hub's protections, disable or uninstall hub, hide its notices, or run hub's "
                "switch step or claude plugin through a program hub can not read"),
     "agent_marker": "unset or change the marker that tells hub a tool call is running, or name HUB_DOOR",
-    "settings_files": "write hub's settings or state files",
+    "settings_files": ("write hub's settings or state files, or start a program that hub can not read or that "
+                       "would change a switch the user did not ask for"),
 }
 TOO_DEEP = "a line nested too deep for hub to check"
 

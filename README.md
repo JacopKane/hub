@@ -50,6 +50,7 @@ Known limits:
 - In Cursor, a protection cannot be lowered by words. Lower it from Claude Code instead.
 - The gate refuses a home or temp folder path on every try. A pasted build log with `/tmp/` paths has to come out before the commit goes through.
 - Restarting chats from hub works only in iTerm2 or tmux.
+- Self-protection reads the words in a chat and the files a command names. It is not a sandbox. [Self-protection limits](docs/self-protection-limits.md) names where its checks end.
 
 ## How hub compares
 
