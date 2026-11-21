@@ -1,0 +1,1 @@
+Give these local files as full paths from the root folder, such as /home/sam/notes.md, so they open with a click. A path that starts with ~/ or ./ or a folder name, or a file name alone, does not open: {paths}.

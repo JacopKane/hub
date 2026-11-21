@@ -1585,7 +1585,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "id": "link_check",
           "name": "link_check",
           "depth": 0,
-          "does": "Sends a reply back once when it names a PR, issue or ticket without a link, so every reference can be opened.",
+          "does": "Sends a reply back once when it names a PR, issue or ticket without a link, or a local file the terminal can not open, so every reference can be opened.",
           "value": "off",
           "effective": "off",
           "runs": false,
