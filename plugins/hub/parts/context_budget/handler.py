@@ -12,16 +12,27 @@ calls. The points are the first one, then one after each gap. A line such as
 "Hand-back point: 180k" in the agent's brief moves its first size point, up
 to brief_point.max. Agents whose model starts with a name in skip_models get
 no hand-back reminder. After a compaction an agent gets the path of its full
-transcript. It only adds context and never stops a call. A damaged state
+transcript.
+
+Once a day per project, the main chat is told when the ledger file or the
+memory folder beside its transcript outgrows the store_size limits: the
+ledger's size and its lines whose first date is old, the size of MEMORY.md,
+the count and size of the other notes, and notes that have not changed for a
+long time. The day is kept for the project, so other chats in it are not told
+that day. It reads these files and never changes them.
+
+It only adds context and never stops a call. A damaged state
 file starts over and an unreadable transcript is skipped, so this part never
 makes the dispatcher fail. Claude Code only.
 """
+import datetime
 import json
 import os
 import re
 import time
 
-from hub import files
+from hub import clock, files
+from hub.clock import local as zoned_time
 
 PART = "context_budget"
 STATE = "context_budget"
@@ -37,6 +48,14 @@ AGENT_TEXT = ("This agent is at {size}k context after {steps} steps, and every s
               "Never stop work half done. ({flags})")
 MAIN_TEXT = ("The main chat is at {size}k context, and every step reads all of it again. "
              "Hand bigger reading to agents. ({flag})")
+STORE = f"{PART}.store_size"
+DAY = 24 * 3600
+LEDGER_HEAD = 40  # a ledger line's date counts when it is this near the start of the line
+MONTHS = {name: number for number, name in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+MONTH_SPELLINGS = {"mär": "mar", "mrz": "mar", "mai": "may", "okt": "oct", "dez": "dec"}  # German short months
+LINE_DATE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b"
+                       r"|\b(\d{1,2})\.? (Jan|Feb|Mar|Mär|Mrz|Apr|May|Mai|Jun|Jul|Aug|Sep|Oct|Okt|Nov|Dec|Dez)[a-z.]*")
 NOTE_TEXT = ("Your context was just compacted, so your earlier steps are now a summary. Before the next step, "
              "read your brief and the files it names again. For a detail the summary left out, search your "
              "full transcript at {path} with grep or a short script, and never read it whole. ({flag})")
@@ -207,11 +226,14 @@ def check(path, hook_input, flags, answer):
         if compacted and flags.runs(f"{PART}.compaction_note"):
             answer.add_context(NOTE_TEXT.format(path=path, flag=f"{PART}.compaction_note"))
             answer.signal(f"{PART}.compaction_note", "noted")
-    elif found and flags.runs(f"{PART}.main_tokens"):
-        flag = f"{PART}.main_tokens"
-        if crossed(before_size, state["size"], number(flags, f"{flag}.at"), number(flags, f"{flag}.every")):
-            answer.add_context(MAIN_TEXT.format(size=state["size"] // 1000, flag=flag))
-            answer.signal(flag, "reminded")
+        return
+    flag = f"{PART}.main_tokens"
+    if found and flags.runs(flag) and crossed(before_size, state["size"], number(flags, f"{flag}.at"),
+                                              number(flags, f"{flag}.every")):
+        answer.add_context(MAIN_TEXT.format(size=state["size"] // 1000, flag=flag))
+        answer.signal(flag, "reminded")
+    if flags.runs(STORE):
+        store_reminder(os.path.dirname(path), flags, answer)
 
 
 def agent_reminders(state, before_size, before_steps, grew, flags, answer):
@@ -236,3 +258,136 @@ def agent_reminders(state, before_size, before_steps, grew, flags, answer):
                                              flags=", ".join(fired)))
         for flag in fired:
             answer.signal(flag, "reminded")
+
+
+# the ledger and memory size reminder
+
+def store_reminder(project, flags, answer):
+    """Tell the main chat, once a day per project, what in the ledger and memory is over its limits."""
+    now = clock.epoch()
+    day = zoned_time(now).strftime("%Y-%m-%d")
+    name = state_file("store-" + os.path.basename(project))
+    with files.locked(name + ".lock"):
+        stored = files.read_json(files.state_path(name))
+        if isinstance(stored, dict) and stored.get("day") == day:
+            return
+        files.write_json(files.state_path(name), {"day": day})
+    ledger = os.path.basename(str(flags.value(f"{STORE}.ledger") or "ledger.md"))
+    issues = store_issues(store_facts(project, ledger), ledger, store_limits(flags), now)
+    text = flags.text(STORE)
+    if issues and text:
+        answer.add_context(text.replace("{issues}", " ".join(issues)) + f" ({STORE})")
+        answer.signal(STORE, "reminded")
+
+
+def store_limits(flags):
+    names = ("ledger_bytes", "ledger_days", "index_bytes", "notes", "notes_bytes", "note_days")
+    return {limit: number(flags, f"{STORE}.{limit}") for limit in names}
+
+
+def store_facts(project, ledger):
+    """What the limits are checked against. A file or folder that can not be read is None."""
+    return {"ledger": read_ledger(os.path.join(project, ledger)),
+            "index": size_of(os.path.join(project, "memory", "MEMORY.md")),
+            "notes": read_notes(os.path.join(project, "memory"))}
+
+
+def read_ledger(path):
+    """(size in bytes, the start of each line), or None."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    lines = raw.decode("utf-8", "replace").splitlines()
+    return len(raw), [line[:LEDGER_HEAD] for line in lines]
+
+
+def size_of(path):
+    try:
+        return os.path.getsize(path) if os.path.isfile(path) else None
+    except OSError:
+        return None
+
+
+def read_notes(folder):
+    """(size, time of last change) of each note but MEMORY.md, or None."""
+    try:
+        entries = [entry for entry in os.scandir(folder)
+                   if entry.name.endswith(".md") and entry.name != "MEMORY.md" and entry.is_file()]
+        return [(entry.stat().st_size, entry.stat().st_mtime) for entry in entries]
+    except OSError:
+        return None
+
+
+def store_issues(facts, ledger, limits, now):
+    """One plain sentence for each limit the facts pass. A limit of 0 is not checked."""
+    return [*ledger_issues(facts["ledger"], ledger, limits, now),
+            *index_issues(facts["index"], limits),
+            *notes_issues(facts["notes"], limits, now)]
+
+
+def ledger_issues(found, ledger, limits, now):
+    if found is None:
+        return []
+    size, heads = found
+    bytes_limit, days = limits["ledger_bytes"], limits["ledger_days"]
+    too_big = [f"{ledger} is {size // 1000}k bytes, over the {bytes_limit // 1000}k limit."] \
+        if bytes_limit and size > bytes_limit else []
+    dates = [line_date(head, now) for head in heads] if days else []
+    old = sum(1 for date in dates if date is not None and date < now - days * DAY)
+    too_old = [f"{ledger} has {counted(old, 'entry', 'entries')} dated more than {days} days ago."] if old else []
+    return too_big + too_old
+
+
+def index_issues(size, limits):
+    # The index_bytes default, 20000, is about 80% of the 25KB of MEMORY.md that Claude Code loads at
+    # session start (https://code.claude.com/docs/en/memory#how-it-works, changelog 2.1.83), so the
+    # reminder comes before Claude Code cuts the index off. Its 200-line limit is not checked.
+    limit = limits["index_bytes"]
+    return [f"MEMORY.md is {size // 1000}k bytes, over the {limit // 1000}k limit."] \
+        if size is not None and limit and size > limit else []
+
+
+def notes_issues(notes, limits, now):
+    if notes is None:
+        return []
+    count, total = len(notes), sum(size for size, _ in notes)
+    count_limit, bytes_limit, days = limits["notes"], limits["notes_bytes"], limits["note_days"]
+    over = (count_limit and count > count_limit) or (bytes_limit and total > bytes_limit)
+    named = [f"{count_limit} notes"] * bool(count_limit) + [f"{bytes_limit // 1000}k bytes"] * bool(bytes_limit)
+    too_many = [f"The memory folder has {counted(count, 'note', 'notes')} and {total // 1000}k bytes, "
+                f"over the limit of {' and '.join(named)}."] if over else []
+    stale = sum(1 for _, changed in notes if changed < now - days * DAY) if days else 0
+    too_stale = [f"{counted(stale, 'memory note has', 'memory notes have')} not changed in more than "
+                 f"{days} days."] if stale else []
+    return too_many + too_stale
+
+
+def counted(count, one, many):
+    return f"{count} {one if count == 1 else many}"
+
+
+def line_date(text, now):
+    """The first date in a ledger line as seconds since 1970, or None.
+
+    A day and month with no year, such as "3 Okt", is in the year of now, or
+    in the year before when that would put it more than a day after now.
+    """
+    match = LINE_DATE.search(text)
+    if not match:
+        return None
+    try:
+        if match.group(1):
+            return day_start(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        spelled = match.group(5)[:3].lower()
+        month, day_of_month = MONTHS[MONTH_SPELLINGS.get(spelled, spelled)], int(match.group(4))
+        year = zoned_time(now).year
+        this_year = day_start(year, month, day_of_month)
+        return this_year if this_year <= now + DAY else day_start(year - 1, month, day_of_month)
+    except (ValueError, KeyError, OverflowError):
+        return None
+
+
+def day_start(year, month, day_of_month):
+    return datetime.datetime(year, month, day_of_month, tzinfo=datetime.timezone.utc).timestamp()

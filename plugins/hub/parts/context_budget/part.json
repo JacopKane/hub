@@ -8,7 +8,7 @@
   "runs_in": ["claude_code"],
   "handlers": {"PreToolUse": {"tools": []}},
   "reason_not_in": {"cursor": "hub reads the context size from Claude Code's transcript files, and Cursor does not write them."},
-  "does": "Tells a chat or an agent when its context gets big, because every step reads all of it again. It never stops a call.",
+  "does": "Tells a chat or an agent when its context gets big, because every step reads all of it again, and the main chat when the project's ledger or memory grows past its limits. It never stops a call.",
   "children": [
     {
       "id": "agent_tokens",
@@ -69,6 +69,31 @@
       "signals": ["noted"],
       "cost": "per use",
       "does": "After an agent's context is compacted, tells it where its full transcript is, so it can find what the summary left out."
+    },
+    {
+      "id": "store_size",
+      "kind": "behavior",
+      "default": "on",
+      "text": "text/store_size.md",
+      "signals": ["reminded"],
+      "cost": "per use",
+      "does": "Once a day, tells one main chat of a project when the project's ledger or memory folder outgrows its limits, so it prunes them. It never changes a file. A limit of 0 turns that check off.",
+      "children": [
+        {"id": "ledger", "kind": "option", "type": "text", "default": "ledger.md",
+         "does": "The name of the ledger file in the project's transcript folder."},
+        {"id": "ledger_bytes", "kind": "option", "type": "number", "default": 24000,
+         "does": "The largest size of the ledger, in bytes."},
+        {"id": "ledger_days", "kind": "option", "type": "number", "default": 14,
+         "does": "How many days old a ledger line's first date may be before the line counts as old."},
+        {"id": "index_bytes", "kind": "option", "type": "number", "default": 20000,
+         "does": "The largest size of the memory index, MEMORY.md, in bytes. Claude Code loads only its first 25KB at the start of a chat."},
+        {"id": "notes", "kind": "option", "type": "number", "default": 20,
+         "does": "The most memory notes, not counting MEMORY.md."},
+        {"id": "notes_bytes", "kind": "option", "type": "number", "default": 60000,
+         "does": "The largest size of all memory notes together, in bytes."},
+        {"id": "note_days", "kind": "option", "type": "number", "default": 60,
+         "does": "How many days a memory note may go unchanged before it counts as stale."}
+      ]
     },
     {"id": "skip_models", "kind": "option", "type": "list", "default": [],
      "does": "Agents whose model name starts with one of these, such as claude-opus, get no hand-back reminder. They still get the compaction note."}

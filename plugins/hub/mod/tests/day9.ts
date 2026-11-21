@@ -128,7 +128,7 @@ export const DAY9: HubScreen = /* json */ {
           "id": "context_budget",
           "name": "context_budget",
           "depth": 0,
-          "does": "Tells a chat or an agent when its context gets big, because every step reads all of it again. It never stops a call.",
+          "does": "Tells a chat or an agent when its context gets big, because every step reads all of it again, and the main chat when the project's ledger or memory grows past its limits. It never stops a call.",
           "value": "off",
           "effective": "off",
           "runs": false,
