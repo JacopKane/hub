@@ -260,7 +260,7 @@ def test_the_review_loop_ships_on_with_its_hooks_in_claude_code_and_only_the_use
         assert result.ran and not result.context
 
 
-def test_an_update_offers_the_review_loop_and_keeps_it_off_until_the_user_turns_it_on(home):
+def test_an_update_turns_the_review_loop_on_unless_the_user_turned_it_off(home):
     with given("hub was installed before the review loop shipped"):
         home.install()
         seen = home.state_file("seen.json")
@@ -268,14 +268,23 @@ def test_an_update_offers_the_review_loop_and_keeps_it_off_until_the_user_turns_
         home.write_json(os.path.join(home.state, "seen.json"), seen)
     with when("the update applies"):
         home.hubctl("apply")
-    with then("the review loop is offered and stays off, so a critic call with no list runs"):
-        assert "review_loop" in [offer["id"] for offer in home.state_file("offers.json")["offers"]]
+    with then("the review loop is not offered and is on, so a critic call with no list is stopped"):
+        assert "review_loop" not in [offer["id"] for offer in home.state_file("offers.json")["offers"]]
+        assert home.show("--all")["flags"]["review_loop"]["runs"]
+        assert not agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
+    with when("the user turns it off on their own screen"):
+        home.hubctl_from_mod("off", "review_loop")
+    with then("the same call runs"):
+        assert agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
+    with when("a later update applies, and again hub has not yet seen the review loop as shipped"):
+        seen = home.state_file("seen.json")
+        seen["parts"] = [part for part in seen["parts"] if part != "review_loop"]
+        home.write_json(os.path.join(home.state, "seen.json"), seen)
+        home.hubctl("apply")
+    with then("the review loop stays off, because the user turned it off"):
+        assert home.settings()["flags"]["review_loop"] == {"by": "user", "value": "off"}
         assert not home.show("--all")["flags"]["review_loop"]["runs"]
         assert agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
-    with when("the user turns it on"):
-        home.hubctl("on", "review_loop")
-    with then("the same call is stopped"):
-        assert not agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
 
 
 def test_the_readme_lists_the_review_loop_as_on_with_texts_only_in_cursor():
