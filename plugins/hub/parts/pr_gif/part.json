@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "pr_gif",
+  "family": "rules",
+  "kind": "skill",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "does": "A skill for a GIF or an image in a PR body or comment. It records the real product, checks each frame for private data, uploads the file as a GitHub attachment and embeds it with a caption."
+}
