@@ -757,7 +757,7 @@ export const DAY9: HubScreen = /* json */ {
           "id": "status_band",
           "name": "status_band",
           "depth": 0,
-          "does": "A line above the prompt with hub's state, the tuner's last change and open offers.",
+          "does": "Two rows above the prompt. The top row shows your other chats and the features button. The second shows the newest change or offer with its buttons, or hub's state when there is none.",
           "value": "on",
           "effective": "on",
           "runs": true,
