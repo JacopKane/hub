@@ -38,7 +38,6 @@ const SPEC = {
 const HOUR = 60 * 60 * 1000
 // How often the band checks the age of its lines, so an old line leaves without a turn.
 const TICK = 10 * 60 * 1000
-const SEPARATOR = ' │ '
 const READ_VERBS = new Set(['show', 'screen', 'doctor', 'offers', 'board', 'tasks', '-h', '--help'])
 // The user types at the prompt or writes through the Remote Control bridge. Any other origin,
 // such as a peer chat, a schedule or another plugin, can read a switch but not change it.
@@ -48,14 +47,28 @@ const USER_ORIGINS = new Set<PromptOrigin['kind']>(['composer', 'bridge'])
 // transcript, which the model does not read.
 type ShownButton = { key: string; label: string; hotkey: string; args: string[]; prints?: boolean }
 
-type Shown = {
-  label: string
+// A part of a row with the cells it takes.
+type Zone = { text: string; width: number }
+
+// The top row as it is drawn at one width: each part, or null (or '') where the row dropped it.
+type Top = {
+  label: Zone | null
   waiting: string
-  text: string | null
-  buttons: ShownButton[]
-  zone: { text: string; width: number } | null
+  zone: Zone | null
+  rule: string
   failed: string | null
+  features: boolean
 }
+
+// The notice's width is in cells, as hubctl counts them where the screen model sends a count.
+type Shown = {
+  top: Top
+  text: string | null
+  textCells: number
+  buttons: ShownButton[]
+}
+
+type Notice = { text: string; cells: number | null; buttons: ShownButton[] }
 
 // A change may take a while to apply, but reading the screen should be quick. The band keeps
 // its last state until a read ends. So a stuck step never holds up a session start or a turn.
@@ -293,42 +306,148 @@ function fresh(line: HubStripLine, time: number, keepHours: number) {
   return time === 0 || Date.parse(line.time) >= time - keepHours * HOUR
 }
 
-// The band looks like "1 hub │ 2 prompts wait │ chats │ notice [2 undo] │ ✗2". Only the
-// coordinator chat shows the count of prompts that wait in other chats. The notice is, in the
-// order surfaces.md gives, the question of a chat that needs the user, the newest change with a
-// button, an offer, or hub's state. The count, the chats zone and the failed checks count also
-// show when there is no notice.
+// The band has two rows. The top row is "1 hub ── 2 prompts wait  chats ──── ✗2 [ features ]",
+// and the event row below it is "notice  [ undo ]". Only the coordinator chat shows the count of
+// prompts that wait in other chats. The notice is, in the order surfaces.md gives, the question of
+// a chat that needs the user, the newest change with a button, an offer, or hub's state. With no
+// notice the event row is not drawn, and the top row still shows.
 function clashText(got: HubCommand) {
   const taken = `✗ /${COMMAND} is taken (${got.refused[COMMAND]})`
   return got.used !== null ? `${taken}, so hub uses /${got.used}` : `${taken}, and so is /${FALLBACK}. Rename the other /${COMMAND}, then use /${COMMAND} in Claude Code`
 }
 
-// The chats zone takes at most this share of the band's width.
-const ZONE_SHARE = 0.4
 const MOST_FAILED = 99
+// The dim mark after the label, the gap between parts of one row, and the dim rule that fills the
+// top row, which keeps at least this many dashes.
+const LEAD = ' ── '
+const GAP = '  '
+const LEAST_RULE = 3
+// The event's text stays beside its buttons while it has at least this many cells there.
+const LEAST_BESIDE = 40
 
-type Zone = { text: string; width: number }
+// A guess at the cells a terminal draws, only for text the screen model sends no count for, such
+// as a change line or a button label. It counts the East Asian wide and full width blocks and two
+// emoji blocks as two cells, and every mark as none. hub's Python counts by each letter's East
+// Asian width, which also makes emoji such as ✅ ❌ ⚡ 🚀 two cells and U+FE0F one, so the two can
+// differ. The mod takes hubctl's count wherever the screen model has one.
+const WIDE = /[\u{1100}-\u{115F}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE4F}\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{20000}-\u{3FFFD}]/u
+const MARK = /\p{M}/u
 
-// Use the full zone when it fits its share of the line. Otherwise use the folded one, cut to that share.
-function zone(chats: HubChatsZone, columns: number): Zone {
-  const share = Math.floor(ZONE_SHARE * columns)
-  if (chats.full_cells <= share) {
+function characterCells(character: string) {
+  if (MARK.test(character)) {
+    return 0
+  }
+  return WIDE.test(character) ? 2 : 1
+}
+
+function cellWidth(text: string) {
+  return [...text].reduce((total, character) => total + characterCells(character), 0)
+}
+
+// A terminal draws a button as "[ label ]".
+function buttonCells(label: string) {
+  return cellWidth(label) + 4
+}
+
+const FEATURES_CELLS = buttonCells(FEATURES_LABEL)
+
+// The cells the top row takes whatever the chats are: the label, the rule's two spaces, the
+// failed checks count with its space, and the features button.
+function fixedCells(label: string, failed: string | null) {
+  const failedCells = failed === null ? 0 : cellWidth(failed) + 1
+  return cellWidth(label) + 2 + failedCells + buttonCells(FEATURES_LABEL)
+}
+
+// The waiting count with the gap after it, when chats follow it.
+function waitingCells(waiting: string, withChats: boolean) {
+  if (waiting === '') {
+    return 0
+  }
+  return cellWidth(waiting) + (withChats ? GAP.length : 0)
+}
+
+// The first names, as many as fit, then "+N" for the rest. Every chat that asks keeps its name
+// (hubctl sends those first), so +N only ever hides chats that do not ask. Null when not even
+// those names fit.
+function namesThatFit(entries: HubChatsZone['entries'], room: number): Zone | null {
+  const lastAsking = entries.reduce((last, entry, index) => (entry.asks ? index : last), -1)
+  const tries = entries.slice(0, -1).map((_, index) => {
+    const kept = entries.slice(0, index + 1)
+    const more = `+${entries.length - kept.length}`
+    const keptCells = kept.reduce((total, entry) => total + entry.cells + GAP.length, 0)
+    return { text: [...kept.map(entry => entry.text), more].join(GAP), width: keptCells + cellWidth(more), last: index }
+  })
+  const fitting = tries.filter(attempt => attempt.last >= lastAsking && attempt.width <= room).at(-1)
+  return fitting === undefined ? null : { text: fitting.text, width: fitting.width }
+}
+
+// Use the full zone when it fits the room the top row leaves. Otherwise the names that fit and
+// +N, and otherwise the folded counters, which keep every chat that asks, cut to the room.
+function zone(chats: HubChatsZone, room: number): Zone {
+  if (chats.full_cells <= room) {
     return { text: chats.full, width: chats.full_cells }
   }
-  return { text: chats.folded, width: Math.min(chats.folded_cells, share) }
+  return namesThatFit(chats.entries, room) ?? { text: chats.folded, width: Math.max(0, Math.min(chats.folded_cells, room)) }
+}
+
+// The room for the chats: the row less its fixed parts, the lead, the waiting count and the least rule.
+function chatsRoom(columns: number, label: string, waiting: string, failed: string | null) {
+  return columns - fixedCells(label, failed) - LEAD.length - waitingCells(waiting, true) - LEAST_RULE
+}
+
+// The cells the top row's parts take, all but the rule.
+function partsCells(parts: Omit<Top, 'rule'>) {
+  const lead = parts.waiting !== '' || parts.zone !== null ? LEAD.length : 0
+  const failedCells = parts.failed === null ? 0 : cellWidth(parts.failed) + 1
+  const features = parts.features ? FEATURES_CELLS : 0
+  return (parts.label?.width ?? 0) + lead + waitingCells(parts.waiting, parts.zone !== null) + (parts.zone?.width ?? 0) + failedCells + features
+}
+
+// The dim rule fills the cells the parts leave, with a space at each end, or only spaces when
+// fewer than 3 cells are left.
+function ruleText(cells: number) {
+  return cells >= 3 ? ` ${'─'.repeat(cells - 2)} ` : ' '.repeat(Math.max(0, cells))
+}
+
+// The top row at a width. The full row keeps a rule of at least 3 dashes, and its chats fold or
+// are cut to the room it leaves. When even that does not fit, parts go in the order of loss: the
+// chats, then the rule down to one space, the failed checks count, the waiting count, the label,
+// and last the features button. A chat that asks still shows in the event row's question.
+function topRow(columns: number, label: string, waiting: string, failed: string | null, chats: HubChatsZone | null): Top {
+  const room = chatsRoom(columns, label, waiting, failed)
+  const labelZone = { text: label, width: cellWidth(label) }
+  const full = { label: labelZone, waiting, zone: chats !== null && room >= 1 ? zone(chats, room) : null, failed, features: true }
+  const bare = { ...full, zone: null }
+  const tries = [
+    { parts: full, leastRule: LEAST_RULE + 2 },
+    { parts: bare, leastRule: 1 },
+    { parts: { ...bare, failed: null }, leastRule: 1 },
+    { parts: { ...bare, failed: null, waiting: '' }, leastRule: 1 },
+    { parts: { ...bare, failed: null, waiting: '', label: null }, leastRule: 0 },
+  ]
+  const fitting = tries.find(attempt => partsCells(attempt.parts) + attempt.leastRule <= columns)?.parts ?? {
+    label: { text: label, width: Math.max(0, columns) },
+    waiting: '',
+    zone: null,
+    failed: null,
+    features: false,
+  }
+  return { ...fitting, rule: ruleText(columns - partsCells(fitting)) }
 }
 
 function failedText(count: number) {
   return count > MOST_FAILED ? `✗${MOST_FAILED}+` : `✗${count}`
 }
 
-function notice(screen: HubScreen, time: number, got: HubCommand): Pick<Shown, 'text' | 'buttons'> | null {
+// Only the question's line comes with its cells from hubctl; the mod counts the other notices.
+function notice(screen: HubScreen, time: number, got: HubCommand): Notice | null {
   const flags = screen.band
   const digit = flags.first_digit
   const question = flags.chats ? screen.board?.chats?.question ?? null : null
   if (question !== null) {
     return {
       text: question.line,
+      cells: question.cells,
       buttons: [
         { key: `open:${question.session}`, label: 'open', hotkey: String(digit + 1), args: ['board', 'show', question.session], prints: true },
       ],
@@ -343,6 +462,7 @@ function notice(screen: HubScreen, time: number, got: HubCommand): Pick<Shown, '
     const reason = change.reason ? ` · ${change.reason}` : ''
     return {
       text: `${change.mark} ${change.text}${reason}`,
+      cells: null,
       buttons: change.buttons.slice(0, 2).map((button, place) => {
         const name = button.label.toLowerCase()
         return { key: `${change.id}:${name}`, label: name, hotkey: String(digit + 1 + place), args: button.args }
@@ -350,11 +470,11 @@ function notice(screen: HubScreen, time: number, got: HubCommand): Pick<Shown, '
     }
   }
   if (got.refused[COMMAND] !== undefined) {
-    return { text: clashText(got), buttons: [] }
+    return { text: clashText(got), cells: null, buttons: [] }
   }
   if (flags.state) {
     const header = screen.header
-    return { text: `${header.parts_on} on · start text ${thousands(header.start_text)}`, buttons: [] }
+    return { text: `${header.parts_on} on · start text ${thousands(header.start_text)}`, cells: null, buttons: [] }
   }
   return null
 }
@@ -370,7 +490,8 @@ function waitingText(waiting: HubRelay) {
 function shown(state: HubBand, time: number, got: HubCommand, columns: number, waiting: HubRelay): Shown | null {
   const { screen, failure } = state
   if (failure !== null) {
-    return { label: '1 hub', waiting: '', text: `✗ hub did not answer: ${failure}`, buttons: [], zone: null, failed: null }
+    const text = `✗ hub did not answer: ${failure}`
+    return { top: topRow(columns, '1 hub', '', null, null), text, textCells: cellWidth(text), buttons: [] }
   }
   if (screen === null || !screen.band.runs) {
     return null
@@ -383,13 +504,13 @@ function shown(state: HubBand, time: number, got: HubCommand, columns: number, w
   if (line === null && chats === null && count <= 0 && prompts === '') {
     return null
   }
+  const label = `${flags.first_digit} hub`
+  const failed = count > 0 ? failedText(count) : null
   return {
-    label: `${flags.first_digit} hub`,
-    waiting: prompts,
+    top: topRow(columns, label, prompts, failed, chats),
     text: line?.text ?? null,
+    textCells: line === null ? 0 : line.cells ?? cellWidth(line.text),
     buttons: line?.buttons ?? [],
-    zone: chats === null ? null : zone(chats, columns),
-    failed: count > 0 ? failedText(count) : null,
   }
 }
 
@@ -671,35 +792,99 @@ export const register: Register = on => {
       return next(e)
     }
     const { Box, Button, Text } = $.ui.resolve(e)
-    const separator = <Text dimColor>{SEPARATOR}</Text>
+    const columns = e.props.bodyColumns
+    const parts = line.top
+    const hasLead = parts.waiting !== '' || parts.zone !== null
+    const buttons = line.buttons.map(button => (
+      <Button key={button.key} label={button.label} hotkey={button.hotkey} onPress={() => press($, button)} />
+    ))
+    // The label is cut only when the band is narrower than the features button.
+    const label =
+      parts.label === null ? null : parts.label.width < cellWidth(parts.label.text) ? (
+        <Box key="label" width={parts.label.width} flexShrink={0}>
+          <Text bold wrap="truncate-end">
+            {parts.label.text}
+          </Text>
+        </Box>
+      ) : (
+        <Text bold>{parts.label.text}</Text>
+      )
 
-    return (
-      <Box flexDirection="row" width={e.props.bodyColumns}>
-        <Text bold>{line.label}</Text>
-        {line.waiting !== '' && separator}
-        {line.waiting !== '' && <Text key="waiting">{line.waiting}</Text>}
-        {line.zone !== null && separator}
-        {line.zone !== null && (
-          <Box key="chats" width={line.zone.width} flexShrink={0}>
-            <Text wrap="truncate-end">{line.zone.text}</Text>
-          </Box>
-        )}
-        {line.text !== null && separator}
-        {line.text !== null && (
-          <Box flexGrow={1} flexShrink={1}>
-            <Text wrap="truncate-end">{line.text}</Text>
-          </Box>
-        )}
-        {line.buttons.map(button => (
-          <Button key={button.key} label={button.label} hotkey={button.hotkey} onPress={() => press($, button)} />
-        ))}
-        <Button key="features" label={FEATURES_LABEL} hotkey="f" onPress={() => openPicker($)} />
-        {line.failed !== null && separator}
-        {line.failed !== null && (
-          <Text key="failed" color="red">
-            {line.failed}
+    const top = (
+      <Box key="top" flexDirection="row" width={columns}>
+        {label}
+        {hasLead && <Text dimColor>{LEAD}</Text>}
+        {parts.waiting !== '' && (
+          <Text key="waiting" wrap="truncate-end">
+            {parts.waiting}
           </Text>
         )}
+        {parts.waiting !== '' && parts.zone !== null && <Text dimColor>{GAP}</Text>}
+        {parts.zone !== null && (
+          <Box key="chats" width={parts.zone.width} flexShrink={0}>
+            <Text wrap="truncate-end">{parts.zone.text}</Text>
+          </Box>
+        )}
+        {parts.rule !== '' && (
+          <Box key="rule" flexGrow={1}>
+            <Text dimColor>{parts.rule}</Text>
+          </Box>
+        )}
+        {parts.failed !== null && (
+          <Text key="failed" color="red">
+            {parts.failed}
+          </Text>
+        )}
+        {parts.failed !== null && <Text dimColor> </Text>}
+        {parts.features && <Button key="features" label={FEATURES_LABEL} hotkey="f" onPress={() => openPicker($)} />}
+      </Box>
+    )
+    if (line.text === null) {
+      return <Box flexDirection="column" width={columns}>{top}</Box>
+    }
+
+    // The event row keeps the text beside its buttons when it fits there or 40 cells are left
+    // there. Otherwise the text wraps over the whole width with the buttons below it, 3 lines at
+    // most in all.
+    const buttonsCells = line.buttons.reduce((total, button) => total + buttonCells(button.label), 0)
+    const beside = buttons.length > 0 ? columns - buttonsCells - GAP.length : columns
+    const textCells = line.textCells
+    const event =
+      textCells <= beside || beside >= LEAST_BESIDE ? (
+        <Box key="event" flexDirection="row" width={columns}>
+          <Box key="notice" width={Math.min(textCells, beside)} flexShrink={0}>
+            <Text wrap="truncate-end" maxLines={1}>
+              {line.text}
+            </Text>
+          </Box>
+          {buttons.length > 0 && <Text dimColor>{GAP}</Text>}
+          {buttons}
+        </Box>
+      ) : buttons.length > 0 ? (
+        <Box key="event" flexDirection="column" width={columns}>
+          <Box key="notice" width={columns}>
+            <Text wrap="wrap" maxLines={2}>
+              {line.text}
+            </Text>
+          </Box>
+          <Box key="buttons" flexDirection="row">
+            {buttons}
+          </Box>
+        </Box>
+      ) : (
+        <Box key="event" flexDirection="column" width={columns}>
+          <Box key="notice" width={columns}>
+            <Text wrap="wrap" maxLines={3}>
+              {line.text}
+            </Text>
+          </Box>
+        </Box>
+      )
+
+    return (
+      <Box flexDirection="column" width={columns}>
+        {top}
+        {event}
       </Box>
     )
   })
