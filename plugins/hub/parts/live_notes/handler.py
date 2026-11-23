@@ -17,7 +17,10 @@
   coordinator passes rules between chats.
 
 An Agent call from a subagent carries agent_id and passes, since its own
-brief already named the notes. A subagent's messages get the reminder too. Any error lets the call run (the dispatcher logs it).
+brief already named the notes. A subagent's messages get the reminder too.
+The dispatcher logs any error and lets the call run, except a builder or
+reviewer call while a review loop file holds a stop or can not be read.
+That call is refused.
 """
 import hashlib
 import json

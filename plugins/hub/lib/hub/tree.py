@@ -40,8 +40,8 @@ BETA_NOTE = "{part} is in beta and untested. Type /hub off {part} to turn it off
 NODE_FIELDS = {"id", "kind", "type", "does", "default", "values", "runs_in", "needs", "needs_any",
                "relevant_if", "signals", "cost", "text", "privacy", "reason_not_in", "range", "check",
                "stage", "children"}
-PART_FIELDS = NODE_FIELDS | {"$schema", "family", "offer_when", "handlers", "requires", "keeps_on_uninstall",
-                             "commands", "jobs"}
+PART_FIELDS = NODE_FIELDS | {"$schema", "family", "offer_when", "never_offered", "handlers", "requires",
+                             "keeps_on_uninstall", "commands", "jobs"}
 JOB_FIELDS = {"name", "flag", "script", "args", "every_seconds", "at_login", "keep_alive", "start", "stop"}
 # hubctl's own verbs. A part command may not take one of these names.
 CORE_VERBS = {"show", "screen", "on", "off", "set", "pin", "no", "undo", "apply", "doctor", "update",

@@ -113,7 +113,7 @@ def check_answer(answer, flags):
                and tree.get(flag_id).kind == "instruction" and not weakens_protected(tree.get(flag_id), "off", flags)]
     offers = [part_id for part_id in answer.get("offers") or []
               if isinstance(part_id, str) and tree.get(part_id) is not None and tree.get(part_id).parent is None
-              and not flags[part_id]["runs"]]
+              and not flags[part_id]["runs"] and not resolve.never_offered(tree, part_id)]
     return {"this_machine": machine, "questions": valid_questions(tree, answer.get("questions"), limit, flags),
             "instructions_off": off, "offers": offers}
 

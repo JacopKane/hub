@@ -3,10 +3,15 @@
   "id": "review_loop",
   "family": "tiers",
   "kind": "rule",
-  "stage": "beta",
-  "default": "off",
+  "default": "on",
   "privacy": "guard",
   "runs_in": ["claude_code", "cursor"],
+  "handlers": {
+    "PreToolUse": {"tools": ["Agent", "SubagentHandback"], "runs_in": ["claude_code"]},
+    "PostToolUse": {"tools": ["Agent"], "runs_in": ["claude_code"]},
+    "SubagentStop": {"tools": [], "runs_in": ["claude_code"]}
+  },
+  "commands": {"review-loop": {"script": "show.py", "does": "the review loop of each area: its failed reviews, its starts and whether it is stopped"}},
   "does": "Keeps a build and review loop on a written acceptance list, and stops it after two failed reviews of one area until the user decides. It is not a sandbox.",
   "children": [
     {"id": "reviewers", "kind": "option", "type": "list", "default": ["critic", "reviewer"],
@@ -47,19 +52,6 @@
       "children": [
         {"id": "rounds", "kind": "option", "type": "number", "default": 2, "range": [1, 10],
          "does": "How many failed reviews in a row stop the loop."}
-      ]
-    },
-    {
-      "id": "same_area",
-      "kind": "behavior",
-      "default": "on",
-      "runs_in": ["claude_code"],
-      "cost": "per use",
-      "reason_not_in": {"cursor": "Cursor's agent calls and reports are known only from its docs, so the review loop gives Cursor its texts and no hooks."},
-      "does": "Warns the next builder when the failures of one review cluster in one function.",
-      "children": [
-        {"id": "findings", "kind": "option", "type": "number", "default": 3, "range": [2, 10],
-         "does": "How many failures in one function in one review count as a cluster."}
       ]
     },
     {"id": "serious_outside", "kind": "behavior", "default": "on", "runs_in": ["claude_code"], "cost": "per use",
