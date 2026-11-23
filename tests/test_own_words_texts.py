@@ -1,8 +1,9 @@
 """The texts of the own-words fixes and the page of self-protection's limits.
 
 Four later PRs use these texts: the switch step's words, the words door with
-its check of Claude runs, relayed pins, and the repo files lock. Nothing reads
-the new messages yet. These scenarios pin what each one fills in and what it
+its check of Claude runs, relayed pins, and the repo files lock. The step words
+PR reads the hint to leave hub's folder, and nothing reads the other new
+messages yet. These scenarios pin what each one fills in and what it
 tells the reader, and that the refusals already shown name both of the user's
 doors, so the texts can be reviewed on their own.
 """

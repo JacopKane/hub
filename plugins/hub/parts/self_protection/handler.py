@@ -40,6 +40,7 @@ local checks on purpose can do so. The user lowers a protection by asking
 for it in the newest message they type, or with the /hub door where mods
 load, with a single-use ticket.
 """
+import argparse
 import contextlib
 import fnmatch
 import importlib.util
@@ -54,6 +55,7 @@ from hub import files
 PART = "self_protection"
 GATE_MODULE = "hub_part_public_text_gate"
 TEXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "text", "ask_the_user.md")
+LEAVE_FOLDER = os.path.join(os.path.dirname(TEXT), "leave_hub_folder.md")
 CHECKS = ("lowering", "agent_marker", "settings_files")
 MAX_DEPTH = 4
 
@@ -71,6 +73,8 @@ STEP_NAMES = {"hub_switch.py", "hubctl"}
 
 INTERPRETERS = re.compile(r"(?:python[\d.]*|pypy[\d.]*|perl|ruby|node|nodejs|deno|bun|php|lua|osascript|tclsh|expect|rscript)")
 CODE_OPTIONS = {"-c", "-e", "-E", "--eval", "-r", "-p", "--print", "-x"}
+# Python switches that take no value, run no code and load no module, so before the step's path they name no file.
+PLAIN_PYTHON_SWITCHES = {"-I", "-B", "-s", "-S", "-u", "-q"}
 # Programs that name hubctl without running it.
 NAMES_ONLY = {"cat", "less", "more", "head", "tail", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg",
               "ag", "jq", "diff", "cmp", "du", "tree", "readlink", "realpath", "echo", "printf", "test", "[",
@@ -743,13 +747,105 @@ def check_files(words, command, cwd):
         if any(names_hub(word, cwd) or holds_hub(word, cwd) for word in operands if not plain(word).startswith("-")):
             raise Stop("settings_files", program)
         return
-    if INTERPRETERS.fullmatch(program):
-        # The switch step writes hub's settings by design, and the lowering check judges what it changes.
+    # The switch step writes hub's settings by design, and the lowering check judges what it changes.
+    if runs_the_step(words[index], cwd):
+        operands = judged_step_words(operands)
+    elif INTERPRETERS.fullmatch(program):
         script = next((spot for spot, word in enumerate(operands) if not plain(word).startswith("-")), None)
         if script is not None and runs_the_step(operands[script], cwd):
-            operands = operands[:script] + operands[script + 1:]
+            switches = [word for word in operands[:script] if not is_plain_python_switch(program, word)]
+            operands = switches + judged_step_words(operands[script + 1:])
     if any(names_hub(word, cwd) for word in operands):
         raise Stop("settings_files", program)
+
+
+def is_plain_python_switch(program, word):
+    """Whether a word before the step's path is one of Python's switches that take no value and run no code.
+
+    Every other word stays judged as a path, such as a switch with a value
+    or code joined to it, a module, a group of switches, or another
+    interpreter's switch.
+    """
+    return bool(re.fullmatch(r"python[\d.]*", program)) and not hidden(word) and plain(word) in PLAIN_PYTHON_SWITCHES
+
+
+def judged_step_words(args):
+    """The switch step's words that the files check still judges as paths.
+
+    The step's own fixed words name no file, so a read such as show --json
+    runs even from inside hub's folder. They are the verb, an option's name,
+    an option's value from its fixed list, a flag or part that hub's tree
+    knows, an undo id that hub's history knows, and the tuner's step. Every
+    other word stays judged: a word with =, a word after --, a value, a file,
+    a profile word, and every word when hub's parser rejects them or hub can
+    not read them.
+    """
+    try:
+        fixed = fixed_step_spots(args)
+    except Exception:  # hub could not read its parser, tree or history, so every word stays judged
+        fixed = set()
+    return [word for spot, word in enumerate(args) if spot not in fixed]
+
+
+def fixed_step_spots(args):
+    """The places in the step's words that hold its own fixed words, by its parser's own options."""
+    if not args or any(hidden(word) for word in args) or parsed_hubctl(args) is None:
+        return set()
+    from hub import cli, history, tree as tree_module
+    top = cli.parser(cli.part_commands())
+    commands = next(action for action in top._actions if isinstance(action, argparse._SubParsersAction))
+    command = commands.choices.get(plain(args[0]))
+    if command is None:
+        return set()
+    tree = tree_module.load(files.PARTS_DIR)
+    known_ids = {line.get("id") for line in history.lines() if isinstance(line, dict)}
+    options = {name: action for action in command._actions for name in action.option_strings}
+    positionals = iter([action for action in command._actions if not action.option_strings])
+    fixed, spot = {0}, 1
+    while spot < len(args):
+        text = plain(args[spot])
+        if text == "--":
+            break
+        if "=" in text:
+            spot += 1
+            continue
+        if text.startswith("-"):
+            action = option_named(options, text)
+            if action is not None:
+                fixed.add(spot)
+                if action.nargs != 0:
+                    value = plain(args[spot + 1]) if spot + 1 < len(args) else None
+                    if value is not None and action.choices and value in action.choices:
+                        fixed.add(spot + 1)
+                    spot += 1
+            spot += 1
+            continue
+        action = next(positionals, None)
+        if action is None or action.nargs not in (None, "?"):
+            break  # a list of values, a profile's words or a part's own words
+        if is_fixed_word(action, text, tree, known_ids):
+            fixed.add(spot)
+        spot += 1
+    return fixed
+
+
+def option_named(options, text):
+    """The option a word names, by its full name or a unique start of a long name, as argparse reads it."""
+    if text in options:
+        return options[text]
+    names = [name for name in options if text.startswith("--") and name.startswith(text)]
+    return options[names[0]] if len(names) == 1 else None
+
+
+def is_fixed_word(action, text, tree, known_ids):
+    """Whether a positional word is one hub fixes: a choice, a flag or part in hub's tree, or a known undo id."""
+    if action.choices:
+        return text in action.choices
+    if action.dest in ("flag", "part"):
+        return tree.get(text) is not None
+    if action.dest == "id":
+        return text in known_ids
+    return False
 
 
 def runs_the_step(word, cwd):
@@ -1424,15 +1520,29 @@ def find(hook_input, flags):
     return None
 
 
-def reason(stop, hint):
+def reason(stop, *hints):
     if stop.detail == TOO_DEEP:
         # not a settings change, so the hint about asking the user does not fit
         return (f"hub stopped this call, because the command is nested too deep for hub to check "
                 f"({PART}.{stop.check}). Please send a simpler command, with fewer substitutions inside each other.")
     lines = [f"hub stopped this call, because it would {WHAT[stop.check]} ({PART}.{stop.check})."]
-    if hint:
-        lines.append(hint)
-    return "\n".join(lines)
+    return "\n".join(lines + [hint for hint in hints if hint])
+
+
+def leave_folder_hint(stop, hook_input):
+    """For a write refused while the shell sits inside one of hub's folders: the hint to leave it, or ""."""
+    if stop.check != "settings_files" or not isinstance(hook_input, dict) or not hook_input.get("cwd"):
+        return ""
+    if hook_input.get("tool_name") != "Bash":  # Edit and Write take full paths, so leaving the folder changes nothing
+        return ""
+    try:
+        here = folded(os.path.realpath(hook_input["cwd"]))
+        roots = [os.path.realpath(root) for root in hub_roots()]
+        inside = next((root for root in roots if here == folded(root) or here.startswith(folded(root) + os.sep)), None)
+        text = files.read_text(LEAVE_FOLDER) if inside else None
+        return text.strip().replace("{folder}", inside) if text else ""
+    except Exception:  # the hint only helps, so the refusal stands without it
+        return ""
 
 
 def handle(event, hook_input, flags, answer):
@@ -1442,7 +1552,7 @@ def handle(event, hook_input, flags, answer):
     if stop is None:
         return
     answer.signal(f"{PART}.{stop.check}", "blocked")
-    answer.refuse(reason(stop, flags.text(f"{PART}.ask_the_user")))
+    answer.refuse(reason(stop, leave_folder_hint(stop, hook_input), flags.text(f"{PART}.ask_the_user")))
 
 
 class EveryCheck:
@@ -1461,7 +1571,7 @@ def refusal_without_settings(hook_input):
     stop = find(hook_input, EveryCheck())
     if stop is None:
         return None
-    return reason(stop, files.read_text(TEXT).strip() if files.read_text(TEXT) else "")
+    return reason(stop, leave_folder_hint(stop, hook_input), files.read_text(TEXT).strip() if files.read_text(TEXT) else "")
 
 
 if __name__ == "__main__":
