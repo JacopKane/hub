@@ -113,8 +113,10 @@ def test_the_limits_page_is_linked_from_the_readme_says_it_is_no_sandbox_and_nam
     with given("the README's known limits"):
         readme = read(REPO, "README.md")
         limits = readme.split("Known limits:", 1)[1].split("\n## ", 1)[0]
-    with then("one of them links the limits page"):
-        assert "](docs/self-protection-limits.md)" in limits
+    with then("one of them links the limits page and says what self-protection reads in the page's words"):
+        line = next(item for item in limits.split("\n") if "](docs/self-protection-limits.md)" in item)
+        assert line == ("- Self-protection reads the chat and the commands Claude writes. It is not a sandbox. "
+                        "[Self-protection limits](docs/self-protection-limits.md) names where its checks end.")
     with when("the limits page is read"):
         with open(LIMITS, encoding="utf-8") as handle:
             page = handle.read()
@@ -124,15 +126,17 @@ def test_the_limits_page_is_linked_from_the_readme_says_it_is_no_sandbox_and_nam
         assert not re.search(r"~/|/Users/|/home/", page)
     with and_("it has one part for each kind of limit"):
         headings = [line for line in page.split("\n") if line.startswith("## ")]
-        assert headings == ["## How hub reads your order", "## Words that only look typed",
-                            "## Writes hub does not see", "## Cursor"]
+        assert headings == ["## How hub reads your order", "## What it does not watch", "## Cursor"]
     with and_("it names each design limit as hub has it today"):
         for words in ("Your order is the newest message you typed", "another chat arrives after it",
-                      "Try to turn off", "uninstall hub", "read a script from their input",
-                      "a file the command does not name", "reads the chat and the commands Claude writes",
-                      "Anything else on your machine that can change those files is outside its checks",
-                      "Cursor support is in beta"):
+                      "Try to turn off", "uninstall hub", "hub's settings and state files"):
             assert words in page, words
+    with and_("the parts on what it does not watch and on Cursor state design limits only, word for word"):
+        sections = {part.split("\n", 1)[0]: part.split("\n", 1)[1].strip() for part in page.split("\n## ")[1:]}
+        assert sections["What it does not watch"] == (
+            "Self-protection reads the chat and the commands Claude writes. Anything else on your machine "
+            "that can change those files is outside its checks. It is not a sandbox.")
+        assert sections["Cursor"] == "Cursor support is in beta."
     with and_("it names no planned fix, and claims no fix as in place"):
         assert "plans" not in page and "planned" not in page
         for claim in ("does not end your order", "works even while the lowering check is off",
