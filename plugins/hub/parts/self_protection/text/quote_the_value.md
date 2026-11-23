@@ -1,0 +1,1 @@
+hub could not read a word in this command, and here that word could change which program or code runs. Write the program's path and any hub command in full, with no variable in them. Inside env, a variable may stay in a setting such as TMPDIR when the whole setting is in double quotes, as in "TMPDIR=$scratch_dir".
