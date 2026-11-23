@@ -4,7 +4,6 @@
   "family": "tiers",
   "kind": "rule",
   "default": "on",
-  "never_offered": true,
   "privacy": "guard",
   "runs_in": ["claude_code", "cursor"],
   "handlers": {

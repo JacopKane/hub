@@ -78,6 +78,11 @@ def plain(text):
     return DASH not in text and not HOME_PATH.search(text) and "@" not in text and "hubctl" not in text
 
 
+def offered(home):
+    """Ids of the parts hub offers now."""
+    return [offer["id"] for offer in home.state_file("offers.json")["offers"]]
+
+
 def manifest():
     with open(os.path.join(PART, "part.json"), encoding="utf-8") as handle:
         return json.load(handle)
@@ -225,9 +230,10 @@ def test_the_review_loop_ships_on_with_its_hooks_in_claude_code_and_only_the_use
     with given("hub is installed fresh, and the user turned critic, reviewer, builder and planner on"):
         home.switch_on("critic", "reviewer", "builder", "planner")
         home.install()
-    with then("the review loop is on by its default"):
+    with then("the review loop is on by its default, and nothing offers it"):
         record = home.show("--all")["flags"]["review_loop"]
         assert (record["value"], record["runs"], record["by"]) == ("on", True, "default")
+        assert "review_loop" not in offered(home)
     with and_("the three start texts show"):
         text, _ = session_start(home)
         for name in START_TEXTS.values():
@@ -260,31 +266,29 @@ def test_the_review_loop_ships_on_with_its_hooks_in_claude_code_and_only_the_use
         assert result.ran and not result.context
 
 
-def test_an_update_turns_the_review_loop_on_unless_the_user_turned_it_off(home):
-    with given("hub was installed before the review loop shipped"):
+def test_an_update_keeps_the_review_loop_off_and_offers_it_once_so_the_users_own_critic_still_runs(home):
+    with given("hub was installed before the review loop shipped, with hub's critic off, so a critic is the user's own"):
         home.install()
         seen = home.state_file("seen.json")
         seen["parts"] = [part for part in seen["parts"] if part != "review_loop"]
         home.write_json(os.path.join(home.state, "seen.json"), seen)
     with when("the update applies"):
         home.hubctl("apply")
-    with then("the review loop is not offered and is on, so a critic call with no list is stopped"):
-        assert "review_loop" not in [offer["id"] for offer in home.state_file("offers.json")["offers"]]
+    with then("the review loop stays off and is offered once"):
+        record = home.show("--all")["flags"]["review_loop"]
+        assert (record["value"], record["runs"], record["by"]) == ("off", False, "offer")
+        assert offered(home) == ["review_loop"]
+    with and_("the user's own critic call with no acceptance list runs as before"):
+        assert agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
+    with and_("a second apply offers nothing twice"):
+        home.hubctl("apply")
+        assert offered(home) == ["review_loop"]
+    with when("the user takes the offer"):
+        home.hubctl("on", "review_loop")
+    with then("the review loop runs, pinned on by the user, and the same call is stopped"):
+        assert home.settings()["flags"]["review_loop"] == {"by": "user", "value": "on"}
         assert home.show("--all")["flags"]["review_loop"]["runs"]
         assert not agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
-    with when("the user turns it off on their own screen"):
-        home.hubctl_from_mod("off", "review_loop")
-    with then("the same call runs"):
-        assert agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
-    with when("a later update applies, and again hub has not yet seen the review loop as shipped"):
-        seen = home.state_file("seen.json")
-        seen["parts"] = [part for part in seen["parts"] if part != "review_loop"]
-        home.write_json(os.path.join(home.state, "seen.json"), seen)
-        home.hubctl("apply")
-    with then("the review loop stays off, because the user turned it off"):
-        assert home.settings()["flags"]["review_loop"] == {"by": "user", "value": "off"}
-        assert not home.show("--all")["flags"]["review_loop"]["runs"]
-        assert agent_call(home, subagent_type="critic", prompt="Review the export button.").ran
 
 
 def test_the_readme_lists_the_review_loop_as_on_with_texts_only_in_cursor():
