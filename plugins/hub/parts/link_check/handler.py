@@ -1,4 +1,4 @@
-"""link_check: a reply that names a PR, issue or ticket without a link goes back once.
+"""link_check: a reply that names a PR, issue or ticket without a link, or a local file it can not open, goes back once.
 
 At Stop it reads the reply (last_assistant_message, else the last assistant
 text in the transcript), leaves out fenced code, inline code, links and URLs,
@@ -8,6 +8,13 @@ send-back (stop_hook_active) always passes, so it never loops.
 
 A hex colour such as "colour: #123456" is not a PR, and a prefix in
 link_check.tickets.skip, such as UTF in UTF-8, is not a ticket.
+
+The local_paths behavior also sends back a local file the terminal can not
+open with a click: a path that starts with ~/, ./ or a folder in
+link_check.local_paths.folders, and a file name with an ending from
+link_check.local_paths.media but no folder. It reads inline code too, since a
+path in backticks opens no better, but not fenced code, links or URLs. A path
+from the root folder passes, even with spaces in its file name.
 """
 import json
 import re
@@ -23,6 +30,8 @@ ISSUE_REPO = re.compile(r"(?<![\w/])[\w.-]+/[\w.-]+#\d+\b")
 ISSUE_WORD = re.compile(r"\b[Ii]ssue\s+#?(\d+)\b")
 TICKET = re.compile(r"(?<![\w/-])([A-Z][A-Z0-9]{1,9})-(\d+)(?![\w-])")
 COLOUR_BEFORE = re.compile(r"(colou?r|fill|stroke|background|border|bg|hex)\s*:?\s*$", re.I)
+# A path runs to the first space, quote, bracket, comma or semicolon, and never ends on a full stop or colon.
+PATH_CHARACTERS = r"[^\s`'\"()\[\]<>,;]+(?<![.:])"
 
 
 def last_reply(path):
@@ -46,8 +55,8 @@ def last_reply(path):
     return text
 
 
-def prose(text):
-    """The reply without fenced code, inline code, links and URLs."""
+def unfenced(text):
+    """The reply without fenced code blocks."""
     lines, fenced = [], None
     for line in text.splitlines():
         match = FENCE.match(line)
@@ -59,7 +68,52 @@ def prose(text):
             fenced = match.group(1)
             continue
         lines.append(line)
-    return URL.sub(" ", LINK.sub(" ", INLINE_CODE.sub(" ", "\n".join(lines))))
+    return "\n".join(lines)
+
+
+def prose(text):
+    """The reply without fenced code, inline code, links and URLs."""
+    return URL.sub(" ", LINK.sub(" ", INLINE_CODE.sub(" ", unfenced(text))))
+
+
+def relative_path_pattern(folders):
+    starts = ["~/", r"\./"] + [re.escape(folder) + "/" for folder in folders]
+    return re.compile(r"(?<![\w/.~-])(?:" + "|".join(starts) + ")" + PATH_CHARACTERS)
+
+
+def absolute_path_pattern(media):
+    """A path from the root folder. One that ends in a media file may hold spaces, as screenshot names do.
+
+    The part with spaces is capped, so a long line of slashes stays quick to read, and it stops before a
+    later ~/ or ./ path.
+    """
+    ending = r"\.(?:" + "|".join(re.escape(name) for name in media) + r")\b"
+    return re.compile(r"(?<![\w~.])/(?:(?!\s[~.]/)[^\n`,;()\[\]]){0,300}?" + ending + r"|(?<![\w~.])/\S+", re.I)
+
+
+def bare_file_pattern(media):
+    ending = r"\.(?:" + "|".join(re.escape(name) for name in media) + r")\b"
+    return re.compile(r"(?<![\w/.~-])[\w-][\w.-]*" + ending, re.I)
+
+
+def local_paths(text, folders, media):
+    """Local files in the reply that do not open with a click, in the reply's order.
+
+    Fenced code, links and URLs are left out. Inline code stays, without its backticks.
+    """
+    body = URL.sub(" ", LINK.sub(" ", unfenced(text))).replace("`", " ")
+    relative = relative_path_pattern(folders)
+    rest = absolute_path_pattern(media).sub(blank, body) if media else body
+    found = [(match.start(), match.group(0)) for match in relative.finditer(rest)]
+    if media:
+        names = bare_file_pattern(media).finditer(relative.sub(blank, rest))
+        found += [(match.start(), match.group(0)) for match in names]
+    return list(dict.fromkeys(path for _, path in sorted(found)))
+
+
+def blank(match):
+    """Spaces as long as the match, so what is found later keeps its place in the reply."""
+    return " " * len(match.group(0))
 
 
 def bare_references(text, flags):
@@ -81,6 +135,9 @@ def bare_references(text, flags):
         skip = set(flags.value(f"{PART}.tickets.skip") or [])
         found["tickets"] = [match.group(0) for match in TICKET.finditer(body)
                             if match.group(1) not in skip and (not prefixes or match.group(1) in prefixes)]
+    if flags.runs(f"{PART}.local_paths"):
+        found["local_paths"] = local_paths(text, flags.value(f"{PART}.local_paths.folders") or [],
+                                           flags.value(f"{PART}.local_paths.media") or [])
     return {name: list(dict.fromkeys(items)) for name, items in found.items() if items}
 
 
@@ -95,6 +152,8 @@ def handle(event, hook_input, flags, answer):
         return
     for name in found:
         answer.signal(f"{PART}.{name}", "sent_back")
-    references = list(dict.fromkeys(item for items in found.values() for item in items))
-    answer.refuse("Link these before you finish: " + ", ".join(references) +
-                  ". Then send only the lines you fixed, not the whole reply again. (" + PART + ")")
+    paths = found.get("local_paths", [])
+    references = list(dict.fromkeys(item for name, items in found.items() if name != "local_paths" for item in items))
+    asks = ((["Link these before you finish: " + ", ".join(references) + "."] if references else []) +
+            ([flags.text(f"{PART}.local_paths").format(paths=", ".join(paths))] if paths else []))
+    answer.refuse(" ".join(asks) + " Then send only the lines you fixed, not the whole reply again. (" + PART + ")")
