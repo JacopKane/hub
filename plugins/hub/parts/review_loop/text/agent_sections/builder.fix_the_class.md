@@ -1,0 +1,1 @@
+- When the brief names an acceptance list, make each item's check pass. When hub says failures cluster in one function, change the design of that function so the whole kind of failure goes away, instead of adding one more special case.

@@ -1,0 +1,1 @@
+The review of {area} found a {severity} problem outside the list. {finding} Ask the user now, in the coordinator chat when one runs, whether to add it to the list or ship anyway. Keep working while the question waits, because this finding does not stop the loop.

@@ -85,7 +85,9 @@ def test_every_flag_that_runs_only_in_cursor_is_beta_and_defaults_off():
         sys.path.insert(0, os.path.join(PLUGIN, "lib"))
         from hub import resolve
         facts = resolve.facts_for("cursor", {"tools": {"cursor": True}})
-        assert [part.id for part in beta_parts] == ["cursor_link"]
+        # The beta group is pinned on purpose. A new beta part is added here by name, and the loop below
+        # still checks that each one defaults off and is never offered.
+        assert [part.id for part in beta_parts] == ["review_loop", "cursor_link"]
         for part in beta_parts:
             assert resolve.default_value(part, {"tools": {"cursor": True}}, facts) == "off"
             assert "offer_when" not in part.data
@@ -147,35 +149,37 @@ def test_every_door_shows_the_beta_group_with_its_label(home):
         install_with_cursor_in_profile(home)
     with when("hubctl screen --json runs"):
         model = json.loads(home.hubctl("screen", "--json").stdout)
-    with then("the beta group comes last, with its label, and holds cursor_link only"):
+    with then("the beta group comes last, with its label, and holds the review loop and cursor_link only"):
         beta = model["families"][-1]
         assert {key: beta[key] for key in ("family", "label", "parts_on", "parts_total")} == {
-            "family": "beta", "label": "Beta, untested", "parts_on": 0, "parts_total": 1}
-        assert [row["id"] for row in beta["parts"]] == ["cursor_link"]
-        assert beta["parts"][0]["stage"] == "beta"
-    with and_("no other family holds cursor_link, and every other row has no stage"):
+            "family": "beta", "label": "Beta, untested", "parts_on": 0, "parts_total": 2}
+        assert [row["id"] for row in beta["parts"]] == ["review_loop", "cursor_link"]
+        assert [row["stage"] for row in beta["parts"]] == ["beta", "beta"]
+    with and_("no other family holds a beta part, and every other row has no stage"):
         others = [row for family in model["families"][:-1] for row in family["parts"]]
-        assert others and "cursor_link" not in [row["id"] for row in others]
+        assert others and not {"review_loop", "cursor_link"} & {row["id"] for row in others}
         assert all(row["stage"] is None for row in others)
     with when("hubctl show --all runs"):
         shown = home.hubctl("show", "--all").stdout
-    with then("the text has the group's line and marks the part's row"):
-        assert "\nbeta, untested, 0 of 1 on\n" in shown
-        row = [line for line in shown.splitlines() if line.strip().startswith("cursor_link ")]
-        assert len(row) == 1 and row[0].endswith(", beta, untested")
+    with then("the text has the group's line and marks each beta part's row"):
+        assert "\nbeta, untested, 0 of 2 on\n" in shown
+        for part in ("review_loop", "cursor_link"):
+            row = [line for line in shown.splitlines() if line.strip().startswith(f"{part} ")]
+            assert len(row) == 1 and row[0].endswith(", beta, untested"), part
         child = [line for line in shown.splitlines() if line.strip().startswith("plugin ")]
         assert len(child) == 1 and "beta" not in child[0]
     with when("the doctor runs, as text and as JSON"):
         text = home.hubctl("doctor").stdout
         found = json.loads(home.hubctl("doctor", "--json").stdout)
-    with then("both name the beta part and say it is off"):
-        assert "Beta, untested: cursor_link is off.\n" in text
-        assert found["beta"] == [{"part": "cursor_link", "runs": False}]
+    with then("both name the beta parts and say they are off"):
+        assert "Beta, untested: review_loop is off, cursor_link is off.\n" in text
+        assert found["beta"] == [{"part": "review_loop", "runs": False}, {"part": "cursor_link", "runs": False}]
     with when("the user turns cursor_link on"):
         home.hubctl("on", "cursor_link")
-    with then("the doctor and the screen say it is on"):
-        assert "Beta, untested: cursor_link is on.\n" in home.hubctl("doctor").stdout
-        assert json.loads(home.hubctl("doctor", "--json").stdout)["beta"] == [{"part": "cursor_link", "runs": True}]
+    with then("the doctor and the screen say it is on, and the review loop stays off"):
+        assert "Beta, untested: review_loop is off, cursor_link is on.\n" in home.hubctl("doctor").stdout
+        assert json.loads(home.hubctl("doctor", "--json").stdout)["beta"] == [
+            {"part": "review_loop", "runs": False}, {"part": "cursor_link", "runs": True}]
         assert json.loads(home.hubctl("screen", "--json").stdout)["families"][-1]["parts_on"] == 1
 
 
