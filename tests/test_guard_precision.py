@@ -172,8 +172,8 @@ def test_quoted_env_settings_and_help_reads_run_while_hidden_program_and_code_wo
 
 
 MOVED_HOME = [
-    'env HOME=/srv/scratch/home XDG_CONFIG_HOME=/srv/scratch/home/config "PATH=/opt/tools/bin:$PATH" hubctl on queue',
-    "env HOME=/srv/scratch/home XDG_CONFIG_HOME=/srv/scratch/home/config PATH=/opt/tools/bin hubctl on queue",
+    'env HOME=/srv/scratch/home XDG_CONFIG_HOME=/srv/scratch/config "PATH=/opt/tools/bin:$PATH" hubctl on queue',
+    "env HOME=/srv/scratch/home XDG_CONFIG_HOME=/srv/scratch/config PATH=/opt/tools/bin hubctl on queue",
     "HOME=/srv/scratch/home hubctl on queue",
     "export XDG_STATE_HOME=/srv/scratch/state; hubctl on queue",
     "CLAUDE_CONFIG_DIR=/srv/scratch/claude hubctl off queue",
