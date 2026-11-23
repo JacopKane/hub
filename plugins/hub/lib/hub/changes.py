@@ -24,7 +24,8 @@ class ChangeError(ValueError):
 # set_flag's expected value when any value may be overwritten.
 ANY = object()
 
-PINNED_BY_USER = ("The user set {flag} by hand, so it changes only when the user asks for it in their own words.")
+PINNED_BY_USER = ("The user set {flag} by hand, so it changes only when the user asks for it in their own words, "
+                  "or with /hub where Claude Code loads plugin mods.")
 CHANGED_WHILE_RUNNING = ("Nothing changed, because {flag} changed while hub ran and this change would now "
                          "weaken it. Run it again to check against the new value.")
 USER_ONLY_VERB = "Only the user can {verb}, with /hub where Claude Code loads plugin mods. A command the model runs can not."

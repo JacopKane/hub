@@ -1,0 +1,1 @@
+The prompt asks to change {flag}, and a Claude run writes its prompt into its own chat as if the user typed it. Ask the user to make the change in their own words in this chat, or with /hub where Claude Code loads plugin mods.

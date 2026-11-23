@@ -51,13 +51,16 @@ TICKET_WAIT_SECONDS = 2
 TICKET = re.compile(r"[0-9a-f]{64}")
 
 ASK_THE_USER = ("{flag} is protected, and this change weakens it, so it runs only when the user asks for it. "
-                "Ask the user to say the change in their own words.")
-NO_DOOR = ("{flag} is protected, so only the user can weaken it, by asking for the change in their own words. If "
-           "a model runs this, ask the user.")
+                "Ask the user to say the change in their own words, or to make it with /hub where Claude Code "
+                "loads plugin mods.")
+NO_DOOR = ("{flag} is protected, so only the user can weaken it, by asking for the change in their own words or "
+           "with /hub where Claude Code loads plugin mods. If a model runs this, ask the user.")
 STOPS_ASK_THE_USER = ("This change to {flag} stops {stopped}, and only the user can weaken {stopped}. It runs only "
-                      "when the user asks for it. Ask the user to say the change to {flag} in their own words.")
+                      "when the user asks for it. Ask the user to say the change to {flag} in their own words, or "
+                      "to make it with /hub where Claude Code loads plugin mods.")
 STOPS_NO_DOOR = ("This change to {flag} stops {stopped}, and only the user can weaken {stopped}, by asking for the "
-                 "change in their own words. If a model runs this, ask the user.")
+                 "change in their own words or with /hub where Claude Code loads plugin mods. If a model runs "
+                 "this, ask the user.")
 
 
 def under_guard(node):
