@@ -125,20 +125,16 @@ def test_the_limits_page_is_linked_from_the_readme_says_it_is_no_sandbox_and_nam
     with and_("it has one part for each kind of limit"):
         headings = [line for line in page.split("\n") if line.startswith("## ")]
         assert headings == ["## How hub reads your order", "## Words that only look typed",
-                            "## Steps that another program starts", "## Writes hub does not see", "## Cursor"]
-    with and_("it names each limit as hub has it today"):
+                            "## Writes hub does not see", "## Cursor"]
+    with and_("it names each design limit as hub has it today"):
         for words in ("Your order is the newest message you typed", "another chat arrives after it",
-                      "Try to turn off", "uninstall hub", "saved history", "can not tell such a line from a typed one",
-                      "Keys that a program types", "does not see every way a run can start",
-                      "read a script from their input", "a value you set by hand", "hub does not judge these steps",
-                      "a file the command does not name", "even one you pinned", "lower a privacy flag",
-                      "changes hub's own code", "Cursor support is in beta"):
+                      "Try to turn off", "uninstall hub", "read a script from their input",
+                      "a file the command does not name", "reads the chat and the commands Claude writes",
+                      "Anything else on your machine that can change those files is outside its checks",
+                      "Cursor support is in beta"):
             assert words in page, words
-    with and_("it marks each fix that has not landed as planned, and claims none of them as in place"):
-        for words in ("hub plans to keep your order", "hub plans to make such orders work",
-                      "A check of such prompts is planned", "hub plans to refuse their change",
-                      "hub plans to skip every repo value", "hub plans to count a line as your order only"):
-            assert words in page, words
+    with and_("it names no planned fix, and claims no fix as in place"):
+        assert "plans" not in page and "planned" not in page
         for claim in ("does not end your order", "works even while the lowering check is off",
                       "with the lowering check on or off", "can never change a value you pinned"):
             assert claim not in page, claim
