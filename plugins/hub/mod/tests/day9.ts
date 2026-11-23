@@ -12,8 +12,8 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 9,
-    "parts_total": 36,
+    "parts_on": 10,
+    "parts_total": 37,
     "start_text": 1210
   },
   "strip": [
@@ -635,8 +635,8 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "rules",
-      "parts_on": 1,
-      "parts_total": 6,
+      "parts_on": 2,
+      "parts_total": 7,
       "parts": [
         {
           "id": "hub_style",
@@ -715,6 +715,24 @@ export const DAY9: HubScreen = /* json */ {
           "name": "pr",
           "depth": 0,
           "does": "Opens and updates pull requests the way each repo's guide asks. Steps that notify people wait for the user's order.",
+          "value": "on",
+          "effective": "on",
+          "runs": true,
+          "by": "default",
+          "scope": "shipped",
+          "relevant": true,
+          "hidden_because": null,
+          "cost": "",
+          "next_session": true,
+          "claude_code_only": false,
+          "stage": null,
+          "children": []
+        },
+        {
+          "id": "pr_gif",
+          "name": "pr_gif",
+          "depth": 0,
+          "does": "A skill for a GIF or an image in a PR body or comment. It records the real product, checks each frame for private data, uploads the file as a GitHub attachment and embeds it with a caption.",
           "value": "on",
           "effective": "on",
           "runs": true,
