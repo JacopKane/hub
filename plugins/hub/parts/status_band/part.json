@@ -6,7 +6,7 @@
   "default": "on",
   "runs_in": ["claude_code"],
   "reason_not_in": {"cursor": "Cursor has no mods, so it has no band. Ask what hub has on to see the same state."},
-  "does": "A line above the prompt with hub's state, the tuner's last change and open offers.",
+  "does": "Two rows above the prompt. The top row shows your other chats and the features button. The second shows the newest change or offer with its buttons, or hub's state when there is none.",
   "children": [
     {"id": "state", "default": "on", "does": "Shows the parts that run and the start text they cost."},
     {

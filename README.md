@@ -166,7 +166,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | permission_relay | Shows the coordinator the permission prompts waiting in other chats. It approves nothing | off | Claude Code | "turn on the permission relay" |
 | queue | Holds a message to an idle chat for a short time, so two quick messages wake it once | off | Claude Code | "turn on the queue" |
 | restart | Restarts the running chats, each under its own name | off | Claude Code | "turn on restart" |
-| status_band | A line above the prompt with hub's state, recent changes and offers | on | Claude Code | "turn off the status band" |
+| status_band | Two rows above the prompt with your other chats, hub's state, recent changes and offers | on | Claude Code | "turn off the status band" |
 | cursor_link | Beta. Gives Cursor the same parts, hooks and agents | off | Claude Code, Cursor | "turn on the Cursor link" |
 
 Each part also has smaller switches inside it, such as an agent's model and effort. They switch the same way.
