@@ -151,7 +151,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | context_budget | Tells a chat or an agent when its context gets big, and the main chat when the ledger or memory outgrows its limits | off | Claude Code | "turn on the context budget" |
 | handback_cap | Keeps an agent's report under a word cap | off | Claude Code | "turn on the hand-back cap" |
 | live_notes | Gives each agent the chat's live notes file, so new rules reach it | off | Claude Code | "turn on live notes" |
-| away_guard | Holds question dialogs while you are away, except urgent ones | off | Claude Code | "turn on the away guard" |
+| away_guard | Tells a chat when you are away, so it keeps working while a question waits. It never holds a question | off | Claude Code | "turn on the away guard" |
 | knowledge_only | Reminds the chat to explain shared material and change nothing | off | Claude Code | "turn on knowledge only" |
 | question_check | Opens a question dialog only when it carries enough context to answer | off | Claude Code | "turn on the question check" |
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |

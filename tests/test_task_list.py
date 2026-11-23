@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from conftest import load_fixture
-from dialogs import prompt, set_clock
+from dialogs import prompt
 from steps import and_, given, then, when
 from test_dispatch_order import EveryToolGroup
 
@@ -517,15 +517,12 @@ def test_a_question_dialog_without_a_question_list_is_named_by_its_call(tasks_on
 
 def test_a_question_another_part_refuses_opens_nothing(tasks_on):
     home = tasks_on
-    with given("away_guard holds questions, since the user typed last 61 minutes ago"):
-        home.hubctl("on", "away_guard")
-        set_clock(home, "2026-03-02T08:00:00Z")
-        prompt(home, "Add the layout test, then wait for me.")
-        set_clock(home, "2026-03-02T09:01:00Z")
-    with when("a chat opens a question dialog with no urgent mark"):
+    with given("question_check is on"):
+        home.hubctl("on", "question_check")
+    with when("a chat opens a short question dialog that gives no context"):
         result = send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
-    with then("the dialog is held and the task list has no question"):
-        assert result.refused and listed(home) == []
+    with then("question_check refuses it and the task list has no question"):
+        assert result.refused and "question_check" in result.reason and listed(home) == []
 
 
 def test_a_permission_prompt_needs_you_until_the_call_runs(tasks_on):
@@ -731,20 +728,17 @@ def test_the_view_and_brief_put_what_needs_you_first(tasks_on):
 
 
 @pytest.mark.parametrize("record", ["{not json", "[1, 2]"])
-def test_a_bad_chat_record_still_lets_later_parts_hold_a_question(tasks_on, record):
+def test_a_bad_chat_record_still_lets_later_parts_refuse_a_question(tasks_on, record):
     home = tasks_on
-    with given("away_guard holds questions, and hub's record of the asking chat is damaged"):
-        home.hubctl("on", "away_guard")
-        set_clock(home, "2026-03-02T08:00:00Z")
-        prompt(home, "Add the layout test, then wait for me.")
-        set_clock(home, "2026-03-02T09:01:00Z")
+    with given("question_check is on, and hub's record of the asking chat is damaged"):
+        home.hubctl("on", "question_check")
         folder = os.path.join(home.state, "sessions")
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, f"{SENDER}.json"), "w") as handle:
             handle.write(record)
     with when("that chat opens a question dialog with no title in the hook input"):
         result = send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
-    with then("the dialog is still held and the task list has no question"):
-        assert result.refused and listed(home) == []
+    with then("question_check still refuses it and the task list has no question"):
+        assert result.refused and "question_check" in result.reason and listed(home) == []
     with and_("the same chat's next prompt runs through every part without an error"):
         prompt(home, "Go on.", session=SENDER)
