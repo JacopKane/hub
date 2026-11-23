@@ -48,7 +48,7 @@ Known limits:
 
 - `/hub` and the status band are optional extras. They work where Claude Code loads plugin mods. Without the mod, plain words still switch parts, lower a protection and uninstall hub. Only pinning a value and taking or declining an offer need `/hub`.
 - In Cursor, a protection cannot be lowered by words. Lower it from Claude Code instead.
-- The gate refuses a home or temp folder path on every try. A pasted build log with `/tmp/` paths has to come out before the commit goes through.
+- The gate refuses a home or temp folder path on every try. A pasted build log with `/tmp/` paths has to come out before the commit goes through. In a repo inside a temp folder with no remote, the gate checks the commits when they are pushed.
 - Restarting chats from hub works only in iTerm2 or tmux.
 - Self-protection reads the chat and the commands Claude writes. It is not a sandbox. [Self-protection limits](docs/self-protection-limits.md) names where its checks end.
 
@@ -156,9 +156,11 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | question_check | Opens a question dialog only when it carries enough context to answer | off | Claude Code | "turn on the question check" |
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
 | em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
+| temp repos (in public_text_gate) | Skips the checks on commits in a repo inside a temp folder with no remote. A push of those commits is still checked | on | Claude Code, Cursor | "turn off temp repos" |
 | pr_flow | Planned, not in this version yet. Sends a change to hub's own repo as a draft pull request, and holds every GitHub write there until you say yes to the exact lines | off | Claude Code | "turn on the PR flow" |
 | pr_test_gate | Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report, which `pr-tested` records. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
+| containers (in self_protection) | Lets hub's switch step run in a container that can not reach your home folder, where it changes only the container's copy of hub's settings | on | Claude Code, Cursor | "turn off containers" |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |
 | sentry_write_gate | Experimental. Asks before a Sentry tool changes what the team sees | off | Claude Code | "turn on the Sentry gate" |
 | slack_write_gate | Experimental. Lets a chat read Slack but never post | off | Claude Code | "turn on the Slack gate" |

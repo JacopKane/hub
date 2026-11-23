@@ -136,7 +136,9 @@ def test_the_limits_page_is_linked_from_the_readme_says_it_is_no_sandbox_and_nam
         sections = {part.split("\n", 1)[0]: part.split("\n", 1)[1].strip() for part in page.split("\n## ")[1:]}
         assert sections["What it does not watch"] == (
             "Self-protection reads the chat and the commands Claude writes. Anything else on your machine "
-            "that can change those files is outside its checks. It is not a sandbox.")
+            "that can change those files is outside its checks. It is not a sandbox. hub does not check its "
+            "own switch step against your settings when the step runs in a container that can not reach your "
+            "home folder. There the step changes only the container's copy of hub's settings.")
         assert sections["Cursor"] == "Cursor support is in beta."
     with and_("it names no planned fix, and claims no fix as in place"):
         assert "plans" not in page and "planned" not in page

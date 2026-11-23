@@ -1,0 +1,1 @@
+A gh api read may hold a variable in its endpoint if the endpoint is in double quotes and starts with fixed text, as in "repos/example/demo/pulls/$number/files". Any other word hub can not read makes the call count as a possible write.

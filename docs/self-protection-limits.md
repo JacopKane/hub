@@ -12,7 +12,7 @@ A protection is lowered only when you ask for it in your own words in the chat, 
 
 ## What it does not watch
 
-Self-protection reads the chat and the commands Claude writes. Anything else on your machine that can change those files is outside its checks. It is not a sandbox.
+Self-protection reads the chat and the commands Claude writes. Anything else on your machine that can change those files is outside its checks. It is not a sandbox. hub does not check its own switch step against your settings when the step runs in a container that can not reach your home folder. There the step changes only the container's copy of hub's settings.
 
 ## Cursor
 
