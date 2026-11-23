@@ -1,0 +1,1 @@
+hub stopped this write, because {path} would go further than its zone allows. It holds {zone} content, and its folder {reach}. Ask the user the zone question before you try again. They can keep it local at {instead}, share the folder (only their own typed "share {folder}" allows that), or skip.
