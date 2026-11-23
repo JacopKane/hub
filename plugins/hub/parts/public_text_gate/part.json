@@ -64,6 +64,8 @@
     },
     {"id": "public_repos_only", "kind": "option", "default": "off", "privacy": "loosens",
      "does": "Checks only repos the profile marks public."},
+    {"id": "temp_repos", "kind": "option", "default": "on", "privacy": "loosens",
+     "does": "Skips the checks on commits in a git repo inside a temp folder with no remote. A push of those commits is still checked."},
     {
       "id": "instructions",
       "kind": "group",
