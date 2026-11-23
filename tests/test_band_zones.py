@@ -2,8 +2,9 @@
 
 The band draws `hubctl screen --json`, which the mod runs as a child of its
 chat. So each chat here runs that command as its own child, and the screen's
-"board" key is what its band would show. The mod picks the full or folded
-chats zone by the width it draws at; tests in plugins/hub/mod/tests check that.
+"board" key is what its band would show. The mod picks the full zone, the
+names that fit plus +N, or the folded zone by the width it draws at; tests in
+plugins/hub/mod/tests check that.
 """
 import json
 import os
@@ -94,6 +95,12 @@ def test_the_band_names_the_chat_that_needs_the_user_and_counts_the_rest(home, c
         assert zone["full"] == "! API  ● DOCS 2/3  ○ LOBBY"
         assert zone["full_cells"] == 26
         assert "WEB" not in zone["full"] + zone["folded"]
+    with and_("each other chat is also an entry with its width and whether it asks, so the band can show the "
+              "names that fit and +N and never hide a chat that asks in +N"):
+        assert zone["entries"] == [{"text": "! API", "cells": 5, "asks": True},
+                                   {"text": "● DOCS 2/3", "cells": 10, "asks": False},
+                                   {"text": "○ LOBBY", "cells": 7, "asks": False}]
+        assert "  ".join(entry["text"] for entry in zone["entries"]) == zone["full"]
     with and_("the folded zone reads \"! API ●1 ○1\", so API keeps its name"):
         assert zone["folded"] == "! API ●1 ○1"
         assert zone["folded_cells"] == 11
@@ -193,10 +200,26 @@ def test_wide_names_count_two_cells_each(home, chats):
         web = start(chats, "WEB")["WEB"]
         chats.start("WIDE", title="文档", live=True)
         chats.send("WIDE", "Stop", stop_hook_active=False)
-    with then("its zone counts each wide letter as two cells"):
+    with then("its zone and its entry count each wide letter as two cells"):
         zone = screen_in(home, web)["board"]["chats"]
         assert zone["full"] == "○ 文档"
         assert zone["full_cells"] == 6
+        assert zone["entries"] == [{"text": "○ 文档", "cells": 6, "asks": False}]
+
+
+def test_a_question_in_wide_letters_and_emoji_sends_its_width_in_cells(home, chats):
+    with given("chat_board is on, and a chat named 文✅ asks a question"):
+        board_on(home)
+        web = start(chats, "WEB")["WEB"]
+        chats.start("WIDE", title="文✅", live=True)
+        chats.tool("WIDE", "AskUserQuestion", FULL)
+    with when("WEB's band reads the screen"):
+        zone = screen_in(home, web)["board"]["chats"]
+    with then("the question line counts 文 and ✅ as two cells each, as a terminal draws them"):
+        assert zone["question"]["line"] == "! 文✅ asks  which retry limit?"
+        assert zone["question"]["cells"] == 31
+    with and_("its entry counts them the same way and says it asks"):
+        assert zone["entries"] == [{"text": "! 文✅", "cells": 6, "asks": True}]
 
 
 def test_more_than_99_other_chats_fold_to_99_plus(home, chats):

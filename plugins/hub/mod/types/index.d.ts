@@ -27,14 +27,16 @@ export type HubBandFlags = {
 // What the mod's last session start found, as the step keeps it for the doctor.
 export type HubCommandClash = { used: string | null; refused: Record<string, string>; folder: string; time: string }
 
-// The band's chats zone: the other chats in full and folded to counters, with their width in
-// terminal cells, and the question of the first other chat that needs the user.
+// The band's chats zone: the other chats in full, folded to counters and one entry per chat, with
+// their width in terminal cells and whether the chat asks (those come first), and the question of
+// the first other chat that needs the user, with its line's width in cells.
 export type HubChatsZone = {
   full: string
   full_cells: number
   folded: string
   folded_cells: number
-  question: { chat: string; session: string; line: string } | null
+  entries: { text: string; cells: number; asks: boolean }[]
+  question: { chat: string; session: string; line: string; cells: number } | null
 }
 
 export type HubScreen = {

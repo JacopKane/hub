@@ -2,7 +2,7 @@
 // The hooks registered here stand for the engine: process.run answers as hubctl would,
 // with the day 9 model from day9.ts, so no test starts a real process.
 import { expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, FoundElement } from 'claude-code/testing'
 import type { ModelCompleteInput, ModelCompleteResult, On, PromptOrigin } from 'claude-code'
 
 import type { HubScreen } from '../types'
@@ -116,8 +116,9 @@ for (const surface of SURFACES) {
     const undo = await ui.find({ type: 'Button', key: 'd9dash000001:undo' })
     expect(undo?.props.label).toBe('undo')
     expect(undo?.props.hotkey).toBe('2')
-    // The undo, then the features button that opens the picker.
-    expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['d9dash000001:undo', 'features'])
+    // The features button that opens the picker sits on the top row, and the undo on the event row below it.
+    expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features', 'd9dash000001:undo'])
+    expect((await ui.find({ type: 'Box', key: 'top' }))?.children.some(child => (child as FoundElement).props.key === 'features')).toBe(true)
 
     await ui.press({ key: 'd9dash000001:undo' })
     expect(hubctlArgs(calls).slice(-2)).toEqual(['undo d9dash000001', 'screen --json --band'])
@@ -129,9 +130,9 @@ for (const surface of SURFACES) {
     )
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([
+      ['features', 'f'],
       ['turn on', '2'],
       ['no', '3'],
-      ['features', 'f'],
     ])
     await ui.unmount()
   })
@@ -549,9 +550,67 @@ const ZONE = {
   full_cells: 26,
   folded: '! API ●1 ○1',
   folded_cells: 11,
-  question: { chat: 'API', session: API_SESSION, line: '! API asks  which retry limit?' },
+  entries: [
+    { text: '! API', cells: 5, asks: true },
+    { text: '● DOCS 2/3', cells: 10, asks: false },
+    { text: '○ LOBBY', cells: 7, asks: false },
+  ],
+  question: { chat: 'API', session: API_SESSION, line: '! API asks  which retry limit?', cells: 30 },
 }
 const CARD = '! API  needs you\n  asks which retry limit?\n'
+const TUNER_LINE = '- tuner turned public_text_gate.dashes off · you went ahead after 4 of 5 dash warnings this week'
+
+// Five idle chats, as the design shows them.
+const FIVE_NAMES = ['INSTAGRAM', 'OPEN-SOURCE', 'MUSIC', 'EXPENSES', 'CAREER']
+const FIVE_ENTRIES = FIVE_NAMES.map(name => ({ text: `○ ${name}`, cells: name.length + 2, asks: false }))
+const FIVE = {
+  full: FIVE_ENTRIES.map(entry => entry.text).join('  '),
+  full_cells: 57,
+  folded: '○5',
+  folded_cells: 2,
+  entries: FIVE_ENTRIES,
+  question: null,
+}
+
+// What a terminal draws for an element of the tree: a Text's string children, a Button as
+// "[ label ]", a Box as its children side by side, or one under the other in a column.
+function drawnText(node: unknown): string {
+  if (typeof node === 'string') {
+    return node
+  }
+  if (typeof node !== 'object' || node === null) {
+    return ''
+  }
+  const element = node as FoundElement
+  if (element.type === 'Button') {
+    return `[ ${String(element.props.label)} ]`
+  }
+  return element.children.map(drawnText).join(element.props.flexDirection === 'column' ? '\n' : '')
+}
+
+// The two rows: "top" holds the label, the chats, the rule, ✗N and features, "event" the newest event.
+async function row(ui: Awaited<ReturnType<Engine['ui']['mount']>>, key: 'top' | 'event') {
+  const found = await ui.find({ type: 'Box', key })
+  return found === undefined ? undefined : drawnText(found)
+}
+
+function ruleOf(cells: number) {
+  return ` ${'─'.repeat(cells)} `
+}
+
+// How the event's text is laid out: its room, its wrap and line limit, and whether its buttons
+// sit beside it (row) or below it (column).
+async function noticeLayout(ui: Awaited<ReturnType<Engine['ui']['mount']>>) {
+  const event = await ui.find({ type: 'Box', key: 'event' })
+  const notice = await ui.find({ type: 'Box', key: 'notice' })
+  const text = notice?.children[0] as FoundElement | undefined
+  return {
+    direction: event?.props.flexDirection,
+    width: notice?.props.width,
+    wrap: text?.props.wrap,
+    maxLines: text?.props.maxLines,
+  }
+}
 
 function withBoard(chats: HubScreen['board']['chats'], failed = 0, band: Partial<HubScreen['band']> = {}): HubScreen {
   return { ...DAY9, band: { ...DAY9.band, chats: chats !== null, ...band }, board: { ...DAY9.board, chats, failed } }
@@ -575,9 +634,10 @@ for (const surface of SURFACES) {
     const calls = await start($, on, args => (args[0] === 'board' ? ok(CARD) : json(withBoard(ZONE))))
 
     const ui = await $.ui.mount({ ...wide(120), surface })
-    expect(await texts(ui)).toEqual(['1 hub', ' │ ', ZONE.full, ' │ ', ZONE.question.line])
+    expect(await row(ui, 'top')).toBe(`1 hub ── ${ZONE.full}${ruleOf(71)}[ features ]`)
+    expect(await row(ui, 'event')).toBe(`${ZONE.question.line}  [ open ]`)
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([['open', '2'], ['features', 'f']])
+    expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([['features', 'f'], ['open', '2']])
 
     await ui.press({ key: `open:${API_SESSION}` })
     expect(hubctlArgs(calls).slice(-1)).toEqual([`board show ${API_SESSION}`])
@@ -586,26 +646,27 @@ for (const surface of SURFACES) {
   })
 }
 
-test('at 60 columns the chats zone folds to counters, and the chat that needs the user keeps its name', async ($, on) => {
+test('at 40 columns the chats show the names that fit and +N, the chat that needs the user first', async ($, on) => {
   await start($, on, () => json(withBoard(ZONE)))
 
-  const ui = await $.ui.mount({ ...wide(60), surface: 'terminal' })
-  expect(await texts(ui)).toContain('! API ●1 ○1')
-  expect(await texts(ui)).not.toContain(ZONE.full)
+  const ui = await $.ui.mount({ ...wide(40), surface: 'terminal' })
+  expect(await row(ui, 'top')).toBe(`1 hub ── ! API  +2${ruleOf(8)}[ features ]`)
+  expect(await row(ui, 'event')).toBe(`${ZONE.question.line}  [ open ]`)
   await ui.unmount()
 })
 
-test('a zone that does not fit even folded is cut to its share of the line', async ($, on) => {
+test('a zone where not even one name fits is the folded counters, cut to fit the row', async ($, on) => {
   await start($, on, () => json(withBoard(ZONE)))
 
-  const ui = await $.ui.mount({ ...wide(20), surface: 'terminal' })
+  const ui = await $.ui.mount({ ...wide(30), surface: 'terminal' })
   const zone = await ui.find({ type: 'Box', key: 'chats' })
-  expect(zone?.props.width).toBe(8)
-  expect(await texts(ui)).toContain(ZONE.folded)
+  expect(zone?.props.width).toBe(4)
+  expect(zone?.text).toBe(ZONE.folded)
+  expect((await ui.find({ type: 'Box', key: 'rule' }))?.text).toBe(ruleOf(3))
   await ui.unmount()
 })
 
-test('the failed checks show as ✗ and their count at the right edge, and none shows nothing', async ($, on) => {
+test('the failed checks show as ✗ and their count just before features, and none shows nothing', async ($, on) => {
   let screen = withBoard(ZONE, 2)
   await start($, on, args => {
     if (args[0] === 'off') {
@@ -616,7 +677,7 @@ test('the failed checks show as ✗ and their count at the right edge, and none 
   })
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect((await texts(ui)).slice(-1)).toEqual(['✗2'])
+  expect(await row(ui, 'top')).toBe(`1 hub ── ${ZONE.full}${ruleOf(68)}✗2 [ features ]`)
 
   await $.command.run({ command: 'hub', args: 'off public_text_gate.dashes', origin: TYPED })
   expect((await texts(ui)).some(text => text.startsWith('✗'))).toBe(false)
@@ -627,7 +688,7 @@ test('more than 99 failed checks show as ✗99+', async ($, on) => {
   await start($, on, () => json(withBoard(null, 120)))
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect((await texts(ui)).slice(-1)).toEqual(['✗99+'])
+  expect(await row(ui, 'top')).toBe(`1 hub${ruleOf(96)}✗99+ [ features ]`)
   await ui.unmount()
 })
 
@@ -644,23 +705,27 @@ test('with no chats zone the band keeps its other zones, and the tuner line come
   await start($, on, () => json(withBoard(null, 1)))
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect(await texts(ui)).toEqual([
-    '1 hub',
-    ' │ ',
-    '- tuner turned public_text_gate.dashes off · you went ahead after 4 of 5 dash warnings this week',
-    ' │ ',
-    '✗1',
-  ])
+  expect(await row(ui, 'top')).toBe(`1 hub${ruleOf(98)}✗1 [ features ]`)
+  expect(await row(ui, 'event')).toBe(`${TUNER_LINE}  [ undo ]`)
   expect((await ui.find({ type: 'Button', key: 'd9dash000001:undo' }))?.props.hotkey).toBe('2')
   await ui.unmount()
 })
 
 test('other chats with no question show the zone beside the tuner line', async ($, on) => {
-  const calm = { ...ZONE, full: '● DOCS 2/3  ○ LOBBY', full_cells: 19, folded: '●1 ○1', folded_cells: 5, question: null }
+  const calm = {
+    ...ZONE,
+    full: '● DOCS 2/3  ○ LOBBY',
+    full_cells: 19,
+    folded: '●1 ○1',
+    folded_cells: 5,
+    entries: ZONE.entries.slice(1),
+    question: null,
+  }
   await start($, on, () => json(withBoard(calm)))
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect((await texts(ui)).slice(0, 4)).toEqual(['1 hub', ' │ ', calm.full, ' │ '])
+  expect(await row(ui, 'top')).toBe(`1 hub ── ${calm.full}${ruleOf(78)}[ features ]`)
+  expect(await row(ui, 'event')).toBe(`${TUNER_LINE}  [ undo ]`)
   expect(await ui.find({ type: 'Button', key: 'd9dash000001:undo' })).toBeDefined()
   await ui.unmount()
 })
@@ -669,8 +734,221 @@ test('the zone alone still draws when no notice and no state is shown', async ($
   await start($, on, () => json(withBoard({ ...ZONE, question: null }, 0, { notices: false, offers: false, state: false })))
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect(await texts(ui)).toEqual(['1 hub', ' │ ', ZONE.full])
+  expect(await row(ui, 'top')).toBe(`1 hub ── ${ZONE.full}${ruleOf(71)}[ features ]`)
+  expect(await row(ui, 'event')).toBeUndefined()
   await ui.unmount()
+})
+
+// The design's widths: a wide terminal, a split pane and a phone.
+const FIVE_AT = [
+  {
+    columns: 135,
+    chats: FIVE.full,
+    rule: 55,
+    event: `${TUNER_LINE}  [ undo ]`,
+    notice: { direction: 'row', width: 96, wrap: 'truncate-end', maxLines: 1 },
+  },
+  {
+    columns: 75,
+    chats: '○ INSTAGRAM  ○ OPEN-SOURCE  ○ MUSIC  +2',
+    rule: 13,
+    event: `${TUNER_LINE}  [ undo ]`,
+    notice: { direction: 'row', width: 65, wrap: 'truncate-end', maxLines: 1 },
+  },
+  {
+    columns: 35,
+    chats: '○5',
+    rule: 10,
+    event: `${TUNER_LINE}\n[ undo ]`,
+    notice: { direction: 'column', width: 35, wrap: 'wrap', maxLines: 2 },
+  },
+] as const
+
+for (const { columns, chats, rule, event, notice } of FIVE_AT) {
+  test(`at ${columns} columns five idle chats fill the top row exactly, the event row holds the tuner line and undo, and goes with no event`, async ($, on) => {
+    let screen = withBoard(FIVE)
+    await start($, on, args => {
+      if (args[0] === 'off') {
+        screen = withBoard(FIVE, 0, { notices: false, offers: false, state: false })
+        return ok(ROW)
+      }
+      return json(screen)
+    })
+
+    const ui = await $.ui.mount({ ...wide(columns), surface: 'terminal' })
+    const top = `1 hub ── ${chats}${ruleOf(rule)}[ features ]`
+    expect(await row(ui, 'top')).toBe(top)
+    expect([...top]).toHaveLength(columns)
+    expect(await row(ui, 'event')).toBe(event)
+    expect(await noticeLayout(ui)).toEqual(notice)
+
+    await $.command.run({ command: 'hub', args: 'off status_band.state', origin: TYPED })
+    expect(await row(ui, 'top')).toBe(top)
+    expect(await row(ui, 'event')).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+test('names that do not fit become +N, counted in terminal cells, so a wide letter takes two', async ($, on) => {
+  const entries = [
+    { text: '○ 文档文档', cells: 10, asks: false },
+    { text: '○ WEB', cells: 5, asks: false },
+    { text: '○ API', cells: 5, asks: false },
+  ]
+  const chats = { full: entries.map(entry => entry.text).join('  '), full_cells: 24, folded: '○3', folded_cells: 2, entries, question: null }
+  await start($, on, () => json(withBoard(chats)))
+
+  const ui = await $.ui.mount({ ...wide(48), surface: 'terminal' })
+  expect(await row(ui, 'top')).toBe(`1 hub ── ○ 文档文档  ○ WEB  +1${ruleOf(4)}[ features ]`)
+  await ui.unmount()
+})
+
+test('a question in wide letters and emoji keeps its last letter, since its width in cells comes from hubctl', async ($, on) => {
+  // Python counts 文 and ✅ as two cells each, so the line is 31 cells wide.
+  const line = '! 文✅ asks  which retry limit?'
+  const chats = {
+    full: '! 文✅',
+    full_cells: 6,
+    folded: '! 文✅',
+    folded_cells: 6,
+    entries: [{ text: '! 文✅', cells: 6, asks: true }],
+    question: { chat: '文✅', session: API_SESSION, line, cells: 31 },
+  }
+  await start($, on, () => json(withBoard(chats)))
+
+  const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
+  expect(await row(ui, 'event')).toBe(`${line}  [ open ]`)
+  expect(await noticeLayout(ui)).toEqual({ direction: 'row', width: 31, wrap: 'truncate-end', maxLines: 1 })
+  await ui.unmount()
+})
+
+// Two chats that ask, with names long enough that only one of them fits beside +N at 75 columns.
+const TWO_ASKING = [
+  { text: '! RELEASE-NOTES-CHECKING', cells: 24, asks: true },
+  { text: '! DEPENDENCY-UPGRADE-RUN', cells: 24, asks: true },
+  { text: '○ MUSIC', cells: 7, asks: false },
+  { text: '○ CAREER', cells: 8, asks: false },
+]
+const TWO_ASKING_FOLDED = '! RELEASE-NOTES-CHECKING ! DEPENDENCY-UPGRADE-RUN ○2'
+
+test('a chat that asks never hides in +N: when not every chat that asks fits, the band shows the folded counters', async ($, on) => {
+  const chats = {
+    full: TWO_ASKING.map(entry => entry.text).join('  '),
+    full_cells: 69,
+    folded: TWO_ASKING_FOLDED,
+    folded_cells: 52,
+    entries: TWO_ASKING,
+    question: { chat: 'RELEASE-NOTES-CHECKING', session: API_SESSION, line: '! RELEASE-NOTES-CHECKING asks  ship it?', cells: 39 },
+  }
+  await start($, on, () => json(withBoard(chats)))
+
+  // At 81 columns both chats that ask fit with +2, so only the idle chats fold into it.
+  const roomy = await $.ui.mount({ ...wide(81), surface: 'terminal' })
+  expect(await row(roomy, 'top')).toBe(`1 hub ── ! RELEASE-NOTES-CHECKING  ! DEPENDENCY-UPGRADE-RUN  +2${ruleOf(4)}[ features ]`)
+  await roomy.unmount()
+
+  // At 75 columns only the first would fit beside +3, which would hide the second one's !.
+  const ui = await $.ui.mount({ ...wide(75), surface: 'terminal' })
+  const zone = await ui.find({ type: 'Box', key: 'chats' })
+  expect(zone?.text).toBe(TWO_ASKING_FOLDED)
+  expect(zone?.props.width).toBe(49)
+  const drawn = [...TWO_ASKING_FOLDED].slice(0, 49).join('')
+  expect(drawn.split('!').length - 1).toBe(2)
+  expect(await row(ui, 'top')).toBe(`1 hub ── ${TWO_ASKING_FOLDED}${ruleOf(3)}[ features ]`)
+  await ui.unmount()
+})
+
+// The cells a part of a row takes on screen: a Box with a width takes that width, a Button
+// "[ label ]", a Text its letters, and a Box without a width its parts.
+function drawnCells(node: unknown): number {
+  if (typeof node === 'string') {
+    return [...node].length
+  }
+  if (typeof node !== 'object' || node === null) {
+    return 0
+  }
+  const element = node as FoundElement
+  if (element.type === 'Button') {
+    return String(element.props.label).length + 4
+  }
+  if (element.type === 'Box' && typeof element.props?.width === 'number') {
+    return element.props.width
+  }
+  return widestLine(element)
+}
+
+// The widest line of a row: its parts side by side, or for a column the widest part.
+function widestLine(element: FoundElement): number {
+  const parts = element.children.map(drawnCells)
+  return element.props?.flexDirection === 'column' ? Math.max(0, ...parts) : parts.reduce((total, cells) => total + cells, 0)
+}
+
+test('at 20 columns and below the top row drops parts in the order of loss, so no row is wider than the band', async ($, on) => {
+  await start($, on, () => json(withBoard(ZONE, 2)))
+
+  const ui = await $.ui.mount({ ...wide(20), surface: 'terminal' })
+  expect(await row(ui, 'top')).toBe('1 hub ─ [ features ]')
+  expect(await ui.find({ type: 'Box', key: 'chats' })).toBeUndefined()
+  expect(await row(ui, 'event')).toBe(`${ZONE.question.line}\n[ open ]`)
+  await ui.unmount()
+
+  const tooWide: { columns: number; row: string; cells: number }[] = []
+  for (let columns = 12; columns <= 40; columns += 1) {
+    const mounted = await $.ui.mount({ ...wide(columns), surface: 'terminal' })
+    for (const key of ['top', 'event']) {
+      const found = await mounted.find({ type: 'Box', key })
+      const cells = found === undefined ? 0 : widestLine(found)
+      if (cells > columns) {
+        tooWide.push({ columns, row: key, cells })
+      }
+    }
+    await mounted.unmount()
+  }
+  expect(tooWide).toEqual([])
+})
+
+test('the event wraps below its buttons only when under 40 cells are left beside them, and then to 3 lines at most', async ($, on) => {
+  let screen = DAY9
+  await start($, on, args => {
+    if (args[0] === 'off') {
+      screen = withBand({ notices: false, offers: false })
+      return ok(ROW)
+    }
+    return json(screen)
+  }, { hub: USERS_HUB })
+
+  const at = async (columns: number) => {
+    const ui = await $.ui.mount({ ...wide(columns), surface: 'terminal' })
+    const layout = await noticeLayout(ui)
+    await ui.unmount()
+    return layout
+  }
+  // The tuner line with [ undo ], which takes 8 cells and 2 more before it.
+  expect(await at(50)).toEqual({ direction: 'row', width: 40, wrap: 'truncate-end', maxLines: 1 })
+  expect(await at(49)).toEqual({ direction: 'column', width: 49, wrap: 'wrap', maxLines: 2 })
+
+  // The clash line has no button, so it may take all 3 lines.
+  await $.command.run({ command: 'hub-flags', args: 'off status_band.notices', origin: TYPED })
+  expect(await at(40)).toEqual({ direction: 'row', width: 40, wrap: 'truncate-end', maxLines: 1 })
+  expect(await at(39)).toEqual({ direction: 'column', width: 39, wrap: 'wrap', maxLines: 3 })
+  const ui = await $.ui.mount({ ...wide(39), surface: 'terminal' })
+  expect(await row(ui, 'event')).toBe("✗ /hub is taken (it is the user's /hub), so hub uses /hub-flags")
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
+  await ui.unmount()
+})
+
+test('only the failed checks count has a color, so both rows read the same in any theme', async ($, on) => {
+  await start($, on, () => json(withBoard(ZONE, 2)))
+
+  for (const columns of [120, 35]) {
+    const ui = await $.ui.mount({ ...wide(columns), surface: 'terminal' })
+    const painted = (await ui.findAll({})).filter(
+      element => element.props.color !== undefined || element.props.backgroundColor !== undefined || element.props.borderColor !== undefined,
+    )
+    expect(painted.map(element => [element.text, element.props.color])).toEqual([['✗2', 'red']])
+    expect(await row(ui, 'top')).toContain('✗2 [ features ]')
+    await ui.unmount()
+  }
 })
 
 test('when hubctl cannot show the card, [open] says why in a toast and logs nothing', async ($, on) => {
@@ -1109,13 +1387,14 @@ test('when the relay is switched off the timer stops and the band count goes', a
   await ui.unmount()
 })
 
-test('in the coordinator chat the band shows the waiting count first, then the chats, the notice and the failed checks', async ($, on) => {
+test('in the coordinator chat the top row shows the waiting count first, then the chats and the failed checks, and the event row the question', async ($, on) => {
   const { fake, answer } = relayFake([WEB, API])
   fake.screen = { ...withBoard(ZONE, 2), relay: true }
   await startRelay($, on, answer)
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect(await texts(ui)).toEqual(['1 hub', ' │ ', '2 prompts wait', ' │ ', ZONE.full, ' │ ', ZONE.question.line, ' │ ', '✗2'])
+  expect(await row(ui, 'top')).toBe(`1 hub ── 2 prompts wait  ${ZONE.full}${ruleOf(52)}✗2 [ features ]`)
+  expect(await row(ui, 'event')).toBe(`${ZONE.question.line}  [ open ]`)
   await ui.unmount()
 })
 
@@ -1125,7 +1404,8 @@ test('the waiting count alone still draws when the band has nothing else to show
   await startRelay($, on, answer)
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
-  expect(await texts(ui)).toEqual(['1 hub', ' │ ', '1 prompt waits'])
+  expect(await row(ui, 'top')).toBe(`1 hub ── 1 prompt waits${ruleOf(83)}[ features ]`)
+  expect(await row(ui, 'event')).toBeUndefined()
   await ui.unmount()
 })
 

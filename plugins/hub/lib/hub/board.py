@@ -408,9 +408,12 @@ def count_text(count):
 def band_zone(data, viewer=None):
     """The band's chats zone, for the chat `viewer`, which never sees itself.
 
-    The mod shows "full" when it fits in its share of the line, else "folded",
-    where a chat that needs the user keeps its name and the rest fold to
-    counters. The question is the first other chat that needs the user.
+    The mod shows "full" when it fits, else as many "entries" as fit plus +N,
+    else "folded", where a chat that needs the user keeps its name and the rest
+    fold to counters. Each entry is one chat with its width in cells and whether
+    it asks, so +N never hides a chat that asks. The chats that ask come first,
+    in the card order. The question is the first other chat that needs the user,
+    with its line's width in cells, so the mod need not count them itself.
     Returns None when no other chat is on the board.
     """
     others = [card for card in data["cards"] if card["session"] != viewer]
@@ -423,19 +426,20 @@ def band_zone(data, viewer=None):
         tasks = card.get("shown_tasks", [])
         if card["state"] == "busy" and tasks:
             entry += f" {sum(1 for task in tasks if task.get('state') == 'done')}/{len(tasks)}"
-        entries.append(entry)
-    folded = [f"{glyph('needs_you', table=table)} {card['name']}" for card in others if card["state"] == "needs_you"]
+        entries.append({"text": entry, "cells": cells(entry), "asks": card["state"] == "needs_you"})
+    folded =[f"{glyph('needs_you', table=table)} {card['name']}" for card in others if card["state"] == "needs_you"]
     for state in ("busy", "idle", "offline"):
         count = sum(1 for card in others if card["state"] == state)
         if count:
             folded.append(f"{glyph(state, table=table)}{count_text(count)}")
-    full, folded = "  ".join(entries), " ".join(folded)
+    full, folded = "  ".join(entry["text"] for entry in entries), " ".join(folded)
     asking = next((card for card in others if card["state"] == "needs_you"), None)
+    line = None if asking is None else \
+        f"{glyph('needs_you', table=table)} {asking['name']} asks  {now_text(asking, words=False)}"
     question = None if asking is None else {
-        "chat": asking["name"], "session": asking["session"],
-        "line": f"{glyph('needs_you', table=table)} {asking['name']} asks  {now_text(asking, words=False)}"}
+        "chat": asking["name"], "session": asking["session"], "line": line, "cells": cells(line)}
     return {"full": full, "full_cells": cells(full), "folded": folded, "folded_cells": cells(folded),
-            "question": question}
+            "entries": entries, "question": question}
 
 
 # words and glyphs
