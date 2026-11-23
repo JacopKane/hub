@@ -6,17 +6,19 @@ A fake gh on PATH is the only stand-in: it says which branches have an open
 PR and which commit a PR's head is. Test reports are written where hub keeps
 them, in the repo's common git folder, in the shape the pr-tested step writes.
 """
+import importlib.util
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
 
 import pytest
-from conftest import REPO, commit
+from conftest import PLUGIN, REPO, commit
 from steps import and_, given, then, when
 
 PART = "pr_test_gate"
@@ -1529,6 +1531,36 @@ def test_a_slow_lookup_stays_inside_the_hooks_time(home):
               "comes in under 12 seconds"):
         assert says(home, result, "slow.md"), result.reason
         assert took < 12, took
+
+
+def gate_handler():
+    """The gate's handler, loaded in pytest's own process from the repo's plugin, under a name no other test uses."""
+    spec = importlib.util.spec_from_file_location("pr_test_gate_handler_in_process",
+                                                  os.path.join(PLUGIN, "parts", PART, "handler.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_slow_git_whose_process_group_is_already_gone_still_counts_as_too_slow(home, monkeypatch):
+    with given("the gate's lookups with half a second left, and a git that takes 1.5 seconds"):
+        monkeypatch.syspath_prepend(os.path.join(PLUGIN, "lib"))
+        handler = gate_handler()
+        monkeypatch.setenv("PATH", slow_git(home, 1.5))
+    for refusal in (PermissionError, ProcessLookupError):
+        kills = []
+
+        def group_already_gone(group, signal_number, refusal=refusal):
+            kills.append((group, signal_number))
+            raise refusal(1, "Operation not permitted")
+        with when(f"the gate stops waiting for git, and the system answers its kill with {refusal.__name__}, "
+                  "as macOS does for a group whose processes have all ended"):
+            monkeypatch.setattr(handler.os, "killpg", group_already_gone)
+            with pytest.raises(handler.Stop) as stopped:
+                handler.Lookups(seconds=0.5).git(home.work, "rev-parse", "HEAD")
+        with then("the gate tried to kill git's group once and refuses as too slow, as with any slow lookup"):
+            assert stopped.value.name == "slow.md", stopped.value.name
+            assert len(kills) == 1 and kills[0][1] == signal.SIGKILL, kills
 
 
 def test_the_gate_does_not_read_the_pr_skills_test_flag(home):

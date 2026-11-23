@@ -270,7 +270,10 @@ class Lookups:
         try:
             output, error = process.communicate(timeout=min(cap, left))
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)  # the whole group, so a child holding the pipe ends too
+            try:
+                os.killpg(process.pid, signal.SIGKILL)  # the whole group, so a child holding the pipe ends too
+            except (ProcessLookupError, PermissionError):
+                pass  # the group has already ended; macOS answers EPERM for a group whose processes have all exited
             process.communicate()
             return None
         return process.returncode, output, error
