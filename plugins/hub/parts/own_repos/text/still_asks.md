@@ -1,0 +1,1 @@
+Some steps in these repos still wait for the user's order: a push straight to the default branch, a force-push, a release or tag, a change to the repo's settings, deleting any other branch, and any comment, review or reply on someone else's PR or issue.
