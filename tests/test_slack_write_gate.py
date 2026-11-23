@@ -48,6 +48,54 @@ def test_the_slack_gate_lets_only_read_tools_pass(home):
         assert tool_call(home, "mcp__slack__reactions_add", {}).ran
 
 
+def test_the_claude_ai_slack_connector_lets_only_its_two_sign_in_tools_through_by_their_full_names(home):
+    with given("slack_write_gate is on for the claude.ai Slack connector only"):
+        home.install()
+        home.hubctl("on", "slack_write_gate")
+        home.hubctl("set", PATTERN, "mcp__claude_ai_Slack__.*")
+
+    with when("a chat starts the claude.ai Slack sign-in and then finishes it"):
+        start = tool_call(home, "mcp__claude_ai_Slack__authenticate", {})
+        finish = tool_call(home, "mcp__claude_ai_Slack__complete_authentication", {"code": "made-up-code"})
+    with then("both calls run"):
+        assert start.ran and decision(start) is None
+        assert finish.ran and decision(finish) is None
+
+    with when("a chat sends a message, calls a name close to a sign-in tool, calls a slack-mcp-server read name "
+              "on the connector, or sends a sign-in call with broken input"):
+        calls = {"send": tool_call(home, "mcp__claude_ai_Slack__slack_send_message", {"channel_id": "C0000LOBBY"}),
+                 "longer name": tool_call(home, "mcp__claude_ai_Slack__authenticate_extra", {}),
+                 "other letters": tool_call(home, "mcp__claude_ai_Slack__Authenticate", {}),
+                 "read name": tool_call(home, "mcp__claude_ai_Slack__conversations_history", {"channel_id": "C1"}),
+                 "broken": tool_call(home, "mcp__claude_ai_Slack__authenticate", "not an object")}
+    with then("each call is refused, and the reason names the call and the two tools that pass"):
+        for name, result in calls.items():
+            assert result.refused, name
+            assert "read-only" in result.reason, name
+            assert "mcp__claude_ai_Slack__complete_authentication" in result.reason, name
+            assert "conversations_history" not in result.reason.split("pass:")[-1], name
+        assert "mcp__claude_ai_Slack__slack_send_message" in calls["send"].reason
+        assert "mcp__claude_ai_Slack__authenticate_extra" in calls["longer name"].reason
+    with and_("a Slack write on the slack-mcp-server name is left alone, because this pattern does not cover it"):
+        assert tool_call(home, "mcp__slack__conversations_add_message", {"channel_id": "C0000LOBBY"}).ran
+    with and_("the doctor names both lists"):
+        doctor = home.hubctl("doctor").stdout
+        assert "slack-mcp-server 1.3.0" in doctor and "mcp__claude_ai_Slack__authenticate" in doctor
+
+    with when("the pattern is widened to cover both Slack servers"):
+        home.hubctl("set", PATTERN, "mcp__(slack|claude_ai_Slack)__.*")
+        calls = {"server read": tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"}),
+                 "server sign-in name": tool_call(home, "mcp__slack__authenticate", {}),
+                 "server write": tool_call(home, "mcp__slack__conversations_add_message", {"channel_id": "C1"}),
+                 "connector sign-in": tool_call(home, "mcp__claude_ai_Slack__authenticate", {}),
+                 "connector read name": tool_call(home, "mcp__claude_ai_Slack__channels_list", {})}
+    with then("each list counts only on its own server"):
+        assert calls["server read"].ran and calls["connector sign-in"].ran
+        assert calls["server sign-in name"].refused and calls["server write"].refused
+        assert calls["connector read name"].refused
+        assert "conversations_history" in calls["server write"].reason
+
+
 def test_the_slack_gate_refuses_writes_when_hub_can_not_read_its_settings(home):
     with given("slack_write_gate is on, and then the user settings file gets merge conflict markers"):
         home.install()
@@ -65,6 +113,10 @@ def test_the_slack_gate_refuses_writes_when_hub_can_not_read_its_settings(home):
         assert tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"},
                          errors_expected=True).ran
         assert decision(tool_call(home, "mcp__docs__search", {"query": "x"}, errors_expected=True)) is None
+    with and_("the claude.ai Slack sign-in still runs, and a slack-mcp-server read name on that connector does not"):
+        assert tool_call(home, "mcp__claude_ai_Slack__authenticate", {}, errors_expected=True).ran
+        assert tool_call(home, "mcp__claude_ai_Slack__conversations_history", {"channel_id": "C0000LOBBY"},
+                         errors_expected=True).refused
 
 
 def test_the_slack_gate_refuses_every_call_when_its_read_list_is_missing_or_broken(home):
@@ -90,6 +142,14 @@ def test_the_slack_gate_refuses_every_call_when_its_read_list_is_missing_or_brok
             handle.write("{broken")
         read = tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"})
     with then("the read is refused too"):
+        assert read.refused and "read_tools.json" in read.reason
+
+    with when("the file is back with the slack-mcp-server list but without the claude.ai list"):
+        with open(read_list, "w") as handle:
+            json.dump({"server": "slack-mcp-server", "version": "1.3.0", "read_tools": ["conversations_history"]},
+                      handle)
+        read = tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"})
+    with then("the read is refused, because a list hub expects is missing"):
         assert read.refused and "read_tools.json" in read.reason
 
 
