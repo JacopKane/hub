@@ -148,7 +148,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | critic | A read-only agent for reviews where a miss is expensive (Opus, high effort) | off | Claude Code, Cursor | "turn on critic" |
 | tier_rule | Start text that says which agent tier fits a job | off | Claude Code, Cursor | "turn on the tier rule" |
 | review_loop | Keeps a build and review loop on a written list, and stops it after two failed reviews of one area until you decide | on | Claude Code, Cursor (texts only) | "turn off the review loop" |
-| context_budget | Tells a chat or an agent when its context gets big | off | Claude Code | "turn on the context budget" |
+| context_budget | Tells a chat or an agent when its context gets big, and the main chat when the ledger or memory outgrows its limits | off | Claude Code | "turn on the context budget" |
 | handback_cap | Keeps an agent's report under a word cap | off | Claude Code | "turn on the hand-back cap" |
 | live_notes | Gives each agent the chat's live notes file, so new rules reach it | off | Claude Code | "turn on live notes" |
 | away_guard | Holds question dialogs while you are away, except urgent ones | off | Claude Code | "turn on the away guard" |

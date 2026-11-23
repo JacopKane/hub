@@ -398,10 +398,10 @@ def agent_transcript(home, agent_id="a0000000000000001", brief="Do the job."):
     return Transcript(os.path.join(main[:-len(".jsonl")], "subagents", f"agent-{agent_id}.jsonl"), brief)
 
 
-def tool_call(home, agent_id="a0000000000000001", named_path=True):
+def tool_call(home, agent_id="a0000000000000001", named_path=True, session="00000000-0000-4000-8000-000000000001"):
     """One Read call through the real hook, from an agent, or from the main chat when agent_id is None."""
     data = load_fixture("claude_code", "PreToolUse.SubagentHandback.json")
-    data.update(cwd=home.work, transcript_path=main_transcript(home), tool_name="Read",
+    data.update(cwd=home.work, transcript_path=main_transcript(home, session), session_id=session, tool_name="Read",
                 tool_input={"file_path": os.path.join(home.work, "notes.md")},
                 tool_use_id=f"toolu_read_{next(CALL_IDS):06d}")
     data.pop("agent_transcript_path")
@@ -639,6 +639,165 @@ def test_the_budget_finds_an_agent_transcript_by_its_usual_path_and_stays_quiet_
             result = tool_call(home, agent_id=agent_id)
         with then("the brief counts as setting no point, so the usual 130k reminder comes, with no error"):
             assert result.ran and "135k context" in result.context
+
+
+# the ledger and memory size reminder
+
+DAY = 24 * 3600
+TODAY = "2026-11-20T10:00:00Z"
+TOMORROW = "2026-11-21T10:00:00Z"
+TODAY_SECONDS = 1795168800  # TODAY as seconds since 1970
+
+
+def project_folder(home):
+    return os.path.dirname(main_transcript(home))
+
+
+def write_ledger(home, lines, padding=0):
+    os.makedirs(project_folder(home), exist_ok=True)
+    with open(os.path.join(project_folder(home), "ledger.md"), "w") as handle:
+        handle.write("\n".join(lines) + "\n" + "x" * padding + "\n")
+
+
+def write_notes(home, count, size=100, stale=0, index_size=200):
+    """count memory notes of size bytes, the first stale of them untouched for 61 days, and a MEMORY.md index."""
+    folder = os.path.join(project_folder(home), "memory")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "MEMORY.md"), "w") as handle:
+        handle.write("i" * index_size)
+    for number in range(count):
+        path = os.path.join(folder, f"note-{number:02d}.md")
+        with open(path, "w") as handle:
+            handle.write("n" * size)
+        touched = TODAY_SECONDS - (61 * DAY if number < stale else DAY)
+        os.utime(path, (touched, touched))
+
+
+def main_call(home, at, session="00000000-0000-4000-8000-000000000001"):
+    """One call from the main chat of a session at a fixed time, with a transcript that has one small step."""
+    home.env["HUB_TEST_NOW"] = at
+    if not os.path.exists(main_transcript(home, session)):
+        Transcript(main_transcript(home, session)).step(20000)
+    return tool_call(home, agent_id=None, session=session)
+
+
+def test_the_main_chat_is_told_once_a_day_when_the_ledger_outgrows_its_limits(home):
+    with given("hub is installed with the budget off, and the project ledger is 30k bytes with old dated entries"):
+        home.install()
+        write_ledger(home, ["# Ledger", "- 2026-10-30 an old item", "- 3 Okt: an old German date",
+                            "- 2 Mai: German May", "- 5. März: German March", "- 6 Mrz short German March",
+                            "## 1 Nov 2026", "- 12 Dec, which in November means last December",
+                            "- 2026-11-18 a fresh item", "- 18 Nov fresh too"], padding=30000)
+    with when("the main chat makes a call while the budget is off"):
+        off = main_call(home, TODAY)
+    with then("nothing is said"):
+        assert off.ran and not off.context
+    with when("the user switches the budget on and the main chat makes its next call"):
+        home.hubctl("on", "context_budget")
+        result = main_call(home, TODAY)
+    with then("it gets one reminder that names the ledger's size, its limit and the old entries"):
+        assert "ledger.md is 30k bytes, over the 24k limit" in result.context
+        assert "ledger.md has 7 entries dated more than 14 days ago" in result.context
+        assert "long-term value, not by date" in result.context and "changes no file" in result.context
+        assert "(context_budget.store_size)" in result.context
+        assert budget_signals(home, "context_budget.store_size") == ["reminded"]
+        assert "The memory folder has" not in result.context and "MEMORY.md" not in result.context
+    with and_("the ledger is left as it was"):
+        assert os.path.getsize(os.path.join(project_folder(home), "ledger.md")) > 30000
+    with when("the same chat and a second chat in the same project call again on the same day"):
+        again = main_call(home, TODAY)
+        other_chat = main_call(home, TODAY, session="00000000-0000-4000-8000-000000000002")
+    with then("neither is told again, so only one chat prunes the ledger"):
+        assert not again.context and not other_chat.context
+    with when("an agent makes a call on the next day"):
+        home.env["HUB_TEST_NOW"] = TOMORROW
+        agent_transcript(home).step(20000)
+        agent = tool_call(home)
+    with then("the agent is not told, since the reminder is for the main chat"):
+        assert agent.ran and not agent.context
+    with when("the main chat calls on the next day"):
+        next_day = main_call(home, TOMORROW, session="00000000-0000-4000-8000-000000000002")
+    with then("it is told once again"):
+        assert "ledger.md is 30k bytes" in next_day.context
+    with when("the user switches the size reminder off and a day passes"):
+        home.hubctl("off", "context_budget.store_size")
+        switched_off = main_call(home, "2026-11-22T10:00:00Z")
+    with then("nothing is said, while the rest of the budget still runs"):
+        assert switched_off.ran and not switched_off.context
+        assert home.show()["flags"]["context_budget"]["runs"]
+
+
+def test_the_main_chat_is_told_when_the_memory_folder_outgrows_its_limits_and_the_limits_can_move(home):
+    with given("the budget is on, the project has no ledger, memory holds 22 notes of 3k bytes, 2 of them stale, "
+               "and the index is 22k bytes, near the 25KB that Claude Code loads"):
+        home.install()
+        home.hubctl("on", "context_budget")
+        write_notes(home, 22, size=3000, stale=2, index_size=22000)
+    with when("the main chat makes a call"):
+        result = main_call(home, TODAY)
+    with then("it is told the note count and size, the big index and the stale notes, and nothing about a ledger"):
+        assert "The memory folder has 22 notes and 66k bytes, over the limit of 20 notes and 60k bytes." in result.context
+        assert "MEMORY.md is 22k bytes, over the 20k limit." in result.context
+        assert "2 memory notes have not changed in more than 60 days" in result.context
+        assert "ledger.md" not in result.context
+        assert "(context_budget.store_size)" in result.context
+    with when("the user raises the note limits, turns the stale check off with 0, and a day passes"):
+        home.hubctl("set", "context_budget.store_size.notes", "30")
+        home.hubctl("set", "context_budget.store_size.notes_bytes", "100000")
+        home.hubctl("set", "context_budget.store_size.note_days", "0")
+        next_day = main_call(home, TOMORROW)
+    with then("only the index is still over its limit"):
+        assert "MEMORY.md is 22k bytes, over the 20k limit." in next_day.context
+        assert "The memory folder has" not in next_day.context and "not changed" not in next_day.context
+    with when("the user names another ledger file, which is over its limit, and a day passes"):
+        home.hubctl("set", "context_budget.store_size.ledger", "STATE.md")
+        with open(os.path.join(project_folder(home), "STATE.md"), "w") as handle:
+            handle.write("s" * 25000)
+        renamed = main_call(home, "2026-11-22T10:00:00Z")
+    with then("the reminder reads that file"):
+        assert "STATE.md is 25k bytes, over the 24k limit" in renamed.context
+
+
+def test_the_size_reminder_stays_quiet_when_all_is_under_the_limits_or_the_files_are_missing(home):
+    with given("the budget is on, the ledger is small with fresh dates, and memory holds 5 small fresh notes "
+               "and a normal 8k index"):
+        home.install()
+        home.hubctl("on", "context_budget")
+        write_ledger(home, ["# Ledger", "- 2026-11-19 fresh", "- 17 Nov fresh"])
+        write_notes(home, 5, index_size=8000)
+    with when("the main chat makes a call"):
+        under = main_call(home, TODAY)
+    with then("nothing is said"):
+        assert under.ran and not under.context
+    with given("a second project with no ledger and no memory folder"):
+        empty_session = "00000000-0000-4000-8000-000000000003"
+        transcript = os.path.join(home.root, ".claude", "projects", "-empty", empty_session + ".jsonl")
+        Transcript(transcript).step(20000)
+    with when("its main chat makes a call"):
+        home.env["HUB_TEST_NOW"] = TODAY
+        data = load_fixture("claude_code", "PreToolUse.SubagentHandback.json")
+        data.update(cwd=home.work, transcript_path=transcript, session_id=empty_session, tool_name="Read",
+                    tool_input={"file_path": os.path.join(home.work, "notes.md")}, tool_use_id="toolu_empty_000001")
+        for name in ("agent_transcript_path", "agent_id", "agent_type"):
+            data.pop(name)
+        missing = home.send("claude_code", "PreToolUse", data)
+    with then("nothing is said and no error is logged"):
+        assert missing.ran and not missing.context
+        assert not home.errors(), home.errors()
+    with given("a third project whose ledger is a folder and whose memory is a file, so neither can be read"):
+        odd_session = "00000000-0000-4000-8000-000000000004"
+        odd = os.path.join(home.root, ".claude", "projects", "-odd")
+        os.makedirs(os.path.join(odd, "ledger.md"))
+        with open(os.path.join(odd, "memory"), "w") as handle:
+            handle.write("not a folder")
+        Transcript(os.path.join(odd, odd_session + ".jsonl")).step(20000)
+        data.update(transcript_path=os.path.join(odd, odd_session + ".jsonl"), session_id=odd_session,
+                    tool_use_id="toolu_odd_000001")
+    with when("its main chat makes a call"):
+        unreadable = home.send("claude_code", "PreToolUse", data)
+    with then("nothing is said and no error is logged"):
+        assert unreadable.ran and not unreadable.context
+        assert not home.errors(), home.errors()
 
 
 def test_the_hand_back_cap_and_the_context_budget_run_in_claude_code_only(home):
