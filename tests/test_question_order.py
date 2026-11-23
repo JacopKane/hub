@@ -26,7 +26,7 @@ def away(home):
     set_clock(home, "2026-03-02T09:01:00Z")
 
 
-def test_question_check_refuses_a_thin_dialog_before_away_guard_holds_or_logs_it(home):
+def test_question_check_refuses_a_thin_dialog_before_away_guard_notes_or_logs_it(home):
     with given("question_check and away_guard are on, and Alex is away"):
         home.install()
         home.hubctl("on", "question_check")
@@ -35,18 +35,18 @@ def test_question_check_refuses_a_thin_dialog_before_away_guard_holds_or_logs_it
     with when("LOBBY opens an urgent dialog without context"):
         result = ask(home, [question("Ship it?", BARE)], session=SESSION_LOBBY,
                      metadata={"source": "urgent: the release breaks at 09:00"})
-    with then("question_check refuses it, and away_guard neither holds nor logs it"):
+    with then("question_check refuses it, and away_guard neither notes nor logs it"):
         assert result.refused and "question_check" in result.reason
-        assert "urgent: <why>" not in result.reason
+        assert "may answer late" not in result.context
         assert state_lines(home, "away_urgent.jsonl") == []
     with when("LOBBY opens a thin dialog with no urgent mark"):
         result = ask(home, [question("Ship it?", BARE)], session=SESSION_LOBBY)
-    with then("question_check's reason comes, not the hold"):
-        assert result.refused and "question_check" in result.reason and "urgent: <why>" not in result.reason
+    with then("question_check's reason comes, with no away note"):
+        assert result.refused and "question_check" in result.reason and "may answer late" not in result.context
     with when("LOBBY sends the full dialog"):
         result = ask(home, [question()], session=SESSION_LOBBY)
-    with then("now away_guard holds it"):
-        assert result.refused and "urgent: <why>" in result.reason
+    with then("it reaches Alex, and away_guard adds its note that he may answer late"):
+        assert not result.refused and "may answer late" in result.context
 
 
 def test_the_coordinators_refusal_comes_before_the_question_parts(home, chats):
@@ -63,7 +63,7 @@ def test_the_coordinators_refusal_comes_before_the_question_parts(home, chats):
         result = ask(home, [question("Ship it?", BARE)], session=SESSIONS["WEB"])
     with then("the coordinator's refusal comes first, and the other two parts do not run"):
         assert result.refused and "coordinator" in result.reason
-        assert "question_check" not in result.reason and "urgent: <why>" not in result.reason
+        assert "question_check" not in result.reason and "may answer late" not in result.context
 
 
 def test_in_cursor_the_questions_family_and_these_gates_do_not_run_and_the_doctor_says_why(home):

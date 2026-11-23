@@ -1,14 +1,15 @@
-"""away_guard: while the user is away, only urgent questions reach them.
+"""away_guard: while the user is away, every question still reaches them.
 
-PreToolUse on AskUserQuestion holds a dialog unless its metadata.source is
-"urgent: <why>", and logs each urgent one. A dialog that question_check will
-refuse is left to it, so it is never held or logged. A typed prompt and a
-dialog answer mark the user active. After a silent stretch they turn the
-silence into a set away state instead of ending it, so a short note sent on
-the way does not release the questions. While the user is away, each typed
-prompt asks the chat to judge from the user's words whether they are back.
-Prompts from other sessions and from the harness count as nothing. The
-state and its files are in away.py. Claude Code only.
+Away mode never refuses a question or a dialog to the user. PreToolUse on
+AskUserQuestion lets the dialog open and adds one line for the chat: the
+user is away and may answer late, so it keeps working on what does not need
+the answer. A dialog that question_check will refuse is left to it, so it
+gets no note. A typed prompt and a dialog answer mark the user active. After
+a silent stretch they turn the silence into a set away state instead of
+ending it. While the user is away, each typed prompt asks the chat to judge
+from the user's words whether they are back. Prompts from other sessions and
+from the harness count as nothing. The state and its files are in away.py.
+Claude Code only.
 """
 import importlib.util
 import os
@@ -21,16 +22,11 @@ TOOL = "AskUserQuestion"
 # Prompts that come from a session or the harness, not from the user's keyboard.
 NOT_TYPED = ("<task-notification>", "<system-reminder>", "Another Claude session")
 
-HOLD = (
-    "{state} Only urgent questions reach the user now. A question is urgent when it involves a live risk to "
-    "users or data, a public deadline that falls before the user is back, or a step that blocks every session. "
-    "Keep any other question for when the user is back, say in one line that you are holding it, and go on "
-    'with the work that does not need it. To send an urgent one, set metadata.source to "urgent: <why>". {end}'
-)
+NOTE = ("{state} The question still reaches the user, but they may answer late. "
+        "Keep working on what does not need the answer.")
 BACK = (
     "The user has been away since {since}, {reason}. If their words show they are back at work (a task, not "
-    "a note sent on the way), run " + files.step_command() + " away clear. Then ask the held questions in one dialog and name the "
-    "{count} made while they were away. If not, keep holding them."
+    "a note sent on the way), run " + files.step_command() + " away clear. Questions to the user are never held."
 )
 
 
@@ -52,20 +48,16 @@ def question_check_refuses(hook_input, flags):
     return check.refusal(hook_input, flags) is not None
 
 
-def held_text(away, state, options):
+def note_text(away, state, options):
     since = away.show(state["since"], options)
     if state["kind"] == "idle":
         now = (f"The user has been silent since {since}, with no prompt or answer for over "
                f"{options.idle_minutes:g} minutes.")
-        end = f"It stays held until the user's words show they are back and a chat runs {files.step_command()} away clear."
     elif state["kind"] == "quiet":
-        now = f"The user is {state['reason']}, which count as away."
-        end = (f"The quiet hours end at {away.show(state['until'], options)}. A prompt the user types before "
-               "then opens dialogs again.")
+        now = f"The user is {state['reason']}, which count as away until {away.show(state['until'], options)}."
     else:
         now = f"The user has been away since {since}, {state['reason']}."
-        end = f"Only when the user's words show they are back, run {files.step_command()} away clear."
-    return HOLD.format(state=now, end=end)
+    return NOTE.format(state=now)
 
 
 def to_flag(away, state):
@@ -85,15 +77,9 @@ def handle(event, hook_input, flags, answer):
         state = away.current(options)
         if not state or question_check_refuses(hook_input, flags):
             return
-        tool_input = hook_input.get("tool_input")
-        metadata = tool_input.get("metadata") if isinstance(tool_input, dict) else None
-        why = away.urgent_reason(metadata.get("source") if isinstance(metadata, dict) else None)
-        if why:
-            away.log_urgent(why, hook_input.get("session_id"), hook_input.get("cwd"))
-            answer.signal(f"{PART}.hold_not_urgent", "urgent")
-            return
-        answer.signal(f"{PART}.hold_not_urgent", "held")
-        answer.refuse(held_text(away, state, options))
+        # A note only, never a refusal: a question to the user always reaches them
+        answer.signal(f"{PART}.hold_not_urgent", "noted")
+        answer.add_context(note_text(away, state, options))
     elif event == "PostToolUse" and hook_input.get("tool_name") == TOOL:
         if flags.runs(f"{PART}.release_on_return"):
             to_flag(away, away.current(options))
@@ -108,7 +94,5 @@ def handle(event, hook_input, flags, answer):
         state = to_flag(away, away.current(options))
         away.mark_active(prompt=True)
         if state and state["kind"] == "flag":
-            count = away.urgent_count(state["since"])
             answer.signal(f"{PART}.release_on_return", "reminded")
-            answer.add_context(BACK.format(since=away.show(state["since"], options), reason=state["reason"],
-                                           count=f"{count} urgent pass" if count == 1 else f"{count} urgent passes"))
+            answer.add_context(BACK.format(since=away.show(state["since"], options), reason=state["reason"]))

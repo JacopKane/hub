@@ -1178,7 +1178,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "id": "away_guard",
           "name": "away_guard",
           "depth": 0,
-          "does": "Holds question dialogs while the user is away, and lets only urgent ones through.",
+          "does": "Tells a chat when the user is away, so it keeps working while a question waits. It never holds a question.",
           "value": "off",
           "effective": "off",
           "runs": false,
