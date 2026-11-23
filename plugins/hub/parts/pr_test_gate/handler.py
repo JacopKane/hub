@@ -386,7 +386,10 @@ def read_steps(line, cwd):
             found.append(Step(step_words, words[:index], segments[:position], here, target[0]))
             found_words.append(tuple(words[index:]))
     if names_a_step_it_does_not_read(named, reads, found_words):
-        raise unreadable("changed" if (parser.WRAPPED, parser.CHANGED_WORD) in named else "inside")
+        # A gh api step the shell may change gets API_READ, which holds CHANGED_WORD and adds its own hint
+        changed = any(target == parser.WRAPPED and text in (parser.CHANGED_WORD, parser.API_READ)
+                      for target, text in named)
+        raise unreadable("changed" if changed else "inside")
     return command, found
 
 

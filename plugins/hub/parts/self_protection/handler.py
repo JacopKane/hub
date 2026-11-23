@@ -156,6 +156,39 @@ GLOB = re.compile(r"[*?\[{]")
 PROJECT_NAMES = ("hub.json", "hub.local.json")
 MAX_BRACES = 1024
 VARIABLE = re.compile(r"\$\{(\w+)(?::?-([^}]*))?\}|\$(\w+)")
+# Runners that start the next program with the caller's environment and read no command line of their own. Under
+# them a word hub can not read passes in one place only: the value of a literal env setting that names no program.
+ENV_KEEPING = {"env", "timeout", "nohup", "nice", "ionice", "taskset", "chrt", "stdbuf", "setsid", "unbuffer",
+               "caffeinate"}
+SETTING = re.compile(r"[A-Za-z_]\w*=")
+# Settings whose value picks no program and no code, so a variable may fill in their value.
+KEPT_SETTINGS = re.compile(r"(?:TMPDIR|LANG|LC_\w+|TERM|TZ|NO_COLOR|COLUMNS|LINES|PYTHONDONTWRITEBYTECODE"
+                           r"|PYTHONUNBUFFERED)=")
+# Fixed folders in front of a plain $PATH, as the parser marks the word: each $ the shell fills in has UNREADABLE.
+PATH_SETTING = re.compile(r"PATH=(?:[^\x00-\x08:$`]+:)+\x00\$(?:PATH|\{PATH\})")
+HELP_WORDS = ("--help", "-h")
+# A line that changes these, or that runs code hub does not see, may point hub's switch step at another home.
+# BASH_ENV, ENV and ZDOTDIR name a file or folder a shell runs at start, so they run code hub does not see.
+HOME_NAMES = r"HOME|CLAUDE_CONFIG_DIR|XDG_\w+|BASH_ENV|ENV|ZDOTDIR"
+EVAL_OR_SOURCE = re.compile(r"(?<![\w./-])(?:eval|source)(?![\w./-])")
+DOT_COMMAND = re.compile(r"(?:^|[;&|(){}\n'\"`])\s*\.[ \t]")
+# A builtin that sets a variable it names, when a variable or a substitution may fill in that name.
+HIDDEN_ASSIGNMENT = re.compile(r"(?<![\w./-])(?:export|declare|typeset|local|readonly|read|unset|let|getopts|mapfile"
+                               r"|readarray|vared|(?:printf|print)[ \t]+-v)(?![\w./-])[^;&|\n]*[$`]")
+# zsh's path array, which sets PATH: path=(...), path+=(...), path[1]=..., or a builtin or a loop that names it.
+ZSH_PATH = re.compile(r"(?<![\w./$-])path(?:\[[^\]]*\])?\+?=|(?<![\w./-])(?:export|declare|typeset|local|readonly"
+                      r"|read|unset|getopts|mapfile|readarray|vared|for|select|printf|print)(?:[ \t]+[^\s;&|]+)*?[ \t]+path"
+                      r"(?![\w./-])")
+# The details of the refusals that carry their own hint in place of asking the user.
+QUOTE = "a command line another program runs, with a word hub can not read"
+SED_FILE = "a sed file name hub can not read, which sed could take as an option"
+MOVED_HOME = "hub's switch step on a line that may move the home folder"
+HINTS = {QUOTE: os.path.join(os.path.dirname(TEXT), "quote_the_value.md"),
+         SED_FILE: os.path.join(os.path.dirname(TEXT), "sed_file_name.md"),
+         MOVED_HOME: os.path.join(os.path.dirname(TEXT), "use_a_container.md")}
+# A word may start with the user's home folder. hub can not read HOME, but it holds an absolute path or nothing,
+# so the word starts with / either way.
+HOME_STARTS = ("$HOME/", "${HOME}/")
 
 WHAT = {
     "lowering": ("lower one of hub's protections, disable or uninstall hub, hide its notices, or run hub's "
@@ -451,6 +484,53 @@ def names_hub(word, cwd):
     return bool(equals) and is_hub_path(value, cwd)
 
 
+# What a whole line may change
+
+
+def touches_names(text, names):
+    """Whether the text names one of these variables in any form but a plain read, $NAME or ${NAME}."""
+    def is_plain_read(match):
+        before, after = text[:match.start()], text[match.end():]
+        return before.endswith("$") or (before.endswith("${") and after.startswith("}"))
+    return any(not is_plain_read(match) for match in re.finditer(rf"(?<!\w)(?:{names})(?!\w)", text))
+
+
+def runs_hidden_code(text):
+    """Whether the text runs code hub does not read as part of the line: eval, source, the . command, or a builtin
+    that sets a variable whose name a variable or a substitution may fill in."""
+    return bool(EVAL_OR_SOURCE.search(text) or DOT_COMMAND.search(text) or HIDDEN_ASSIGNMENT.search(text))
+
+
+def moves_home(whole):
+    """Whether a line may give a program another HOME, XDG folder or CLAUDE_CONFIG_DIR than the user's own."""
+    return touches_names(whole, HOME_NAMES) or runs_hidden_code(whole)
+
+
+def changes_path(whole, setting):
+    """Whether a line may change PATH other than through this one env setting, given as plain text.
+
+    The line may hold the setting as it is, in double quotes as a whole, or
+    with its value in double quotes, as in PATH="/opt/tools/bin:$PATH".
+    """
+    name, _equals, value = setting.partition("=")
+    written = next((text for text in (setting, f'{name}="{value}"') if text in whole), None)
+    if written is None:
+        return True  # hub can not find the setting as written, so it can not tell the rest apart
+    at = whole.find(written)
+    rest = whole[:at] + whole[at + len(written):]
+    return touches_names(rest, "PATH") or bool(ZSH_PATH.search(rest)) or runs_hidden_code(rest)
+
+
+def is_step_change(args):
+    """Whether the switch step's words may change something: anything but show, or help on its own."""
+    return not (args and plain(args[0]) == "show" or only_help(args))
+
+
+def only_help(words):
+    """Whether the words are one help option and nothing else."""
+    return len(words) == 1 and not hidden(words[0]) and plain(words[0]) in HELP_WORDS
+
+
 # The checks of one simple command
 
 
@@ -519,6 +599,8 @@ def check_hubctl(args, flags, cwd, relayed=False):
     """
     if not args:
         return
+    if relayed and only_help(args):
+        return  # help on its own prints text and changes nothing
     verb = args[0]
     if hidden(verb):
         raise Stop("lowering", "a variable fills in the verb")
@@ -717,8 +799,12 @@ def check_files(words, command, cwd):
         raise Stop("settings_files", "interpreter code")
     if program == "git":
         # A read only when git's action reads. The first word that is not an option must read too, as before.
-        first = next((plain(word) for word in operands if not plain(word).startswith("-")), "")
+        # The folder after -C names no action, so git -C <folder> grep reads as a read.
+        first = next((plain(word) for spot, word in enumerate(operands)
+                      if not plain(word).startswith("-") and not (spot and plain(operands[spot - 1]) == "-C")), "")
         if first in GIT_READS and git_action(operands) in GIT_READS:
+            if any(names_hub(word, cwd) for word in git_output_files(operands)):
+                raise Stop("settings_files", "git --output")
             return
     elif program == "sed":
         if not any(re.fullmatch(r"-[A-Za-z]*i.*", plain(word)) or plain(word).startswith("--in-place")
@@ -757,6 +843,16 @@ def check_files(words, command, cwd):
             operands = switches + judged_step_words(operands[script + 1:])
     if any(names_hub(word, cwd) for word in operands):
         raise Stop("settings_files", program)
+
+
+def git_output_files(words):
+    """The words that name the file a git read, such as diff, log or show, writes its output to. That is the word
+    with --output=<file>, or the word after --output, also when the option's name is cut short."""
+    def is_output_option(word):
+        name = plain(word).partition("=")[0]
+        return len(name) >= 4 and "--output".startswith(name)
+    return [word if "=" in plain(word) else following
+            for word, following in zip(words, words[1:] + [""]) if is_output_option(word)]
 
 
 def is_plain_python_switch(program, word):
@@ -876,10 +972,10 @@ def check_claude(words):
             continue
         verb_at, verb = positional[0]
         if verb == "marketplace":
-            if len(positional) > 1 and positional[1][1] in PLUGIN_VERBS:
+            if len(positional) > 1 and positional[1][1] in PLUGIN_VERBS and not only_help(rest[positional[1][0] + 1:]):
                 raise Stop("lowering", "claude plugin marketplace remove")
             continue
-        if verb not in PLUGIN_VERBS:
+        if verb not in PLUGIN_VERBS or only_help(rest[verb_at + 1:]):
             continue
         targets, skip = [], False
         for word in rest[verb_at + 1:]:
@@ -1048,7 +1144,68 @@ def runner_check(flags):
 def unreadable_runner(words, flags):
     """Refuse a word hub can not read in a command line another program runs."""
     if any(hidden(word) for word in words):
-        raise Stop(runner_check(flags), "a command line another program runs, with a word hub can not read")
+        raise Stop(runner_check(flags), QUOTE)
+
+
+def unreadable_env_setting(chain, marked, flags, whole):
+    """Refuse a word hub can not read under a runner that keeps the environment, unless it is a setting env
+    passes on. chain holds the runner and its words, and marked the same words as the parser marks them for a
+    reader that asks for many_words, or no words when that reading does not line up."""
+    for spot, word in enumerate(chain):
+        if hidden(word) and not is_kept_setting(chain, marked, spot, whole):
+            raise Stop(runner_check(flags), QUOTE)
+
+
+def is_kept_setting(chain, marked, spot, whole):
+    """Whether the word at spot is the value of a literal env setting that names no program.
+
+    env must be a literal word, with no runner, shell or eval between the
+    first program and it, and only NAME=value words between it and this one.
+    The name is on a short list, or it is PATH with fixed folders in front of
+    a plain $PATH on a line that changes PATH nowhere else. In both cases the
+    shell must keep the value as one word, as it does in double quotes.
+    """
+    env_at = next((at for at in range(spot - 1, -1, -1) if base(chain[at]) == "env" and not hidden(chain[at])), None)
+    if env_at is None or len(marked) != len(chain):
+        return False
+    runs_another = RUNNERS | gate().SHELLS | {"eval"}
+    if any(hidden(word) or base(word) in runs_another for word in chain[1:env_at]):
+        return False
+    if not all(SETTING.match(word) for word in chain[env_at + 1:spot + 1]):
+        return False
+    value = marked[spot]
+    if gate().MANY_WORDS in value or gate().WORD_CHANGE in value:
+        return False
+    if KEPT_SETTINGS.match(value):
+        return True
+    return bool(PATH_SETTING.fullmatch(value)) and not changes_path(whole, plain(chain[spot]))
+
+
+def lined_up(marked, words):
+    """The marked words when they line up with the words, else no words, so every check on them fails."""
+    return list(marked) if marked is not None and len(marked) == len(words) else []
+
+
+def is_fixed_start(word, marked, spot):
+    """Whether a word the shell fills in part of stays one word and starts with fixed text that is not an option,
+    as "./notes/$name" does. marked holds the words as the parser marks them for a reader that asks for many_words."""
+    if not stays_one_word(marked, spot):
+        return False
+    return not word.startswith(gate().UNREADABLE) and bool(plain(word)) and not plain(word).startswith("-")
+
+
+def is_home_start(word, marked, spot, whole):
+    """Whether a word the shell fills in part of stays one word and starts with the user's home folder, as
+    "$HOME/notes.txt" does, on a line that does not change HOME or run code hub does not see."""
+    if not stays_one_word(marked, spot):
+        return False
+    starts = tuple(gate().UNREADABLE + start for start in HOME_STARTS)
+    return word.startswith(starts) and not touches_names(whole, "HOME") and not runs_hidden_code(whole)
+
+
+def stays_one_word(marked, spot):
+    """Whether the shell keeps the marked word at spot as one word, with no change to it, as in double quotes."""
+    return spot < len(marked) and gate().MANY_WORDS not in marked[spot] and gate().WORD_CHANGE not in marked[spot]
 
 
 def as_scripts(words, raw=False):
@@ -1181,7 +1338,14 @@ def sed_file(path, cwd):
 def sed_scripts(words, cwd):
     """The scripts a sed command reads from -e, -f, their long names, or its first operand, as the words
     hold them, so a variable in one stays marked. None for a script file hub can not read."""
-    scripts, operands, spot = [], [], 0
+    scripts, _file_spots, _dashes_at = sed_reading(words, cwd)
+    return [script for script in scripts if script is not None], None in scripts
+
+
+def sed_reading(words, cwd):
+    """sed's scripts as the words hold them, with None for a script file hub can not read, the places of the
+    words it reads as files, and the place of --, or len(words) when it has none."""
+    scripts, operands, spot, dashes_at = [], [], 0, len(words)
     while spot < len(words):
         text = plain(words[spot])
         following = words[spot + 1] if spot + 1 < len(words) else ""
@@ -1191,7 +1355,8 @@ def sed_scripts(words, cwd):
             continue
         name, equals, value = text.partition("=")
         if text == "--":
-            operands += words[spot + 1:]
+            operands += range(spot + 1, len(words))
+            dashes_at = spot
             break
         if text.startswith("--"):
             if len(name) >= 3 and "--expression".startswith(name):
@@ -1215,10 +1380,11 @@ def sed_scripts(words, cwd):
                     spot += 0 if attached else 1
                     break
         else:
-            operands.append(words[spot])
+            operands.append(spot)
         spot += 1
-    scripts = scripts or operands[:1]
-    return [script for script in scripts if script is not None], None in scripts
+    if scripts:
+        return scripts, operands, dashes_at
+    return [words[at] for at in operands[:1]], operands[1:], dashes_at  # the first operand is the script
 
 
 def sed_runs_a_command(script):
@@ -1282,13 +1448,16 @@ def sed_runs_a_command(script):
     return False
 
 
-def runner_scripts(words, flags, cwd):
+def runner_scripts(words, flags, cwd, marked=lambda: None, whole=""):
     """The command lines that a program in this command runs from its arguments.
 
     git, find and sed run them from known places only, so a commit message
     that names hubctl still runs. tmux, ssh, sudo and the other RUNNERS read
     every argument as a command line, since they may drop the tool-call
-    marker. A word hub can not read in those arguments is refused.
+    marker. A word hub can not read in those arguments is refused, except a
+    setting that env passes on under a runner that keeps the environment.
+    marked gives the words as the parser marks them for a reader that asks
+    for many_words, or None, and whole is the line the words come from.
     """
     index = program_index(words)
     if index is None:
@@ -1299,9 +1468,16 @@ def runner_scripts(words, flags, cwd):
     elif program == "find":
         pairs = find_scripts(rest)
     elif program == "sed":
-        scripts, unreadable = sed_scripts(rest, cwd)
-        if unreadable or any(hidden(script) or sed_runs_a_command(plain(script)) for script in scripts):
+        scripts, file_spots, dashes_at = sed_reading(rest, cwd)
+        if None in scripts or any(hidden(script) or sed_runs_a_command(plain(script))
+                                  for script in scripts if script is not None):
             raise Stop(runner_check(flags), "sed's e command, or a sed script hub can not read")
+        # A file name the shell fills in before -- could be an option, such as -e..., that adds a script.
+        open_files = [spot for spot in file_spots if hidden(rest[spot]) and spot < dashes_at]
+        marked_rest = lined_up(marked(), words)[index + 1:] if open_files else []
+        if not all(is_fixed_start(rest[spot], marked_rest, spot) or is_home_start(rest[spot], marked_rest, spot, whole)
+                   for spot in open_files):
+            raise Stop(runner_check(flags), SED_FILE)
         return []
     elif program == "tmux":
         pairs = [(script, arguments) for arguments in tmux_runs(rest) for script in as_scripts(arguments)]
@@ -1309,6 +1485,9 @@ def runner_scripts(words, flags, cwd):
         pairs = [(script, rest) for script in as_scripts(rest, raw=program in SPACE_JOINERS)]
     else:
         return []
+    if program in ENV_KEEPING and any(hidden(word) for word in rest):
+        unreadable_env_setting(words[index:], lined_up(marked(), words)[index:], flags, whole)
+        return [script for script, _source in pairs]
     for _script, source in pairs:
         unreadable_runner(source, flags)
     return [script for script, _source in pairs]
@@ -1395,8 +1574,9 @@ def refuse_too_deep(flags):
         raise Stop(running[0], TOO_DEEP)
 
 
-def check_line(line, cwd, flags, depth=0, parent=None, relayed=False):
-    """Raise Stop for the first step in the line that a running check refuses."""
+def check_line(line, cwd, flags, depth=0, parent=None, relayed=False, whole=None):
+    """Raise Stop for the first step in the line that a running check refuses. whole is the tool call's line that
+    this line comes from, for the checks that read what the rest of it changes."""
     if depth > MAX_DEPTH:
         # hub does not read a script relayed past the limit, so the script could do anything
         refuse_too_deep(flags)
@@ -1411,14 +1591,19 @@ def check_line(line, cwd, flags, depth=0, parent=None, relayed=False):
     reads_runners = hubctl_check or flags.runs(f"{PART}.settings_files")
     if hubctl_check and relayed:
         check_relayed_programs(command)
+    whole = line if whole is None else whole
+    marked = parser.marked_reader(line, cwd, len(segments))
     after_tmux = False
-    for words in segments:
+    for position, words in enumerate(segments):
         # tmux's \; starts its next command, and the parser reads that as a command of its own
         tmux_words = ["tmux"] + words if after_tmux and words and plain(words[0]) in TMUX_RUNS | TMUX_TYPING else words
         index = program_index(words)
         after_tmux = after_tmux or (index is not None and base(words[index]) == "tmux")
         if hubctl_check:
             args = hubctl_words(words, line)
+            if args is not None and is_step_change(args) and moves_home(whole):
+                # The step's background jobs belong to the whole account, so a test home still changes them.
+                raise Stop("lowering", MOVED_HOME)
             if args is not None:
                 check_hubctl(args, flags, cwd, relayed)
             check_claude(words)
@@ -1431,27 +1616,29 @@ def check_line(line, cwd, flags, depth=0, parent=None, relayed=False):
                 for typed in typed_lines(text):
                     if types_a_door(typed):
                         raise Stop("lowering", "a /hub command typed into a prompt")
-                    check_line(typed, cwd, flags, depth + 1, relayed=True)
+                    check_line(typed, cwd, flags, depth + 1, relayed=True, whole=whole)
         if flags.runs(f"{PART}.agent_marker"):
             check_marker(words, command)
         if flags.runs(f"{PART}.settings_files"):
             check_files(words, command, cwd)
         cwd = moved(words, cwd)
         for script_text in wrapped_scripts(words, command):
-            check_line(script_text, cwd, flags, depth + 1)
+            check_line(script_text, cwd, flags, depth + 1, whole=whole)
         if hubctl_check:
             for script_text in relayed_scripts(words):
-                check_line(script_text, cwd, flags, depth + 1, relayed=True)
+                check_line(script_text, cwd, flags, depth + 1, relayed=True, whole=whole)
         if reads_runners:
-            for script_text in runner_scripts(tmux_words, flags, cwd):
-                check_line(script_text, cwd, flags, depth + 1, relayed=True)
+            # tmux's words gain a word in front, so the marked reading lines up only with the words as they are
+            marked_words = (lambda at=position: marked(at)) if tmux_words is words else (lambda: None)
+            for script_text in runner_scripts(tmux_words, flags, cwd, marked_words, whole):
+                check_line(script_text, cwd, flags, depth + 1, relayed=True, whole=whole)
     if hubctl_check:
         for script_text in stdin_scripts(command, segments):
             if types_a_door(plain(script_text)):
                 raise Stop("lowering", "a /hub command typed into a prompt")
-            check_line(script_text, cwd, flags, depth + 1, relayed=True)
+            check_line(script_text, cwd, flags, depth + 1, relayed=True, whole=whole)
     for source in command.sources:
-        check_line(source, cwd, flags, depth + 1, parent=command)
+        check_line(source, cwd, flags, depth + 1, parent=command, whole=whole)
 
 
 def rough_check(line, flags):
@@ -1545,6 +1732,18 @@ def leave_folder_hint(stop, hook_input):
         return ""
 
 
+def own_hint(stop):
+    """The hint of a refusal that has its own, such as quoting a value or using a container, or "".
+
+    The user can not lower these by asking, so it takes the place of the hint to ask the user.
+    """
+    try:
+        text = files.read_text(HINTS[stop.detail]) if stop.detail in HINTS else None
+        return text.strip() if text else ""
+    except Exception:  # the hint only helps, so the refusal stands without it
+        return ""
+
+
 def handle(event, hook_input, flags, answer):
     if event != "PreToolUse" or not flags.runs(PART):
         return
@@ -1552,7 +1751,8 @@ def handle(event, hook_input, flags, answer):
     if stop is None:
         return
     answer.signal(f"{PART}.{stop.check}", "blocked")
-    answer.refuse(reason(stop, leave_folder_hint(stop, hook_input), flags.text(f"{PART}.ask_the_user")))
+    answer.refuse(reason(stop, leave_folder_hint(stop, hook_input),
+                         own_hint(stop) or flags.text(f"{PART}.ask_the_user")))
 
 
 class EveryCheck:
@@ -1571,7 +1771,8 @@ def refusal_without_settings(hook_input):
     stop = find(hook_input, EveryCheck())
     if stop is None:
         return None
-    return reason(stop, leave_folder_hint(stop, hook_input), files.read_text(TEXT).strip() if files.read_text(TEXT) else "")
+    ask_the_user = files.read_text(TEXT).strip() if files.read_text(TEXT) else ""
+    return reason(stop, leave_folder_hint(stop, hook_input), own_hint(stop) or ask_the_user)
 
 
 if __name__ == "__main__":

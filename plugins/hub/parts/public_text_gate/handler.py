@@ -186,7 +186,15 @@ GIT_WORD = UNREADABLE + "\x06"
 # may change one of its words, as changes_the_word and fills_in_a_gh_word find them. It holds UNREADABLE, so it is
 # refused like one, with its own note.
 CHANGED_WORD = UNREADABLE + "\x0e"
-MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE, CHANGED_WORD: CHANGED_WORD_NOTE}
+# Put as the text of a gh api step when the shell may change one of its words, so a read could become a write. It
+# holds CHANGED_WORD, so its note comes too, followed by the hint on how a read may hold a variable.
+API_READ = CHANGED_WORD + "\x0f"
+API_READ_NOTE = (files.read_text(os.path.join(os.path.dirname(os.path.abspath(__file__)), "text", "api_read_hint.md"))
+                 or "").strip()
+MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE, CHANGED_WORD: CHANGED_WORD_NOTE, API_READ: API_READ_NOTE}
+# A variable that zsh changes even in double quotes: a modifier such as $name:h, a subscript such as $name[1], or a
+# ${...} form with more than the name in it, such as ${name:-1}. The parser puts UNREADABLE before its $.
+CHANGED_VARIABLE = re.compile(r"\x00\$(?:[A-Za-z_]\w*(?:\[|:[A-Za-z&])|\{(?![A-Za-z_]\w*\}))")
 # Added only when a reader asks for it, as the PR test gate does. It goes before each spot the shell may fill in
 # with several words or with none: an expansion outside double quotes, which bash splits and both shells drop when
 # it is empty, and "$@", an array or zsh's (f) flag inside them. The text gate's own reading never holds it.
@@ -2887,7 +2895,8 @@ def with_changed_words(program, words, marked, found):
     When the shell may change the program's command or action, the step
     could be any step. A text the gate can not read is refused already, so
     it stays as it is. A gh api call becomes a wrapped step when the shell
-    may change any of its words, since a read could then become a write. A
+    may change any of its words, or zsh may change a variable in one even in
+    quotes, as in $number:h, since a read could then become a write. A
     git commit, tag or push, or a gh step that publishes, gets CHANGED_WORD
     with its text when the shell may change, split or drop one of its words,
     or fills in a whole gh word that gh may read as an option.
@@ -2898,8 +2907,9 @@ def with_changed_words(program, words, marked, found):
         return found
     changed = any(WORD_CHANGE in word or MANY_WORDS in word for word in marked)
     filled = program == "gh" and fills_in_a_gh_word(words)
-    if program == "gh" and (gh_command(words) or [])[1:2] == ["api"] and (changed or filled):
-        return WRAPPED, CHANGED_WORD  # a read may then be a write
+    if program == "gh" and (gh_command(words) or [])[1:2] == ["api"] and (
+            changed or filled or any(CHANGED_VARIABLE.search(word) for word in marked)):
+        return WRAPPED, API_READ  # a read may then be a write
     judged = found or git_step(program, words)
     return (judged[0], "\n".join([judged[1], CHANGED_WORD])) if judged and (changed or filled) else found
 
