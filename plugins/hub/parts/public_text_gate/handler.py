@@ -85,6 +85,10 @@ OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace", "--bare"}
 OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY",
                         "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
 REPO_VARIABLE = re.compile(r"\b(?:" + "|".join(sorted(OTHER_REPO_VARIABLES)) + r"|GIT_CONFIG\w*)\b")
+# The steps that stay on the machine, which temp_repos lets through in a temp repo with no remote
+LOCAL_TARGETS = {"commit", "tag"}
+# The words that may point git at another folder, repo or settings than the folder the line starts in
+GIT_MOVERS = {"cd", "pushd", "popd", "chdir", "-C", "-c", "--config-env", "--git-dir", "--work-tree"}
 
 # The checks, in the order the tree lists them. A private item can not be
 # taken back once it is public, so these refuse every time, in warn and in
@@ -285,6 +289,8 @@ GH_WRITE_ACTIONS = {
     "repo": {"create": ("api", DESCRIPTION), "edit": ("api", DESCRIPTION)},
     "label": {"create": ("api", DESCRIPTION), "edit": ("api", DESCRIPTION)},
 }
+# The values that turn off a gh switch given as --name=value, as gh reads them
+GH_FALSE = {"false", "f", "0"}
 # gh's flags for pr create, pr edit and issue edit, as gh defines them: {long name: (short letter, whether it takes a
 # value)}. Every pr and issue command also has -R or --repo, and --help. The PR test gate reads them from here too.
 GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
@@ -2220,6 +2226,40 @@ def pushes_read_in_place(steps, line):
     return [(target, UNREADABLE if target == "push" else text) for target, text in steps]
 
 
+def without_temp_repo_commits(steps, line, cwd, deadline):
+    """The steps without their commits and tags when those stay in a temp repo that git knows no remote for. A push
+    of those commits, and every other step, is still checked."""
+    if not any(target in LOCAL_TARGETS for target, _text in steps) or moves_git(line):
+        return steps
+    if not is_temp_repo(cwd, deadline):
+        return steps
+    return [(target, text) for target, text in steps if target not in LOCAL_TARGETS]
+
+
+def moves_git(line):
+    """Whether the line may point git at another folder, repo or settings than the folder it starts in: a cd, an
+    option such as -C or -c, or any GIT_ variable, wherever it stands on the line."""
+    words = [re.sub(r"[\"'\\]", "", word) for word in re.findall(r"[^\s;&|()<>`]+", line)]
+    return "GIT_" in line or any(word.split("=", 1)[0] in GIT_MOVERS for word in words)
+
+
+def is_temp_repo(cwd, deadline):
+    """Whether the repo the folder sits in, and its common git folder, are temp folders, and git knows no remote for
+    it. git reads every config file to list remotes, includes too. An error or a time-out counts as a remote."""
+    root = repo_root(cwd)
+    if root is None or not files.in_temp_folder(root):
+        return False
+    try:
+        common = git_run(["rev-parse", "--git-common-dir"], cwd, deadline)
+        remotes = git_run(["remote"], cwd, deadline)
+    except TooSlow:
+        return False
+    if common is None or remotes is None or common[0] != 0 or remotes[0] != 0 or remotes[1].strip():
+        return False
+    git_folder = os.path.realpath(os.path.join(cwd, common[1].strip()))
+    return files.in_temp_folder(git_folder) and not has_remote_file(git_folder, None)
+
+
 def graphql_target(text, source):
     """What a GraphQL call writes to, or None for a read. It is a read only when each query it may send stands
     in the command itself and no text it sends names a mutation. A query from a file, or one the gate can not
@@ -2420,7 +2460,24 @@ def gh_target(words, command):
     texts += [command.from_file(path) for path in option_values(rest, file_options, attached=True)]
     if group == "release" and rest[0] == "create":
         texts += release_assets(rest[1:], command)
+    if group == "repo" and rest[0] == "create" and pushes_the_source(rest[1:]):
+        return "push", "\n".join(texts + ([repo_create_commits(rest[1:], command)] if command.read_log else []))
     return target, "\n".join(texts)
+
+
+def pushes_the_source(words):
+    """Whether gh repo create pushes the local repo it names with --source, as --push or --push=true asks."""
+    return any(word == "--push" or (word.startswith("--push=") and word.split("=", 1)[1].lower() not in GH_FALSE)
+               for word in words)
+
+
+def repo_create_commits(words, command):
+    """The commits gh repo create --push sends: every commit of the source folder's HEAD that no remote holds yet."""
+    sources = option_values(words, ["--source", "-s"], attached=True)
+    folder = sources[-1] if sources else "."
+    if UNREADABLE in folder:
+        return UNREADABLE
+    return pushed_commits([], os.path.join(command.cwd, os.path.expanduser(folder)), [], command.deadline)
 
 
 def release_assets(rest, command):
@@ -3050,6 +3107,8 @@ def handle(event, hook_input, flags, answer):
     steps = [(target, text) for target, text in pushes_read_in_place(public_steps(command, cwd, deadline=deadline),
                                                                      command)
              if target_runs(flags, target)]
+    if flags.runs(f"{PART}.temp_repos"):
+        steps = without_temp_repo_commits(steps, command, cwd, deadline)
     if not steps:
         return
     if flags.runs(f"{PART}.public_repos_only") and not repo_is_public(cwd, flags.profile):
