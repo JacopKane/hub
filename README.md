@@ -8,24 +8,31 @@ hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one
 
 ![The public text gate stops a commit message that holds a home path. Claude rewrites it and commits. Then Claude tries to switch the gate off, and hub refuses. Only you can lower a protection.](docs/media/gate-stops-a-leak.gif)
 
-hub is an early work in progress and is not released yet. Expect changes that break things.
+hub is at version 0.14.0. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
 - Working today are the settings file and its switches, a first-run setup, self-protection, the public text gate, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
 - Cursor support is in beta and untested. It works only from a checkout of this repo, not from the plugin install.
-- Still planned are a sandbox command and a first release.
+- Still planned is a sandbox command.
 
 ## Install
 
-You need Claude Code and Python 3, on macOS or Linux. hub is tested with Claude Code 2.1.319. On other versions, hub's setup check shows a warning, and the message queue sends each message at once instead of holding it.
+You need Claude Code and Python 3.11 or newer, on macOS or Linux. hub is tested with Claude Code 2.1.319. On other versions, hub's setup check shows a warning, and the message queue sends each message at once instead of holding it.
 
 ```
 claude plugin marketplace add JacopKane/hub
 claude plugin install hub@hub
 ```
 
-Then start a new chat. hub offers its setup there. A small Haiku agent reads your setup, asks a few questions in one dialog, and turns on a small starting set. Ask Claude "what does hub have on?" to see what it turned on. To remove hub, tell Claude "uninstall hub". hub removes its links and puts back the settings keys it changed. It does this only when your own newest message asks for it.
+Then start a new chat, because hub's agents and parts show only from the next chat. hub offers its setup there. A small Haiku agent reads your setup, asks a few questions in one dialog, and turns on a small starting set. Ask Claude "what does hub have on?" to see what it turned on. To remove hub, tell Claude "uninstall hub". hub removes its links and puts back the settings keys it changed. It does this only when your own newest message asks for it.
+
+To update hub, run these two commands and then start a new chat:
+
+```
+claude plugin marketplace update hub
+claude plugin update hub@hub
+```
 
 ## Switch parts on and off
 
@@ -42,7 +49,7 @@ Tell Claude what to change in plain words. For example:
 "check the hub setup"         check the setup
 ```
 
-Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`. A protection, such as the public text gate, is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
+Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in `~/.local/state/hubctl/`. A protection, such as the public text gate, is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
 
 Known limits:
 
@@ -54,7 +61,7 @@ Known limits:
 
 ## How hub compares
 
-This chart places hub v0.1 and 22 other tools by the marks on hub's comparison page, checked on 2026-11-09. Each axis covers six columns of that page. A Yes counts 1 and a Part counts a half. The hub point shows its plan, because hub v0.1 is not released yet.
+This chart places hub 0.14 and 22 other tools by the marks on hub's comparison page, checked on 2026-11-09. Each axis covers six columns of that page. A Yes counts 1 and a Part counts a half. The hub point shows its plan, because some of its marks are still being built.
 
 ```mermaid
 quadrantChart
@@ -65,7 +72,7 @@ quadrantChart
     quadrant-2 Setup first
     quadrant-3 Less of both
     quadrant-4 Chats first
-    hub v0.1 plan: [0.90, 0.92]
+    hub 0.14 plan: [0.90, 0.92]
     Claude Code native: [0.55, 0.61]
     Warp Oz and Factories: [0.61, 0.55]
     T3 Code: [0.75, 0.58]
@@ -97,7 +104,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 
 | Tool | What it is | License or price | Overlap with Claude Code |
 |---|---|---|---|
-| hub v0.1 | An open-source Claude Code plugin, still being built | MIT, free | High (board, messaging, first relay layer) |
+| hub 0.14 | An open-source Claude Code plugin, still being built | MIT, free | High (board, messaging, first relay layer) |
 | Claude Code native | Anthropic's own agent, with agent view, Remote Control, Channels and messages between sessions | Paid plans, Pro $17 to Ultra $200 a month | Itself |
 | Vibe Kanban | A kanban board where each issue runs a coding agent | Apache-2.0, free | Some |
 | Conductor | A closed Mac app that runs agents in parallel workspaces. Its remote approval details are unverified | Free locally, paid cloud (prices unverified) | Some |
@@ -126,7 +133,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 ## Feature flags
 
 <details>
-<summary>All 35 parts and how they start</summary>
+<summary>Core and all 38 parts, and how they start</summary>
 
 | Part | What it does | Starts | Runs in | To switch it, say |
 |---|---|---|---|---|
@@ -134,12 +141,11 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | tuner | Sets hub up on the first run, then turns off what you keep ignoring and offers what you need | on | Claude Code, Cursor | "turn off the tuner" |
 | hub_style | An output style with a status block, short replies and linked sources | off | Claude Code, Cursor | "turn on the hub style" |
 | humanize | Hands writing work to your own writing skill, or says how to add one | off | Claude Code, Cursor | "turn on humanize" |
-| pr_gif | A skill for a GIF or an image in a PR body or comment. It records the real product, checks each frame for private data and embeds it with a caption | on | Claude Code, Cursor | "turn off pr_gif" |
+| pr_gif | A skill for a GIF or an image in a PR body or comment. It records the real product, checks each frame for private data, uploads the file as a GitHub attachment and embeds it with a caption | on | Claude Code, Cursor | "turn off pr_gif" |
 | link_check | Sends a reply back once when it names a PR, issue or ticket without a link, or a local file the terminal can not open | off | Claude Code, Cursor | "turn on the link check" |
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |
 | pr | Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR, tests before each push and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
-| own_repos | Lets Claude push, open, mark ready and merge its own PRs in the repos you list, without asking. A push to the default branch, a release and comments on other people's work still wait for your order | off | Claude Code, Cursor | "turn on own repos" |
 | scout | A small, cheap agent for one mechanical job (Haiku) | on | Claude Code, Cursor | "turn off scout" |
 | researcher | A read-only agent for reading docs, pages and code (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on researcher" |
 | worker | An agent that carries out an exact plan (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on worker" |
@@ -158,7 +164,6 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
 | em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
 | temp repos (in public_text_gate) | Skips the checks on commits in a repo inside a temp folder with no remote. A push of those commits is still checked | on | Claude Code, Cursor | "turn off temp repos" |
-| pr_flow | Planned, not in this version yet. Sends a change to hub's own repo as a draft pull request, and holds every GitHub write there until you say yes to the exact lines | off | Claude Code | "turn on the PR flow" |
 | pr_test_gate | Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report, which `pr-tested` records. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
 | containers (in self_protection) | Lets hub's switch step run in a container that can not reach your home folder, where it changes only the container's copy of hub's settings | on | Claude Code, Cursor | "turn off containers" |
@@ -178,6 +183,10 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 Each part also has smaller switches inside it, such as an agent's model and effort. They switch the same way.
 
 </details>
+
+## Help and privacy
+
+Report a bug or ask a question in [GitHub issues](https://github.com/JacopKane/hub/issues). Report a security problem as [SECURITY.md](SECURITY.md) says. hub sends no telemetry and opens no network connection of its own. Its first-run setup reads your setup on your own machine.
 
 ## License
 
