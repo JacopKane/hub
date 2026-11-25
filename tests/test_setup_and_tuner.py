@@ -18,7 +18,7 @@ from steps import and_, given, then, when
 
 ANSWERS = os.path.join(FIXTURES, "agent_answers")
 STARTING_SET = {"core", "tuner", "scout", "public_text_gate", "self_protection", "status_band", "pr", "pr_gif",
-                "pr_test_gate", "review_loop"}
+                "review_loop"}
 # Parts a new user turns on by hand. Setup never turns them on.
 OPT_IN = {"builder", "tier_rule"}
 

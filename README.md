@@ -8,7 +8,7 @@ hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one
 
 ![The public text gate stops a commit message that holds a home path. Claude rewrites it and commits. Then Claude tries to switch the gate off, and hub refuses. Only you can lower a protection.](docs/media/gate-stops-a-leak.gif)
 
-hub is at version 0.14.0. It is early software, so expect changes that break things.
+hub is at version 0.15.0. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
@@ -165,7 +165,6 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
 | em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
 | temp repos (in public_text_gate) | Skips the checks on commits in a repo inside a temp folder with no remote. A push of those commits is still checked | on | Claude Code, Cursor | "turn off temp repos" |
-| pr_test_gate | Stops a push to a branch with an open PR, a new PR and marking a PR ready until the commit has a passing test report, which `pr-tested` records. A new PR also needs a body that says how it was tested and what was not | on | Claude Code | "turn off the PR test gate" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
 | containers (in self_protection) | Lets hub's switch step run in a container that can not reach your home folder, where it changes only the container's copy of hub's settings | on | Claude Code, Cursor | "turn off containers" |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |

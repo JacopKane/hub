@@ -306,10 +306,9 @@ def test_a_file_the_line_may_write_before_the_step_reads_it_counts_as_unreadable
 
 
 def test_a_step_that_may_write_files_it_does_not_name_before_the_step_reads_a_file_counts_as_unreadable(home, tool):
-    with given("hub is installed with the PR test gate off, a repo with a local bare remote and a new commit on a "
+    with given("hub is installed, a repo with a local bare remote and a new commit on a "
                "feature branch, and message and body files that hold a home path"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
         bare = os.path.join(home.root, "remote.git")
         home.git("init", "-q", "--bare", bare)
         home.git("remote", "add", "origin", bare)
@@ -543,22 +542,9 @@ def test_a_wrapped_command_from_a_tool_that_publishes_nothing_runs_and_a_hidden_
         for target in ["commit", "push", "pr", "issue", "review_comment", "release", "gist", "tag",
                        "discussion", "commit_comment", "contents", "api"]:
             home.hubctl_from_mod("off", f"{GATE}.targets.{target}")
-        program_filled = ["top level", "top level with options", "braced", "after an assignment",
-                          "env split string", "env split string as the next word", "env split string in a cluster",
-                          "env long split string", "env short for --split-string"]
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in hidden.items()}
-    with then("no text target judges any of them, so one that eval, bash -c or a here-string runs goes through, "
-              "while in Claude Code the PR test gate still refuses each whose program a variable fills in or env's "
-              "split string hides, since it may be git or gh; Cursor has no PR test gate, so there each runs"):
-        assert {name: result.ran for name, result in results.items() if name not in program_filled} == {
-            name: True for name in hidden if name not in program_filled}
-        refused_by_the_pr_gate = {name: results[name].refused and "it runs inside another command" in
-                                  results[name].reason for name in program_filled}
-        assert refused_by_the_pr_gate == {name: tool == "claude_code" for name in program_filled}
-    with when("the user turns off the PR test gate too"):
-        home.hubctl_from_mod("off", "pr_test_gate")
-    with then("a top level variable runs, because nothing it could publish is checked"):
-        assert home.hook(tool, "PreToolUse", hidden["top level"]).ran
+    with then("no text target judges any of them, so each runs, because nothing it could publish is checked"):
+        assert {name: result.ran for name, result in results.items()} == {name: True for name in hidden}
 
 
 def test_a_setup_tools_output_runs_only_as_the_first_command_by_a_known_name_on_one_line(home, tool):
@@ -774,10 +760,8 @@ def test_everyday_lines_with_substitutions_and_brackets_still_run(home, tool):
 
 
 def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home, tool):
-    with given("hub is installed with the gate at warn and the PR test gate off, and a notes file that holds a "
-               "home path"):
+    with given("hub is installed with the gate at warn, and a notes file that holds a home path"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
         write(home, "notes.md", "See /home/sam/n.md\n")
     with when("Claude feeds a shell a script whose public steps hold a home path"):
         private = {
@@ -890,10 +874,8 @@ def test_a_script_fed_to_a_shell_through_a_heredoc_is_checked_line_by_line(home,
 
 def test_the_usual_commit_and_pr_forms_run_while_a_comment_or_heredoc_after_an_unread_opener_is_refused(home,
                                                                                                          tool):
-    with given("hub is installed with the gate at warn and the PR test gate off, a PR body file and a message file "
-               "in a docs folder"):
+    with given("hub is installed with the gate at warn, a PR body file and a message file in a docs folder"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
         write(home, "body.md", "Fixes the save button.\n")
         os.makedirs(os.path.join(home.work, "docs"))
         write(home, os.path.join("docs", "msg.txt"), "Fix the save button\n")
@@ -982,9 +964,8 @@ def test_glued_messages_repo_and_label_descriptions_and_text_release_assets_are_
 
 
 def test_a_public_command_inside_a_command_substitution_is_checked_like_any_other_command(home, tool):
-    with given("hub is installed with the gate at warn and the PR test gate off"):
+    with given("hub is installed with the gate at warn"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
     with when("Claude runs a public command inside $(...) or backticks, wherever the substitution stands"):
         private = {
             "assignment": "URL=\"$(gh pr create --title Fix --body 'See /home/sam/a.md')\"",
@@ -1072,13 +1053,5 @@ def test_a_program_the_shell_fills_in_after_a_wrapper_is_judged_like_one_with_no
                        "discussion", "commit_comment", "contents", "api"]:
             home.hubctl_from_mod("off", f"{GATE}.targets.{target}")
         results = {name: home.hook(tool, "PreToolUse", command) for name, command in wrapped.items()}
-    with then("in Claude Code the PR test gate refuses each, since the program may be git or gh; Cursor has no "
-              "PR test gate, so there each runs"):
-        refused_by_the_pr_gate = {name: result.refused and "it runs inside another command" in result.reason
-                                  for name, result in results.items()}
-        assert refused_by_the_pr_gate == {name: tool == "claude_code" for name in wrapped}
-        assert all(result.ran for result in results.values()) == (tool == "cursor")
-    with when("the user turns off the PR test gate too"):
-        home.hubctl_from_mod("off", "pr_test_gate")
     with then("each runs, because nothing it could publish is checked"):
-        assert all(home.hook(tool, "PreToolUse", command).ran for command in wrapped.values())
+        assert {name: result.ran for name, result in results.items()} == {name: True for name in wrapped}

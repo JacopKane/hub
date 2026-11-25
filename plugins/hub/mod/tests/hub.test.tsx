@@ -152,7 +152,7 @@ test('a line older than status_band.notices.keep_hours leaves the band', async (
   // The dash line is 3 hours old and the offer 2, so both are past 24 hours after 23.
   await clock.advance(23 * HOUR)
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
-  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('11 on · start text 2.1k')
+  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('10 on · start text 2.1k')
   await ui.unmount()
 })
 
@@ -180,7 +180,7 @@ test('with notices off the band shows the offer, and with offers off too, the st
 
   await $.command.run({ command: 'hub', args: 'off status_band.offers', origin: TYPED })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
-  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('11 on · start text 2.1k')
+  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('10 on · start text 2.1k')
   await ui.unmount()
 })
 

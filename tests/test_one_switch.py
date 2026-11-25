@@ -638,10 +638,9 @@ def test_a_push_is_read_by_gits_own_rules_for_its_words_and_one_whose_commits_gi
 
 def pushed_repo(home):
     """A repo whose main is pushed to a local bare remote, then gets a clean new commit, with the em dash check
-    on and the PR test gate off, since it answers first for some of the same pushes."""
+    on."""
     home.install()
     home.hubctl("on", f"{GATE}.dashes")
-    home.hubctl_from_mod("off", "pr_test_gate")
     bare = os.path.join(home.root, "remote.git")
     home.git("init", "-q", "--bare", bare)
     home.git("remote", "add", "origin", bare)
@@ -654,7 +653,7 @@ def hooks(home, tool, pushes, name):
 
 
 def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_or_a_pipe_carry_it_on(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     two_lines = ["git push origin main\ngit branch --delete old", "git push origin main # send it\ngit branch -d old",
@@ -685,7 +684,7 @@ def test_a_new_line_ends_a_push_as_the_shell_ends_it_unless_quotes_a_backslash_o
 
 
 def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     touching = ["echo hi;# it's\ngit push origin main\necho ok;# that's",
@@ -719,7 +718,7 @@ def test_a_comment_starts_right_after_an_operator_as_the_shell_starts_it(home, t
 
 
 def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_lines(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     filled_in = ["echo hi # don't\ngit commit -m \"$MESSAGE\"", "echo hi # say \"x\ngit commit -m \"it's $MESSAGE\"",
@@ -738,7 +737,7 @@ def test_a_quote_mark_in_a_comment_does_not_change_how_the_gate_reads_later_line
 
 
 def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_own_end_line(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     no_heredoc = ["echo '<<EOF'\ngit push origin main\nEOF", "echo \"<<EOF\"\ngit push origin main\nEOF",
@@ -795,7 +794,7 @@ def test_a_heredoc_starts_only_where_the_shell_starts_one_and_ends_only_at_its_o
 
 
 def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joins_them(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     joined = ["gi\\\nt push origin main", "git pu\\\nsh origin main", f"git commit -\\\nm 'Late {DASH} change'",
@@ -829,7 +828,7 @@ def test_a_backslash_at_a_line_end_joins_the_two_lines_into_one_as_the_shell_joi
 
 
 def test_a_backslash_right_after_a_comment_or_an_opening_quote_joins_no_lines(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     after_comment = ["true #\\\ngit push origin main", "#x\\\ngit push origin main", "# \\\ngit push origin main",
@@ -856,7 +855,7 @@ def test_a_backslash_right_after_a_comment_or_an_opening_quote_joins_no_lines(ho
 
 
 def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still_starts(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     word_text = ["echo $(echo a)#x <<EOF\nit's\nEOF\ngit push origin main"]
@@ -897,7 +896,7 @@ def test_a_hash_right_after_a_substitution_is_word_text_so_a_later_heredoc_still
 
 
 def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_gh(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     apart = ["a=(x)#; git push origin main", "files=(a b)#list; git push origin main",
@@ -925,7 +924,7 @@ def test_a_hash_right_after_an_array_is_unreadable_when_the_line_may_run_git_or_
 
 
 def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_backslash(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     joined = ["printf '[%s]' 'a'\\\n#b\ngit push origin main", "echo $((1))\\\n#b\ngit push origin main",
@@ -947,7 +946,7 @@ def test_a_hash_after_a_backslash_and_line_end_reads_as_the_text_before_the_back
 
 
 def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_quoted_escapes(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     substitutions = ["out=\"$(git push origin main 2>&1 # it's fine\n)\"; echo \"$out\"",
@@ -980,7 +979,7 @@ def test_a_substitution_ends_where_the_shell_ends_it_past_comments_and_dollar_qu
 
 
 def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     cases = ["echo \"$(case a in a) git push origin main;; esac)\"",
@@ -1033,7 +1032,7 @@ def test_a_case_pattern_bracket_inside_a_substitution_does_not_end_it(home, tool
 
 
 def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     early = ["echo \"$(case a in a) echo \";git push origin main;\" ;; esac)\"",
@@ -1077,7 +1076,7 @@ def test_a_case_that_bash_3_2_ends_early_inside_a_substitution_is_unreadable(hom
 
 
 def test_a_bracket_inside_a_brace_that_bash_3_2_ends_a_substitution_at_is_unreadable(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     early = ["echo \"$(echo ${x:-a) echo '$(git push origin main)' b})\"",
@@ -1116,7 +1115,7 @@ def test_a_bracket_inside_a_brace_that_bash_3_2_ends_a_substitution_at_is_unread
 
 
 def test_a_line_that_does_not_parse_is_unreadable_when_it_may_run_git_or_gh(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     broken = ["git push origin main\necho 'oops", "git push origin main \\", "g''it push origin main\necho 'oops",
@@ -1148,7 +1147,7 @@ def says_git_word_note(home, result):
 
 
 def test_a_git_action_or_option_that_the_shell_fills_in_is_unreadable(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     actions = ["git $(echo push) origin main", "git $ACTION origin main", "git $'\\p'ush origin main",
@@ -1213,11 +1212,10 @@ def says_changed_word_note(home, result):
 
 
 def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, tool):
-    with given("hub is installed with the PR test gate off; in the work folder a notes file names a home folder, a "
+    with given("hub is installed; in the work folder a notes file names a home folder, a "
                "file is named like an option, and folders named ~+ and ~ hold notes files, one clean and one not, "
                "while the home folder holds a clean notes file"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
         private, clean = "See /home/sam/log.txt\n", "A clean note.\n"
         files = {"private.md": private, "--body-file=private.md": private, "body.md": clean,
                  os.path.join("~+", "private.md"): clean, os.path.join("~", "notes.md"): private}
@@ -1299,7 +1297,7 @@ def test_a_git_or_gh_step_with_a_word_the_shell_may_change_is_unreadable(home, t
 
 
 def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     apart = ["$'\\g\\i\\t' push origin main", "git push origin $'ma\\\nin'", "git commit -m $'Fix \\q it'",
@@ -1326,7 +1324,7 @@ def test_a_dollar_quoted_escape_that_bash_and_zsh_read_apart_is_unreadable(home,
 
 
 def test_a_dollar_quoted_string_is_read_with_the_escapes_the_shell_fills_in(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     with when("Claude pushes main between two echo commands, where the first echo's $'...' string holds an "
@@ -1365,8 +1363,7 @@ def merge_side_into_main(home, resolved):
 
 
 def test_a_merge_whose_conflict_is_settled_with_new_text_is_read_like_any_other_commit(home, tool):
-    with given("a pushed main with notes.txt, then a branch side and main that each change its second line, and "
-               "the PR test gate off"):
+    with given("a pushed main with notes.txt, then a branch side and main that each change its second line"):
         pushed_repo(home)
         commit_notes(home, "one\ntwo\n", "Add notes")
         home.git("push", "-q", "origin", "main")
@@ -1391,7 +1388,7 @@ def test_a_merge_whose_conflict_is_settled_with_new_text_is_read_like_any_other_
 
 def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_tags_are_read(home, tool):
     with given("a repo whose main has a clean new commit, a branch draft and a tag v2 at a new commit whose "
-               "message has a dash, and the PR test gate off"):
+               "message has a dash"):
         pushed_repo(home)
         home.git("checkout", "-q", "-b", "draft")
         home.git("commit", "-q", "--allow-empty", "-m", f"Draft {DASH} change")
@@ -1444,8 +1441,7 @@ def test_a_push_that_may_send_more_than_the_branches_it_names_is_unreadable_and_
 
 
 def test_a_push_that_git_runs_on_another_repo_is_unreadable(home, tool):
-    with given("a repo whose main has a clean new commit, a second repo whose new commit has a dash, and the PR "
-               "test gate off"):
+    with given("a repo whose main has a clean new commit, and a second repo whose new commit has a dash"):
         pushed_repo(home)
         other = os.path.join(home.root, "other")
         home.git("init", "-q", "-b", "main", other)
@@ -1473,7 +1469,7 @@ def test_a_push_that_git_runs_on_another_repo_is_unreadable(home, tool):
 
 
 def test_a_push_or_commit_after_git_s_attr_source_option_is_read(home, tool):
-    with given("a repo whose main has a new commit whose message has a dash, and the PR test gate off"):
+    with given("a repo whose main has a new commit whose message has a dash"):
         pushed_repo(home)
         home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
     pushes = ["git --attr-source HEAD push origin main", "git --attr-source=HEAD push origin main",
@@ -1508,7 +1504,7 @@ def empty_commits(home, count):
 
 
 def test_a_push_too_long_to_read_in_full_is_refused_and_asked_to_go_in_smaller_parts(home, tool):
-    with given("a repo whose main has 1,000 clean new commits, and the PR test gate off"):
+    with given("a repo whose main has 1,000 clean new commits"):
         pushed_repo(home)
         empty_commits(home, 999)
     with when("Claude pushes main"):
@@ -1580,7 +1576,7 @@ def lock_held(path, seconds):
 
 def test_a_push_gets_only_the_time_the_hook_has_left_after_earlier_parts_and_earlier_pushes(home):
     slow_note = "git did not list the commits of this push in time"
-    with given("a repo whose main has a clean new commit, the PR test gate off, the context budget on, a chat "
+    with given("a repo whose main has a clean new commit, the context budget on, a chat "
                "transcript, and a git whose log takes 5 seconds"):
         pushed_repo(home)
         home.hubctl("on", "context_budget")
@@ -1665,10 +1661,9 @@ def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits(
 
 
 def test_pr_and_issue_texts_are_checked_by_their_own_targets(home, tool):
-    with given("hub is installed with the em dash check on and the PR test gate off, and a PR body file holds a dash"):
+    with given("hub is installed with the em dash check on, and a PR body file holds a dash"):
         home.install()
         home.hubctl("on", f"{GATE}.dashes")
-        home.hubctl_from_mod("off", "pr_test_gate")
         with open(os.path.join(home.work, "body.md"), "w") as handle:
             handle.write(f"Adds the thing {DASH} finally\n")
     with when("Claude creates a PR from that file, comments on an issue and posts a review comment"):

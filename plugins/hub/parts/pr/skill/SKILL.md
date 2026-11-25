@@ -103,9 +103,9 @@ Every push, to a draft PR too, waits until these steps are done.
 
 1. Write or change the scenarios before the code. A few fat behaviour scenarios that walk the real flow from end to end beat many small tests. Name the edge cases each one covers in its title, such as empty, huge or odd input or a failing service. Mock only the outermost seam, such as a paid or outside service.
 2. Check that each new scenario fails when the code is wrong.
-3. Run the scenarios, and the repo's smoke run when it has one, with `{{step}} pr-tested run --scenario '<command>' --smoke '<command>' --not-tested '<what, and why>'`. Give one `--scenario` for each scenario, and `--no-smoke '<why>'` when the repo has no smoke run. It records a test report for the commit, and the push needs one that passes. A failing or flaky scenario stops the push. Fix the code, or the scenario when it was wrong, and say which. Never skip, loosen or delete a scenario to make it pass.
-4. Fill the body's "How it was tested" part, and add one when the repo's template has none. `{{step}} pr-tested show --body` prints it from the report, with the scenarios and the smoke run that ran and what was not tested and why. Add the mocks left and why. `{{step}} pr-check` flags a tested part that leaves out what was not tested.
-5. A PR with only texts or docs has no scenarios to run. Record its text checks with `{{step}} pr-tested texts --base <branch> --check '<command>' --not-tested '<what, and why>'`, and say in its tested part why no scenario ran.
+3. Run the scenarios, and the repo's smoke run when it has one. A failing or flaky scenario stops the push. Fix the code, or the scenario when it was wrong, and say which. Never skip, loosen or delete a scenario to make it pass.
+4. Fill the body's "How it was tested" part, and add one when the repo's template has none. Name the scenarios and the smoke run that ran, what was not tested and why, and the mocks left and why. `{{step}} pr-check` flags a tested part that leaves out what was not tested.
+5. A PR with only texts or docs has no scenarios to run. Say in its tested part which text checks ran and why no scenario ran.
 <!-- hub:end -->
 
 <!-- hub:section pr.instructions.writing_pass -->

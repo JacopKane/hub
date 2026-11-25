@@ -519,18 +519,17 @@ def test_without_a_done_mark_the_other_groups_start_the_dispatcher_too(home, eve
 
 
 def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(home):
-    with given("hub is installed as it ships, where self_protection and the two gates name Bash"):
+    with given("hub is installed as it ships, where self_protection and the text gate name Bash"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 0)
         listing = home.hook_input("claude_code", "PreToolUse", "ls")
         listing.update(cwd=home.work)
-    with then("apply marks Bash for all three, and a command starts the dispatcher"):
-        assert tool_marker(home, "Bash") == ["self_protection", GATE, "pr_test_gate"]
+    with then("apply marks Bash for both, and a command starts the dispatcher"):
+        assert tool_marker(home, "Bash") == ["self_protection", GATE]
         group.send(listing)
         assert group.python_starts() == 1
-    with when("the user switches both gates and self_protection off in /hub"):
+    with when("the user switches the text gate and self_protection off in /hub"):
         home.hubctl_from_mod("off", GATE)
-        home.hubctl_from_mod("off", "pr_test_gate")
         home.hubctl_from_mod("off", "self_protection")
         result, _seconds = group.send(listing)
     with then("the Bash marker is gone, and the command starts only the shell and cat"):
