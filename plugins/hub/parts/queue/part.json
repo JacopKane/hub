@@ -15,28 +15,14 @@
   },
   "does": "A message to another idle main chat waits a short time, so two quick messages wake it once.",
   "keeps_on_uninstall": ["queue"],
-  "jobs": [
-    {"name": "queue-flush", "flag": "queue.flush_job", "script": "queue.py", "args": ["flush"],
-     "every_seconds": "queue.flush_job.every_seconds", "start": ["on"], "stop": ["stop"]}
-  ],
+  "when_switched": {"script": "queue.py", "on": ["on"], "off": ["stop"]},
   "children": [
     {"id": "quiet_seconds", "kind": "option", "type": "number", "default": 120,
      "does": "A held message goes once the sender has been quiet this many seconds."},
     {"id": "hold_seconds", "kind": "option", "type": "number", "default": 300,
-     "does": "No message waits longer than this many seconds."},
+     "does": "Past this many seconds, a held message goes at the next chat start, end, prompt or sent message."},
     {"id": "urgent_prefix", "kind": "option", "type": "text", "default": "[urgent]",
      "does": "A message that starts with this text is never held."},
-    {
-      "id": "flush_job",
-      "kind": "behavior",
-      "default": "on",
-      "cost": "none",
-      "does": "A background job sends held messages on, even when no chat runs a hook.",
-      "children": [
-        {"id": "every_seconds", "kind": "option", "type": "number", "default": 30,
-         "does": "The job runs every this many seconds."}
-      ]
-    },
     {
       "id": "version_guard",
       "kind": "behavior",

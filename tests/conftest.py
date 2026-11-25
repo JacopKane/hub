@@ -3,9 +3,9 @@
 `home` is a fresh temporary HOME with a copy of the plugin, its own config,
 state and git config, and a `claude` replay first on PATH. launchctl,
 systemctl, caffeinate and osascript are the recording fakes in
-tests/fakes/os_tools.py, with their calls in $HUB_FAKE_TOOLS, so no test loads
-a real job, keeps the machine awake or drives a terminal. XDG_RUNTIME_DIR is
-set, so on Linux the job adapter picks systemd and never starts a real loop.
+tests/fakes/os_tools.py, with their calls in $HUB_FAKE_TOOLS, so the cleanup
+of an older hub's jobs never touches a real one, and no test keeps the machine
+awake or drives a terminal.
 Every program runs as a real process. `tool` runs a scenario once with Claude Code's hook input
 and once with Cursor's, through the adapter.
 

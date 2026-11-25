@@ -11,9 +11,7 @@ real one would keep the test machine awake.
 import fcntl
 import json
 import os
-import plistlib
-import shlex
-import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -37,7 +35,7 @@ class Queue:
         self.live = {}
         self.now = int(time.time())
 
-    def on(self, quiet=2, limit=60, every=1, chat_names=False):
+    def on(self, quiet=2, limit=60, chat_names=False):
         self.set_clock()
         self.home.install()
         self.home.hubctl("on", "queue")
@@ -45,7 +43,6 @@ class Queue:
             self.home.hubctl("on", "chat_names")
         self.home.hubctl("set", "queue.quiet_seconds", str(quiet))
         self.home.hubctl("set", "queue.hold_seconds", str(limit))
-        self.home.hubctl("set", "queue.flush_job.every_seconds", str(every))
 
     def start(self, *names, version="2.1.319"):
         self.chats.set_version(version)
@@ -60,7 +57,7 @@ class Queue:
         self.listing()
 
     def set_clock(self):
-        """The queue's times come from the fixed test clock, so a busy machine never ages a heartbeat or a hold."""
+        """The queue's times come from the fixed test clock, so a busy machine never ages a hold."""
         self.home.env["HUB_TEST_NOW"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now))
 
     def wait(self, seconds):
@@ -95,6 +92,17 @@ class Queue:
 
     def command(self, *args):
         return self.home.run([sys.executable, "-I", self.script, *args])
+
+    def settle(self, wait=10):
+        """Waits until every flush a hook started in the background has ended, so the next step begins with no flush
+        running."""
+        deadline = time.time() + wait
+        while True:
+            listing = subprocess.run(["ps", "-A", "-ww", "-o", "args="], capture_output=True, text=True).stdout
+            if not [line for line in listing.splitlines() if self.script in line and " flush" in line]:
+                return
+            assert time.time() < deadline, "a flush is still running"
+            time.sleep(0.05)
 
     def held(self, name):
         path = os.path.join(self.home.state, "queue", "held", SESSIONS[name] + ".jsonl")
@@ -156,10 +164,9 @@ def queued_text(home):
 
 
 def test_two_quick_messages_to_an_idle_chat_wake_it_once_and_an_urgent_one_passes(home, queue):
-    with given("the queue is on, its flush has run once, and LOBBY and WEB are idle live chats"):
+    with given("the queue is on, and LOBBY and WEB are idle live chats"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
     with when("LOBBY sends WEB two messages within the quiet time"):
         first = queue.send("LOBBY", queue.address("WEB"), "The build is green.")
         second = queue.send("LOBBY", queue.address("WEB"), "Docs are merged too.")
@@ -207,7 +214,7 @@ def test_two_quick_messages_to_an_idle_chat_wake_it_once_and_an_urgent_one_passe
     with then("what waited for WEB goes with that wake"):
         posts = queue.posts("WEB", wait=10)
         assert len(posts) == 1 and "Read this when you wake." in posts[0][0]["message"]["content"]
-    with when("WEB turns busy, and the flush job runs again"):
+    with when("WEB turns busy, and a flush runs again"):
         queue.listing(WEB="busy")
         queue.flush()
         busy = queue.send("LOBBY", queue.address("WEB"), "Busy now?")
@@ -221,7 +228,6 @@ def test_the_queue_holds_a_message_with_the_address_chat_names_resolved(queue):
     with given("chat_names and the queue are on, and DOCS is idle"):
         queue.on(chat_names=True)
         queue.start("WEB", "DOCS")
-        queue.flush()
     with when("WEB sends a message to \"DOCS\" by name"):
         sent = queue.send("WEB", "DOCS", "Please review the README.")
     with then("the held message carries the live DOCS chat's own address and session"):
@@ -235,10 +241,12 @@ def test_off_first_then_flush_delivers_what_waits_exactly_once_and_holds_nothing
     with given("two messages wait for WEB"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
         queue.send("LOBBY", queue.address("WEB"), "First.")
         queue.send("LOBBY", queue.address("WEB"), "Second.")
         assert len(queue.held("WEB")) == 2
+    with and_("the flush the second send's hook started has ended, and nothing was due yet"):
+        queue.settle()
+        assert queue.posts("WEB") == [] and len(queue.held("WEB")) == 2
     with when("the queue is turned off first"):
         queue.command("off")
     with then("nothing is sent yet, so the off step alone loses and sends nothing"):
@@ -258,18 +266,54 @@ def test_off_first_then_flush_delivers_what_waits_exactly_once_and_holds_nothing
         assert queue.events("passed")[-1]["reason"] == "off"
     with when("the queue is turned on again"):
         queue.command("on")
-        queue.flush()
     with then("messages are held again"):
         assert queue.send("LOBBY", queue.address("WEB"), "Fourth.").refused
+
+
+def test_a_flush_started_before_the_off_step_delivers_what_waits_exactly_once(queue):
+    with given("two messages wait for WEB, and no flush is running"):
+        queue.on()
+        queue.start("LOBBY", "WEB")
+        queue.send("LOBBY", queue.address("WEB"), "First.")
+        queue.send("LOBBY", queue.address("WEB"), "Second.")
+        queue.settle()
+        assert queue.posts("WEB") == [] and len(queue.held("WEB")) == 2
+    with and_("something holds the queue lock"):
+        lock_path = os.path.join(queue.home.state, "queue", "lock")
+        lock = open(lock_path, "a")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        os.utime(lock_path, (0, 0))
+    with when("a hook in LOBBY starts a flush while the queue is on, and the flush waits for the lock"):
+        queue.chats.send("LOBBY", "UserPromptSubmit", prompt="next task")
+        deadline = time.time() + 10
+        while os.path.getmtime(lock_path) == 0 and time.time() < deadline:
+            time.sleep(0.02)
+        assert os.path.getmtime(lock_path) != 0, "the hook started no flush"
+    with and_("the queue is turned off, and the lock is let go"):
+        queue.command("off")
+        lock.close()
+        queue.settle()
+    with then("that flush runs after the off step, so it brings WEB both messages in one post"):
+        posts = queue.posts("WEB")
+        assert len(posts) == 1 and "First." in posts[0][0]["message"]["content"]
+        assert "Second." in posts[0][0]["message"]["content"]
+        assert queue.held("WEB") == [] and queue.events("posted")[-1]["reason"] == "forced"
+    with when("the forced flush runs, and LOBBY sends one more message"):
+        queue.flush("--force")
+        later = queue.send("LOBBY", queue.address("WEB"), "Third.")
+    with then("nothing reaches WEB twice, and the new message is not held"):
+        assert queue.posts("WEB") == []
+        assert not later.refused and queue.held("WEB") == []
+        assert len(queue.events("delivered")) == 2
 
 
 def test_a_send_that_races_the_stop_is_never_left_held_with_no_flush_to_come(queue):
     with given("the queue is on, and LOBBY and WEB are idle live chats"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
     with and_("the stop's last flush holds the queue lock"):
         lock_path = os.path.join(queue.home.state, "queue", "lock")
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
         lock = open(lock_path, "a")
         fcntl.flock(lock, fcntl.LOCK_EX)
         os.utime(lock_path, (0, 0))
@@ -296,7 +340,6 @@ def test_a_held_message_is_posted_from_the_address_its_sender_has_now(queue):
     with given("LOBBY's message to WEB is held"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
         before = queue.address("LOBBY")
         assert queue.send("LOBBY", queue.address("WEB"), "Reply to me.").refused
     with when("LOBBY is resumed on a new address while the message waits, and the forced flush runs"):
@@ -315,7 +358,6 @@ def test_the_tested_versions_guard_is_an_option_and_a_changed_version_hands_the_
     with given("the queue is on, and every chat runs a Claude Code version the queue has not tested"):
         queue.on(limit=7)
         queue.start("LOBBY", "WEB", version="9.0.0")
-        queue.flush()
     with when("LOBBY sends WEB a message"):
         untested = queue.send("LOBBY", queue.address("WEB"), "Hello.")
     with then("it goes natively, and the reason is counted"):
@@ -344,7 +386,7 @@ def test_the_tested_versions_guard_is_an_option_and_a_changed_version_hands_the_
         assert queue.send("LOBBY", queue.address("WEB"), "Any version.").refused
     with when("WEB ends while the message waits past the limit"):
         queue.live["WEB"].end()
-        queue.wait(1)
+        queue.wait(7)
         queue.flush()
     with then("LOBBY is told it could not be delivered, with its text"):
         notices = queue.posts("LOBBY")
@@ -352,14 +394,22 @@ def test_the_tested_versions_guard_is_an_option_and_a_changed_version_hands_the_
         assert "Any version." in notices[0][0]["message"]["content"] and queue.held("WEB") == []
 
 
-def test_with_no_flush_running_nothing_new_is_held(queue):
-    with given("the queue is on, but its flush has never run"):
-        queue.on()
-        queue.start("LOBBY", "WEB")
+def test_a_held_message_waits_for_the_next_hook_of_any_chat_even_past_its_limit(queue):
+    with given("the queue is on with a 7 second limit, and LOBBY, WEB and DOCS are idle live chats"):
+        queue.on(limit=7)
+        queue.start("LOBBY", "WEB", "DOCS")
     with when("LOBBY sends WEB a message"):
-        sent = queue.send("LOBBY", queue.address("WEB"), "Hello.")
-    with then("it goes natively, because nothing would send it on"):
-        assert not sent.refused and queue.events("passed")[-1]["reason"] == "no-heartbeat"
+        assert queue.send("LOBBY", queue.address("WEB"), "Hello.").refused
+    with and_("the limit passes while no chat runs a hook"):
+        queue.wait(30)
+    with then("the message is still held, since nothing runs between hooks"):
+        assert queue.posts("WEB") == [] and len(queue.held("WEB")) == 1
+    with when("DOCS, which neither sent nor gets the message, starts a turn"):
+        queue.chats.send("DOCS", "UserPromptSubmit", prompt="next task")
+    with then("its hook sends the message on to WEB, past the limit"):
+        posts = queue.posts("WEB", wait=10)
+        assert len(posts) == 1 and "Hello." in posts[0][0]["message"]["content"]
+        assert queue.events("posted")[-1]["reason"] == "limit"
 
 
 def undelivered(home):
@@ -381,7 +431,6 @@ def test_a_give_up_notice_for_a_sender_that_is_down_waits_for_its_next_session_s
     with given("LOBBY's message waits for WEB"):
         queue.on(limit=7)
         queue.start("LOBBY", "WEB")
-        queue.flush()
         assert queue.send("LOBBY", queue.address("WEB"), "Are you there?").refused
         old_lobby = queue.live["LOBBY"]
     with and_("LOBBY is down in the middle of a restart, and WEB is gone for good"):
@@ -390,7 +439,7 @@ def test_a_give_up_notice_for_a_sender_that_is_down_waits_for_its_next_session_s
         del queue.live["WEB"]
         queue.listing()
     with when("the message waits past the limit and the flush runs"):
-        queue.wait(1)
+        queue.wait(7)
         queue.flush()
     with then("the message is saved as undelivered, and no notice goes to LOBBY's old address"):
         assert [item["body"] for item in undelivered(home)] == ["Are you there?"]
@@ -410,7 +459,6 @@ def test_a_message_for_a_chat_that_is_restarting_waits_until_it_is_back_and_arri
     with given("two messages from LOBBY wait for WEB"):
         queue.on(limit=7)
         queue.start("LOBBY", "WEB")
-        queue.flush()
         assert queue.send("LOBBY", queue.address("WEB"), "First.").refused
         assert queue.send("LOBBY", queue.address("WEB"), "Second.").refused
     with and_("a restart marks WEB as restarting, as it does before it types /exit"):
@@ -421,7 +469,7 @@ def test_a_message_for_a_chat_that_is_restarting_waits_until_it_is_back_and_arri
         assert queue.posts("WEB") == [] and len(queue.held("WEB")) == 2
     with when("WEB exits, the messages wait past the limit, and the flush runs"):
         queue.live["WEB"].end()
-        queue.wait(1)
+        queue.wait(7)
         queue.flush()
     with then("they are still held, not given up"):
         assert len(queue.held("WEB")) == 2 and undelivered(home) == []
@@ -437,119 +485,27 @@ def test_a_message_for_a_chat_that_is_restarting_waits_until_it_is_back_and_arri
         assert content.index("First.") < content.index("Second.") and queue.held("WEB") == []
 
 
-# The flush job. It is the queue's only job, installed through the job adapter
-# by hubctl apply while queue.flush_job runs. launchctl and systemctl are the
-# recording fakes, so the job is read back from its file and the fake's state.
-
-JOB = "queue-flush"
-
-
-def runner():
-    return "launchd" if os.uname().sysname == "Darwin" else "systemd"
-
-
-def job_file(home):
-    if runner() == "launchd":
-        return os.path.join(home.root, "Library", "LaunchAgents", f"hubctl.{JOB}.plist")
-    return os.path.join(home.root, ".config", "systemd", "user", f"hubctl-{JOB}.service")
-
-
-def job_bytes(home):
-    with open(job_file(home), "rb") as handle:
-        return handle.read()
-
-
-def job_command(home):
-    if runner() == "launchd":
-        return plistlib.loads(job_bytes(home))["ProgramArguments"]
-    line = [line for line in job_bytes(home).decode().splitlines() if line.startswith("ExecStart=")][0]
-    return shlex.split(line.split("=", 1)[1])
-
-
-def job_interval(home):
-    if runner() == "launchd":
-        return plistlib.loads(job_bytes(home))["StartInterval"]
-    timer = job_file(home).replace(".service", ".timer")
-    with open(timer) as handle:
-        line = [line for line in handle.read().splitlines() if line.startswith("OnUnitActiveSec=")][0]
-    return int(line.split("=", 1)[1].rstrip("s"))
-
-
-def job_loaded(home):
-    path = os.path.join(home.env["HUB_FAKE_TOOLS"], "state.json")
-    if not os.path.exists(path):
-        return False
-    with open(path) as handle:
-        state = json.load(handle)
-    if runner() == "launchd":
-        return f"hubctl.{JOB}" in state["launchd"]
-    return f"hubctl-{JOB}.timer" in state["systemd"]
-
-
-def test_the_flush_job_follows_its_flag(home):
-    with given("hub is installed and the queue is off"):
-        home.install()
-    with then("no flush job exists"):
-        assert not os.path.exists(job_file(home)) and not job_loaded(home)
-    with when("the user turns the queue on"):
-        home.hubctl("on", "queue")
-    with then("the flush job is loaded on the machine's job runner, every 30 seconds, through hub's shim"):
-        assert job_loaded(home) and job_interval(home) == 30
-        command = job_command(home)
-        assert command[0] == os.path.join(home.state, "bin", "hubctl")
-        assert command[1:] == ["--script", "parts/queue/queue.py", "flush"]
-    with when("the user sets the job to every 10 seconds"):
-        home.hubctl("set", "queue.flush_job.every_seconds", "10")
-    with then("the job is written again with the new time"):
-        assert job_loaded(home) and job_interval(home) == 10
-    with when("the user switches only the flush job off"):
-        home.hubctl("off", "queue.flush_job")
-    with then("the job is unloaded and its files are gone"):
-        assert not job_loaded(home) and not os.path.exists(job_file(home))
-
-
-def test_a_moved_plugin_keeps_the_job_file_and_the_job_runs_the_new_copy(home):
-    with given("the queue is on and its flush job is loaded"):
-        home.install()
-        home.hubctl("on", "queue")
-        before = job_bytes(home)
-    with when("the plugin copy moves to another folder and apply runs from there"):
-        moved = os.path.join(home.root, "plugin-moved", "hub")
-        os.makedirs(os.path.dirname(moved))
-        shutil.move(home.plugin, moved)
-        home.plugin = moved
-        home.hubctl("apply")
-    with then("the job file is the same, byte for byte"):
-        assert job_bytes(home) == before and job_loaded(home)
-    with and_("the job's own command runs the moved copy's flush, which writes the heartbeat"):
-        with open(os.path.join(home.state, "bin", "hubctl")) as handle:
-            assert os.path.realpath(moved) in handle.read()
-        home.run(job_command(home))
-        assert os.path.exists(os.path.join(home.state, "queue", "heartbeat"))
-
+# Switching the queue off, and uninstalling hub, run queue.py stop through the
+# part's when_switched commands, so nothing waits with no hook left to send it.
 
 def test_turning_the_queue_off_delivers_what_waits_and_on_holds_again(home, queue):
     with given("the queue is on, and two messages wait for WEB"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
         queue.send("LOBBY", queue.address("WEB"), "First.")
         queue.send("LOBBY", queue.address("WEB"), "Second.")
-        assert len(queue.held("WEB")) == 2 and job_loaded(home)
+        assert len(queue.held("WEB")) == 2
     with when("the user turns the queue off in /hub"):
         home.hubctl_from_mod("off", "queue")
-    with then("the job is gone, and both messages reach WEB in one post before hubctl returns"):
-        assert not job_loaded(home) and not os.path.exists(job_file(home))
+    with then("both messages reach WEB in one post before hubctl returns"):
         posts = queue.posts("WEB")
         assert len(posts) == 1 and "First." in posts[0][0]["message"]["content"]
         assert "Second." in posts[0][0]["message"]["content"] and queue.held("WEB") == []
     with and_("a new message goes natively"):
         assert not queue.send("LOBBY", queue.address("WEB"), "Third.").refused
-    with when("the user turns the queue on again, and the job's first flush runs"):
+    with when("the user turns the queue on again"):
         home.hubctl("on", "queue")
-        queue.flush()
-    with then("the job is back, and messages are held again"):
-        assert job_loaded(home)
+    with then("messages are held again"):
         assert queue.send("LOBBY", queue.address("WEB"), "Fourth.").refused
 
 
@@ -557,10 +513,9 @@ def test_turning_the_queue_off_waits_for_a_running_flush_and_still_delivers_ever
     with given("the queue is on, and two messages wait for WEB"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
         queue.send("LOBBY", queue.address("WEB"), "First.")
         queue.send("LOBBY", queue.address("WEB"), "Second.")
-    with and_("a flush of the job holds the queue lock for four seconds"):
+    with and_("a flush that a hook started holds the queue lock for four seconds"):
         lock = open(os.path.join(home.state, "queue", "lock"), "a")
         fcntl.flock(lock, fcntl.LOCK_EX)
         releaser = threading.Timer(4, lock.close)
@@ -568,8 +523,7 @@ def test_turning_the_queue_off_waits_for_a_running_flush_and_still_delivers_ever
     with when("the user turns the queue off in /hub"):
         home.hubctl_from_mod("off", "queue")
         releaser.join()
-    with then("the job is gone, and both messages reach WEB in one post"):
-        assert not job_loaded(home)
+    with then("both messages reach WEB in one post"):
         posts = queue.posts("WEB")
         assert len(posts) == 1 and "First." in posts[0][0]["message"]["content"]
         assert "Second." in posts[0][0]["message"]["content"]
@@ -581,7 +535,6 @@ def test_messages_the_queue_can_not_deliver_as_it_goes_are_kept_and_each_sender_
     with given("the queue is on, and two messages from LOBBY wait for WEB"):
         queue.on()
         queue.start("LOBBY", "WEB")
-        queue.flush()
         queue.send("LOBBY", queue.address("WEB"), "First.")
         queue.send("LOBBY", queue.address("WEB"), "Second.")
     with and_("WEB's inbox no longer takes connections"):
@@ -606,66 +559,55 @@ def test_messages_the_queue_can_not_deliver_as_it_goes_are_kept_and_each_sender_
         assert "First." not in queue.chats.send("LOBBY", "UserPromptSubmit", prompt="again").context
 
 
-def test_uninstall_removes_every_job_even_when_a_part_folder_is_gone(home):
-    with given("the queue is on with its flush job, and then the queue's part folder is deleted"):
-        home.install()
-        home.hubctl("on", "queue")
-        assert job_loaded(home)
-        shutil.rmtree(os.path.join(home.plugin, "parts", "queue"))
+def test_uninstall_delivers_what_waits_and_keeps_the_queue_folder(home, queue):
+    with given("the queue is on, and a message waits for WEB"):
+        queue.on()
+        queue.start("LOBBY", "WEB")
+        assert queue.send("LOBBY", queue.address("WEB"), "Before I go.").refused
     with when("the user runs hubctl uninstall"):
         home.hubctl("uninstall")
-    with then("the job is unloaded, its files are gone, and hub keeps no record of it"):
-        assert not job_loaded(home) and not os.path.exists(job_file(home))
-        assert not os.path.exists(os.path.join(home.state, "jobs.json"))
+    with then("WEB gets the message, and nothing is left held"):
+        posts = queue.posts("WEB")
+        assert len(posts) == 1 and "Before I go." in posts[0][0]["message"]["content"]
+        assert queue.held("WEB") == []
+    with and_("the queue's folder stays, as the part asks"):
+        assert os.path.isdir(os.path.join(home.state, "queue"))
+
+
+def test_a_switch_command_must_name_a_script_in_the_parts_folder(home):
+    with given("hub is installed"):
+        home.install()
+    with when("the queue's manifest names a switch script that is not in its folder"):
+        home.edit_manifest("queue", lambda data: data["when_switched"].update(script="../gone.py"))
+        broken = home.hubctl("show", check=False)
+    with then("the part tree fails and names the field and the script"):
+        assert broken.returncode == 1 and "when_switched" in broken.stderr and "../gone.py" in broken.stderr
 
 
 def doctor_lines(home):
     return home.hubctl("doctor").stdout.splitlines()
 
 
-def test_the_doctor_names_the_flush_job_its_last_run_and_the_terminal(home):
-    with given("the queue is on and its flush job is loaded"):
+def test_the_doctor_names_the_terminal_while_a_chat_part_runs(home):
+    with given("the queue is on"):
         home.install()
         home.hubctl("on", "queue")
     with when("the user runs hubctl doctor in a plain terminal"):
         lines = doctor_lines(home)
-    with then("it names the job as loaded with its last exit code, and the terminal"):
-        [job] = [line for line in lines if f"job {JOB}" in line]
-        assert job.startswith("note: ") and "(queue) is loaded" in job
-        assert ("last exit code 0" if runner() == "launchd" else "last result success") in job
+    with then("it names the terminal, and no background job"):
         assert "note: terminal: plain" in lines
+        assert not [line for line in lines if "job " in line]
     with when("the same doctor runs inside iTerm"):
         home.env["TERM_PROGRAM"] = "iTerm.app"
         lines = doctor_lines(home)
         del home.env["TERM_PROGRAM"]
     with then("it names iTerm"):
         assert "note: terminal: iterm" in lines
-    with when("the job's file is deleted"):
-        os.unlink(job_file(home))
-        lines = doctor_lines(home)
-    with then("the doctor warns and names the fix"):
-        [job] = [line for line in lines if f"job {JOB}" in line]
-        assert job.startswith("warning: ") and "file of this job is missing" in job and "apply hub's settings" in job
-    with when("the user runs hubctl apply"):
-        home.hubctl("apply")
-    with then("the job file is back and the warning is gone"):
-        assert os.path.exists(job_file(home)) and job_loaded(home)
-        assert not [line for line in doctor_lines(home) if line.startswith("warning: ") and JOB in line]
-    with when("the job runner no longer has the job loaded"):
-        path = os.path.join(home.env["HUB_FAKE_TOOLS"], "state.json")
-        with open(path) as handle:
-            state = json.load(handle)
-        state = {kind: [name for name in names if JOB not in name] for kind, names in state.items()}
-        with open(path, "w") as handle:
-            json.dump(state, handle)
-    with then("the doctor warns that it is not loaded and names the fix"):
-        [job] = [line for line in doctor_lines(home) if f"job {JOB}" in line]
-        assert job.startswith("warning: ") and "not loaded" in job and "apply hub's settings" in job
 
 
-def test_the_doctor_says_nothing_about_jobs_or_the_terminal_while_no_chat_part_runs(home):
+def test_the_doctor_says_nothing_about_the_terminal_while_no_chat_part_runs(home):
     with given("hub is installed with the queue off"):
         home.install()
-    with then("the doctor names no job and no terminal"):
+    with then("the doctor names no terminal"):
         lines = doctor_lines(home)
-        assert not [line for line in lines if "job " in line or "terminal:" in line]
+        assert not [line for line in lines if "terminal:" in line]

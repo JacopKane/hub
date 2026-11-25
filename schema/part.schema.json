@@ -246,65 +246,31 @@
         }
       }
     },
-    "jobs": {
-      "type": "array",
-      "description": "Background jobs the part needs. Each runs one of the part's scripts while its flag runs, and hub's apply and uninstall install and remove them.",
-      "items": {
-        "type": "object",
-        "required": [
-          "name",
-          "flag",
-          "script"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]*$",
-            "description": "The job's name, unique over all parts."
+    "when_switched": {
+      "type": "object",
+      "required": [
+        "script"
+      ],
+      "additionalProperties": false,
+      "description": "A script in the part's folder that apply runs when the part is switched on or off, and uninstall runs as off.",
+      "properties": {
+        "script": {
+          "type": "string",
+          "description": "The script's path inside the part's folder."
+        },
+        "on": {
+          "type": "array",
+          "items": {
+            "type": "string"
           },
-          "flag": {
-            "type": "string",
-            "description": "The flag id that must run for the job to be installed."
+          "description": "Arguments for the script when the part starts to run."
+        },
+        "off": {
+          "type": "array",
+          "items": {
+            "type": "string"
           },
-          "script": {
-            "type": "string",
-            "description": "A script in the part's folder."
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Arguments for each run."
-          },
-          "every_seconds": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "description": "Seconds between runs, or the id of a number flag that holds them."
-          },
-          "at_login": {
-            "type": "boolean"
-          },
-          "keep_alive": {
-            "type": "boolean"
-          },
-          "start": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Arguments for one run of the script when the job is first installed."
-          },
-          "stop": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Arguments for one run of the script after the job is removed."
-          }
+          "description": "Arguments for the script when the part stops running or hub is uninstalled."
         }
       }
     }

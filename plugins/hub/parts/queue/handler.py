@@ -9,6 +9,9 @@
   queued, or leaves the send alone. It runs after chat_names.resolve, so it
   sees the address that part chose.
 
+Each of these hooks also starts a flush in the background while anything is
+held, because no other process sends what waits.
+
 Any error here leaves the send alone, which is the native path, and never
 touches another part's answer. A bug may cost a wake, never a message.
 """
@@ -44,7 +47,7 @@ def handle(event, hook_input, flags, answer):
             data = sessions.note(event, hook_input)
             if event == "SessionStart" and data is not None and settings["versions"] is not None:
                 sessions.update(hook_input.get("session_id"), version=queue.claude_version())
-        queue.on_any_hook(settings)
+        queue.on_any_hook()
         if event == "UserPromptSubmit":
             queue.on_prompt(hook_input)
         elif event == "PreToolUse" and hook_input.get("tool_name") == "SendMessage":

@@ -32,13 +32,11 @@ has doctor(flags) returns [(level, text)], with level "note" or "warning",
 and each line starts with the part's id. A part that is on but runs only in
 Claude Code gets a note with its reason from cursor_gaps when Cursor is
 linked, and the log the hooks keep for the doctor is named with its newest
-line. report() holds these lines and job_lines as "part_lines", and the text
-prints each as "level: text" after the warnings.
+line. report() holds these lines and terminal_lines as "part_lines", and the
+text prints each as "level: text" after the warnings.
 
-job_lines adds a line for each background job hub recorded, loaded or not,
-with what the job runner says about its last run. A job that is not loaded or
-lost a file is a warning that names hubctl apply. While a chat part runs, it
-also names the terminal hub sees (tmux, iTerm or plain).
+terminal_lines names the terminal hub sees (tmux, iTerm or plain) while a
+chat part runs.
 """
 import json
 import os
@@ -47,7 +45,7 @@ import subprocess
 import time
 
 from . import apply, board, build, files, keys, links, resolve, settings, slots, tree as tree_module
-from .adapters import jobs, terminal
+from .adapters import terminal
 
 TESTED = os.path.join(files.PLUGIN_ROOT, "tested-versions.json")
 COMMAND_RECORD = "mod-command.json"
@@ -212,7 +210,7 @@ def report(cwd=None):
              "beta": [{"part": part.id, "runs": flags[part.id]["runs"]}
                       for part in tree.parts if part.stage == tree_module.BETA],
              "cursor_gaps": cursor_gaps(data), "problems": problems(cwd),
-             "part_lines": [{"level": level, "text": text} for level, text in part_lines(cwd) + job_lines(cwd)]}
+             "part_lines": [{"level": level, "text": text} for level, text in part_lines(cwd) + terminal_lines(cwd)]}
     # The band's failed checks counter reads this, so the band never runs the checks itself.
     failed = len(found["problems"]) + sum(1 for line in found["part_lines"] if line["level"] == "warning")
     files.write_json(files.state_path(board.DOCTOR_LAST), {"time": time.time(), "failed": failed})
@@ -277,22 +275,9 @@ def part_lines(cwd=None):
     return found
 
 
-def job_lines(cwd=None):
-    """[(level, text)] for the recorded jobs, then the terminal while a chat part runs."""
+def terminal_lines(cwd=None):
+    """[(level, text)] that name the terminal while a chat part runs."""
     found = []
-    record = jobs.recorded()
-    for name in sorted(record):
-        state = jobs.status(name, record)
-        where = f"job {name} ({record[name].get('part', '?')})"
-        if not state["files_present"]:
-            found.append(("warning", f"{where}: a file of this job is missing. Say \"apply hub's settings\" to write it again."))
-        elif state["backend"] == "none":
-            found.append(("note", f"{where} does not run: {state['detail']}."))
-        elif not state["loaded"]:
-            found.append(("warning", f"{where} is not loaded ({state['detail']}). Say \"apply hub's settings\" to load it."))
-        else:
-            last = jobs.last_run(name, record)
-            found.append(("note", f"{where} is loaded ({state['detail']})" + (f", {last}." if last else ".")))
     data = resolve.current(cwd)
     flags = data["tools"]["claude_code"]["flags"]
     chats = [part for part in tree_module.load(files.PARTS_DIR).parts

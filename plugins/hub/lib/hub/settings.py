@@ -96,7 +96,15 @@ def check(data, path):
     for key in ("private_words", "private_words_files"):
         if key in data and not (isinstance(data[key], list) and all(isinstance(word, str) for word in data[key])):
             raise SettingsError(f"{path}: {key} must be a list of texts")
-    return migrate(data)
+    return migrate(without_dropped_flags(data))
+
+
+def without_dropped_flags(data):
+    """The settings without the flags hub no longer has, so no step reports or keeps them."""
+    flags = data.get("flags", {})
+    if not any(name in flags for name in files.DROPPED_FLAGS):
+        return data
+    return dict(data, flags={name: entry for name, entry in flags.items() if name not in files.DROPPED_FLAGS})
 
 
 def migrate(data):
