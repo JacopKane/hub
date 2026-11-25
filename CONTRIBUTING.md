@@ -41,3 +41,14 @@ The commit check looks at each commit on its own:
 - No commit may add a symlink.
 - A merge commit is checked only on the changes it makes itself, not on what it brings in from its parents.
 - `main` takes squash merges, so the whole PR lands as one commit. The two rules about `.hub/` files therefore also hold for the PR as a whole. Put a change to `.hub/maintainers`, `.hub/revoked` or the checker's files in a PR of its own. `--squash` runs this part of the check.
+
+## Every control works from the coordinator chat
+
+Every control a part offers must work from the coordinator chat. That means turning the part on or off, its kill switch, and any change it protects. The user should never have to type in one topic chat's own window.
+
+The reason is where the user is. They talk to the coordinator chat, while a topic chat often runs the step in a window they may never open. A control that waits for words typed in that window waits forever.
+
+- A change the user asks for in the coordinator chat counts as their order in the chat that runs it, when the coordinator forwards it in the user's words.
+- /hub works in every chat, the coordinator chat too.
+- If a part still has to tell the user's order from an agent's, it takes the order in a form the coordinator chat can give, such as the user's answer there.
+- When a part refuses a change, its message says how to make it from the coordinator chat.
