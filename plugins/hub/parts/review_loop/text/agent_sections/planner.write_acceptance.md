@@ -1,1 +1,0 @@
-- When the plan leads to a build that a critic or reviewer will judge, add an acceptance list to the plan. It names the area, the threats in and out of scope, and a few items. Each item names the test or command that checks it.

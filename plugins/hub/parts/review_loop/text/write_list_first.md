@@ -1,1 +1,0 @@
-Before a build that a critic or reviewer will judge, write an acceptance list. It names the area, the threats in and out of scope, and a few items. Each item names the test or command that checks it. Put one line in every builder, critic and reviewer brief, `Acceptance: /absolute/path.md`, or `Acceptance: none, <reason>` when a review has no list.

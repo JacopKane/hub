@@ -1,1 +1,0 @@
-hub stopped this call, because {area} had {starts} reviews since its last pass and none of them ended with a GO. Ask the user to choose one of these for {area}: ship it as it is, redesign with a new list, one more round, or park it. Only the user's own typed answer lifts the stop, in this chat or in the coordinator chat, and that answer must name {area}.

@@ -1,1 +1,0 @@
-hub sent this report back, because it does not end with the verdict lines for {area}. End it with these lines, filled in, and hand it back again. hub sends a report back {tries} times at most, then counts it as a failed review. {lines}

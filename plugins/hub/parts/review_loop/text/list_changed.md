@@ -1,1 +1,0 @@
-hub stopped this call, because the acceptance list for {area} changed after a failed review. Ask the user whether to redesign with the new list. Until the user says so, the old list is the one that counts.

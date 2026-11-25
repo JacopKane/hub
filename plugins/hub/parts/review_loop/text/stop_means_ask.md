@@ -1,1 +1,0 @@
-When hub stops the review loop on an area, start no more builds or reviews on it. Ask the user to choose one of these: ship it as it is, redesign with a new list, one more round, or park it. Only the user's own answer lifts the stop, and that answer must name the area.

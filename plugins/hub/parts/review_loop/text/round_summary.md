@@ -1,1 +1,0 @@
-Round {round} failed {items}.

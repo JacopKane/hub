@@ -1,1 +1,0 @@
-hub stopped this {agent} call, because its brief names no acceptance list. Add the line `Acceptance: /absolute/path.md` for the list this review judges, or `Acceptance: none, <reason>` when it has none, and start it again.
