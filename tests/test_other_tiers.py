@@ -143,7 +143,7 @@ def test_cursor_gets_a_copy_of_each_new_agent_that_runs(home):
         home.install()
         home.hubctl("on", "reviewer")
     with then("~/.cursor/agents/hub-reviewer.md names the mapped model and effort"):
-        assert front_matter(cursor_agent(home, "reviewer"))["model"] == "claude-opus-5[effort=high]"
+        assert front_matter(cursor_agent(home, "reviewer"))["model"] == "claude-opus-5-5[effort=high]"
         assert MARKER not in read(cursor_agent(home, "reviewer"))
     with and_("an agent that is off has no Cursor copy"):
         assert not os.path.lexists(cursor_agent(home, "critic"))

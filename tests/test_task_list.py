@@ -260,10 +260,10 @@ OPUS_USAGE = {"input_tokens": 2000, "output_tokens": 40000, "cache_read_input_to
 SONNET_USAGE = {"input_tokens": 1000, "output_tokens": 20000, "cache_read_input_tokens": 500000,
                 "cache_creation_input_tokens": 10000}
 HAIKU_USAGE = {"input_tokens": 0, "output_tokens": 10000}
-# $ per million tokens: opus 5.5 input 4, output 20, cache read 0.20; sonnet 5.5 2, 10, 0.20; haiku 5.5 output 0.50.
+# $ per million tokens: opus 5.5 input 4, output 20, cache read 0.20; sonnet 5.5 2, 10, 0.10; haiku 5.5 output 0.50.
 # A cache write costs input x1.25 for 5 minutes and x2 for an hour, and a write with no split counts as an hour.
 OPUS_COST = (2000 * 4 + 40000 * 20 + 900000 * 0.20 + 20000 * 4 * 1.25 + 40000 * 4 * 2) / 1e6  # 1.408
-SONNET_COST = (1000 * 2 + 20000 * 10 + 500000 * 0.20 + 10000 * 2 * 2) / 1e6  # 0.342
+SONNET_COST = (1000 * 2 + 20000 * 10 + 500000 * 0.10 + 10000 * 2 * 2) / 1e6  # 0.292
 HAIKU_COST = 10000 * 0.50 / 1e6  # 0.005
 
 
@@ -291,6 +291,48 @@ def test_an_agents_cost_is_the_price_table_sum_of_its_own_transcript_counting_ea
         total = OPUS_COST + SONNET_COST + HAIKU_COST
         assert abs(task["cost"]["usd"] - total) <= 0.01 * total
         assert task["cost"]["read_to"] == os.path.getsize(path)
+
+
+def usage_cost(price, usage):
+    """What a reply with these counts costs at an (input, output, cache read) price per million tokens."""
+    paid_in, paid_out, paid_read = price
+    split = usage.get("cache_creation", {})
+    writes = (split.get("ephemeral_5m_input_tokens", 0) * 1.25 + split.get("ephemeral_1h_input_tokens", 0) * 2
+              if split else usage.get("cache_creation_input_tokens", 0) * 2)
+    return (usage.get("input_tokens", 0) * paid_in + usage.get("output_tokens", 0) * paid_out
+            + usage.get("cache_read_input_tokens", 0) * paid_read + writes * paid_in) / 1e6
+
+
+# The prices are the pricing page's, typed here, so a wrong row in the table fails the scenario.
+@pytest.mark.parametrize("model, price, family", [
+    ("claude-opus-5-6", (4, 20, 0.20), "opus"),
+    ("claude-opus-6", (4, 20, 0.20), "opus"),
+    ("claude-sonnet-5-6", (2, 10, 0.10), "sonnet"),
+    ("claude-sonnet-6", (2, 10, 0.10), "sonnet"),
+    ("claude-haiku-6", (0.10, 0.50, 0.01), "haiku"),
+    ("claude-fable-5-3", (8, 40, 0.20), "fable"),
+    ("claude-fable-6", (8, 40, 0.20), "fable"),
+    ("claude-opus-4-1-20250805", (15, 75, 1.50), "opus"),
+    ("claude-mythos-5-2", (8, 40, 0.20), "mythos"),
+])
+def test_a_model_the_price_table_does_not_name_costs_like_the_newest_row_of_its_family_below_it(
+        tasks_on, model, price, family):
+    home = tasks_on
+    with given(f"a running background agent whose reply comes from {model}"):
+        launch = payload(home, "PostToolUse.Agent.background.json")
+        launch["tool_response"]["resolvedModel"] = model
+        send(home, launch)
+        path = agent_transcript(home, launch["session_id"], "a2a7db315f2641a17")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as handle:
+            handle.write(usage_line("req_1", "msg_1", model, OPUS_USAGE))
+    with then("it costs like the newest version of its family at or below it, not $0"):
+        task = by_key(home)["a2a7db315f2641a17"]
+        expected = usage_cost(price, OPUS_USAGE)
+        assert abs(task["cost"]["usd"] - expected) <= 0.01 * expected
+    with and_("the list names it by its family"):
+        row = next(line for line in view(home, "--width", "100").splitlines() if "Background helper" in line)
+        assert f" {family} " in row and model.replace("claude-", "") not in row
 
 
 def test_twenty_hook_runs_at_once_keep_twenty_tasks(tasks_on):

@@ -220,12 +220,12 @@ class Home:
     def hubctl(self, *args, cwd=None, check=True):
         return self.run([sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args], cwd=cwd, check=check)
 
-    def set_by(self, by, flag_id, value):
+    def set_by(self, by, flag_id, value, check=True):
         """Write a value the way setup or the tuner does, through changes.set_flag with that setter."""
         code = ("import json, sys; sys.path.insert(0, sys.argv[1]); from hub import changes; "
                 "changes.set_flag(sys.argv[2], json.loads(sys.argv[3]), by=sys.argv[4], door=sys.argv[4])")
         return self.run([sys.executable, "-I", "-c", code, os.path.join(self.plugin, "lib"), flag_id,
-                         json.dumps(value), by])
+                         json.dumps(value), by], check=check)
 
     def hubctl_as_user(self, *args, typed=None, cwd=None, check=True):
         """hubctl as the user runs it in their own terminal, which can raise a protected flag but not lower it.

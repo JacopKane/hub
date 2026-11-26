@@ -300,8 +300,13 @@ def load_cursor_handler():
     return module
 
 
-def cursor_model(values, shipped, effort_map):
-    models = dict(item.split("=", 1) for item in effort_map or [] if "=" in item)
+def model_pairs(effort_map):
+    return dict(item.split("=", 1) for item in effort_map or [] if "=" in item)
+
+
+def cursor_model(values, shipped, effort_map, shipped_map=()):
+    """Cursor's name for the agent's model. A model missing from the user's table gets the id hub ships for it."""
+    models = {**model_pairs(shipped_map), **model_pairs(effort_map)}
     model = values.get("model") or shipped.get("model")
     if not model:
         return None
@@ -344,7 +349,8 @@ def wanted(tree, resolved, lines):
                 lines_, body = build.split(built)
                 head = build.keep_only(lines_, ("name", "description"))
                 model = cursor_model(build.option_values(part, cursor), build.front_matter(text),
-                                     cursor["cursor_link.agent_copies.effort_map"]["value"])
+                                     cursor["cursor_link.agent_copies.effort_map"]["value"],
+                                     tree.get("cursor_link.agent_copies.effort_map").data.get("default"))
                 if model:
                     head.append(f"model: {model}")
                 entries.append({"path": path, "part": part.id, "kind": "cursor_agent", "type": "file",
