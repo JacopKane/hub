@@ -316,6 +316,50 @@ def test_a_change_line_leaves_the_strip_after_a_few_minutes_and_its_undo_still_w
         assert home.settings()["flags"][DASHES] == {"by": "user", "value": "on"}
 
 
+def test_history_lists_a_change_that_left_the_band_so_undo_by_its_id_still_reaches_it(home):
+    with given("the day 9 fixture, where the tuner turned dashes off 6 minutes ago, past the band's 5 minutes"):
+        day9(home)
+        age_day9_lines(home, 6)
+    with and_("then the user changes scout's model"):
+        home.step("set", "scout.model", "sonnet")
+    with then("the dash line has left the strip"):
+        assert DASH_LINE not in [line["id"] for line in screen(home)["strip"]]
+    with when("the user asks what hub changed"):
+        listed = json.loads(home.step("history", "--json").stdout)["changes"]
+        printed = home.step("history").stdout.splitlines()
+    with then("history lists the changes newest first, the scout change, then dashes, then setup's line"):
+        assert [line["flag"] for line in listed] == ["scout.model", DASHES, "scout.model"]
+    with and_("the dash change shows its id, flag, old and new value, who made it, when, and that it is not undone"):
+        dash = listed[1]
+        assert {key: dash[key] for key in ("id", "flag", "old", "new", "by", "undone")} == {
+            "id": DASH_LINE, "flag": DASHES, "old": "on", "new": "off", "by": "tuner", "undone": False}
+        stored = [line for line in home.history() if line["id"] == DASH_LINE][0]["time"]
+        assert dash["time"] == stored
+        assert printed[1] == f"{DASH_LINE}  {stored}  {DASHES} on -> off  by tuner"
+    with when("the user undoes it with the id history gave"):
+        home.step("undo", dash["id"])
+    with then("dashes is on again, pinned by the user"):
+        assert home.settings()["flags"][DASHES] == {"by": "user", "value": "on"}
+    with and_("history marks the dash change undone, and the undo itself is not listed as a change"):
+        listed = json.loads(home.step("history", "--json").stdout)["changes"]
+        assert [(line["id"] == DASH_LINE, line["undone"]) for line in listed] == [(False, False), (True, True), (False, False)]
+        assert home.step("history").stdout.splitlines()[1].endswith("by tuner  (undone)")
+
+
+def test_history_shows_the_last_20_changes_and_says_so_when_there_are_none(home):
+    with given("a new machine where nothing changed yet"):
+        home.install()
+    with then("history says there are no changes"):
+        assert home.step("history").stdout.strip() == "no changes yet"
+        assert json.loads(home.step("history", "--json").stdout) == {"changes": []}
+    with when("the user makes 22 changes"):
+        for count in range(22):
+            home.step("set", "status_band.notices.keep_minutes", str(count + 1))
+    with then("history lists the newest 20, newest first"):
+        listed = json.loads(home.step("history", "--json").stdout)["changes"]
+        assert [line["new"] for line in listed] == list(range(22, 2, -1))
+
+
 def test_a_line_time_in_hours_from_an_older_hub_is_dropped_and_the_minutes_default_holds(home):
     with given("a settings file from an older hub that kept band lines 48 hours"):
         home.install()

@@ -43,6 +43,7 @@ Tell Claude what to change in plain words. For example:
 "turn on humanize"            switch a part on
 "turn off the status band"    switch a part off
 "undo that"                   take back the last change
+"what did hub change?"        list recent changes with their ids
 "turn off texts first"        switch a smaller rule inside a part
 "check the hub setup"         check the setup
 ```
