@@ -129,9 +129,18 @@ def record_path(session):
     return files.state_path(os.path.join(FOLDER, session + ".json")) if session else None
 
 
+def read_record(path):
+    """The record at path, or None when it is missing or damaged, so the next note writes it again."""
+    try:
+        data = files.read_json(path)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def record(session):
     path = record_path(session)
-    return files.read_json(path) if path else None
+    return read_record(path) if path else None
 
 
 def records():
@@ -143,8 +152,8 @@ def records():
         return found
     for name in names:
         if name.endswith(".json") and name != os.path.basename(LISTING):
-            data = files.read_json(os.path.join(folder, name))
-            if isinstance(data, dict) and data.get("session"):
+            data = read_record(os.path.join(folder, name))
+            if data and data.get("session"):
                 found.append(data)
     return found
 
@@ -161,7 +170,7 @@ def note(event, hook_input):
         except FileNotFoundError:
             pass
         return None
-    data = files.read_json(path)
+    data = read_record(path)
     if event == "SessionStart" or data is None:
         pid, info = chat_process()
         data = dict(data or {}, session=session, pid=pid, start=(info or {}).get("start"),
@@ -180,7 +189,7 @@ def note(event, hook_input):
 def update(session, **values):
     """Set values in a chat's own record, when it has one."""
     path = record_path(session)
-    data = files.read_json(path) if path else None
+    data = read_record(path) if path else None
     if data is None:
         return None
     data.update(values)
@@ -311,8 +320,10 @@ def row_for(rows, session):
     return next((row for row in rows or [] if isinstance(row, dict) and row.get("sessionId") == session), None)
 
 
-def name_of(hook_input):
-    """This chat's name: its title from hook input or its record, else its row in the listing."""
+def name_of(hook_input, use_listing=True):
+    """This chat's name: its title from hook input or its record, else its row in the listing.
+
+    With use_listing=False the listing is left out, so a chat with no title has no name."""
     title = hook_input.get("session_title")
     if isinstance(title, str) and title.strip():
         return title.strip()
@@ -320,6 +331,8 @@ def name_of(hook_input):
     data = record(session)
     if data and data.get("title"):
         return data["title"]
+    if not use_listing:
+        return None
     row = row_for(listing(), session)
     return row.get("name") if row else None
 

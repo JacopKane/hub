@@ -859,6 +859,7 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         assert section == [f"context_budget: {reason('context_budget', 'context_budget')}",
                            f"handback_cap: {reason('handback_cap', 'handback_cap')}",
                            f"tier_rule.guard: {reason('tier_rule', 'tier_rule.guard')}",
+                           f"coordinator: {reason('coordinator', 'coordinator')}",
                            f"status_band: {reason('status_band', 'status_band')}",
                            f"remote_control: {reason('remote_control', 'remote_control')}"]
         lines = output.splitlines()
@@ -869,10 +870,10 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         assert [f"{gap['flag']}: {gap['reason']}" for gap in gaps] == section
         assert {(gap["part"], gap["tool"]) for gap in gaps} == {
             ("context_budget", "cursor"), ("handback_cap", "cursor"), ("tier_rule", "cursor"),
-            ("status_band", "cursor"), ("remote_control", "cursor")}
+            ("coordinator", "cursor"), ("status_band", "cursor"), ("remote_control", "cursor")}
     with when("the user switches the guard off"):
         home.step_from_mod("off", "tier_rule.guard")
         section = cursor_section(home.step("doctor").stdout)
     with then("the doctor no longer names it, because it does not run in Claude Code either"):
         assert [line.split(":")[0] for line in section] == [
-            "context_budget", "handback_cap", "status_band", "remote_control"]
+            "context_budget", "handback_cap", "coordinator", "status_band", "remote_control"]

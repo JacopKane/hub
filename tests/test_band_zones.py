@@ -256,8 +256,9 @@ def test_a_chat_that_needs_the_user_does_not_ask_in_its_own_band(home, chats):
 
 
 def test_only_the_coordinator_chats_band_is_told_to_reread_the_board_while_idle(home, chats):
-    with given("chat_board is on, and HUB and WEB run, but the coordinator part is off"):
+    with given("chat_board is on, and HUB and WEB run, but the user turned the coordinator part off in /hub"):
         board_on(home)
+        home.step_from_mod("off", "coordinator")
         running = start(chats, "HUB", "WEB")
     with then("no band is told to reread the board on its own"):
         assert [screen_in(home, running[name])["board"]["coordinator"] for name in ("HUB", "WEB")] == [False, False]

@@ -204,7 +204,7 @@ test('the picker rows equal the model, and only the first family with a new or w
     ...tierRows,
     '[ ] chat_board',
     '[ ] chat_names',
-    '[ ] coordinator',
+    '[x] coordinator',
     '[ ] permission_relay',
     '[ ] queue',
     '[ ] restart',
@@ -323,7 +323,12 @@ test('a select runs set with the picked mode', async ($, on) => {
 })
 
 test('a child that is on under an off part shows [~] and says what it waits for', async ($, on) => {
-  const { ui } = await open($, on)
+  // The coordinator is on by default, so this test turns it off, as the user can in /hub.
+  const fake = fakeStep()
+  const rows = rowsOf(fake.model)
+  Object.assign(rows.get('coordinator') ?? {}, { value: 'off', effective: 'off', runs: false, by: 'user' })
+  Object.assign(rows.get('coordinator.start_nudge') ?? {}, { runs: false, waits_for: ['coordinator'] })
+  const { ui } = await open($, on, fake)
 
   await ui.press({ key: 'family:chats' })
   await ui.press({ key: 'more:coordinator' })

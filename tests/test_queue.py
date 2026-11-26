@@ -606,8 +606,10 @@ def test_the_doctor_names_the_terminal_while_a_chat_part_runs(home):
 
 
 def test_the_doctor_says_nothing_about_the_terminal_while_no_chat_part_runs(home):
-    with given("hub is installed with the queue off"):
+    with given("hub is installed with the queue off, and the user turned the coordinator off in /hub, so no chat "
+               "part runs"):
         home.install()
+        home.step_from_mod("off", "coordinator")
     with then("the doctor names no terminal"):
         lines = doctor_lines(home)
         assert not [line for line in lines if "terminal:" in line]

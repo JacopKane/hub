@@ -4,9 +4,9 @@
 
 Every part of your Claude Code setup gets its own switch.
 
-hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
+hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place. That is the main purpose of hub, so the coordinator is on by default in Claude Code. It waits until you name one chat HUB with /rename HUB. From then on you talk only to the coordinator chat, and every other chat takes its orders from it. Permission prompts still need you in that chat's own window. With one chat, nothing changes.
 
-hub is at version 0.20.4. It is early software, so expect changes that break things.
+hub is at version 0.20.5. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
@@ -161,7 +161,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |
 | sentry_write_gate | Experimental. Asks before a Sentry tool changes what the team sees | off | Claude Code | "turn on the Sentry gate" |
 | slack_write_gate | Experimental. Lets a chat read Slack but never post | off | Claude Code | "turn on the Slack gate" |
-| coordinator | One chat you talk to, which forwards work and relays questions | off | Claude Code | "turn on the coordinator" |
+| coordinator | One chat you talk to, which forwards work and relays questions. It starts when you name a chat HUB with /rename HUB. An update turns it on too, unless you had turned it off | on | Claude Code | Turn it off in `/hub` |
 | chat_board | Shows every chat as busy, idle, offline or needs you | off | Claude Code | "turn on the chat board" |
 | chat_names | Sends a message by chat name to the live chat of that name | off | Claude Code | "turn on chat names" |
 | task_list | Lists each chat's agents, background jobs, questions, waits and timers, with their state and cost so far | off | Claude Code | "turn on the task list" |

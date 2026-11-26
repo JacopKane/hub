@@ -254,6 +254,14 @@ def next_session(row):
     return row["next_session"] or any(child["runs"] and next_session(child) for child in row.get("children", []))
 
 
+def start_line(row):
+    """The line under the coordinator's row that says how a chat becomes the coordinator."""
+    if row["id"] != "coordinator":
+        return []
+    name = next((child["effective"] for child in row.get("children", []) if child["id"] == "coordinator.name"), None)
+    return [f"  To start it, type /rename {name or 'HUB'} in the chat you want."]
+
+
 def summary(cwd, changed):
     model = screen.model(cwd, everything=True)
     rows = [part for family in model["families"] for part in family["parts"] if part["runs"] and part["relevant"]]
@@ -261,7 +269,9 @@ def summary(cwd, changed):
     later = [row for row in rows if next_session(row)]
     lines = [f"hub is set up, with {len(rows)} parts on."]
     for heading, group in (("Works now", now), ("Starts next session", later)):
-        lines += ["", heading + ":"] + [f"- {row['id']}: {row['does']}" for row in group]
+        lines += ["", heading + ":"]
+        for row in group:
+            lines += [f"- {row['id']}: {row['does']}"] + start_line(row)
     if changed:
         lines += ["", "Setup changed:"] + [f"- {line['flag']} is {json.dumps(line['new'])} now, because "
                                            f"{line['reason']}. Say \"undo {line['id']}\" to take it back."

@@ -46,11 +46,16 @@ def every_part_on(home):
 
 
 def test_the_doctor_names_each_chat_part_and_whether_the_listing_works(home, chats):
-    with given("hub is installed with the chat parts at their defaults"):
+    with given("hub is installed with the chat parts at their defaults, where only the coordinator is on, and no "
+               "chat runs"):
         home.install()
-    with then("the doctor says nothing about them"):
+        chats.set_listing([])
+    with then("the doctor says nothing about the parts that are off"):
         lines = doctor(home)
-        assert all(not lines_about(lines, part) for part in PARTS)
+        assert all(not lines_about(lines, part) for part in PARTS if part != "coordinator")
+    with and_("its one note on the coordinator says that no chat named HUB runs now"):
+        assert len(lines_about(lines, "coordinator")) == 1
+        assert "no chat named HUB runs now" in lines_about(lines, "coordinator")[0]
     with given("the coordinator, chat_names, live_notes and restart are on, and the listing shows a live LOBBY"):
         every_part_on(home)
         chats.set_listing([chats.row("LOBBY", pid=os.getpid()), chats.row("WEB", pid=os.getpid())])
@@ -79,7 +84,8 @@ def test_the_doctor_names_each_chat_part_and_whether_the_listing_works(home, cha
             assert line.startswith("warning: ") and "claude agents --json" in line and "exited with 3" in line
     with and_("the doctor's own check leaves the hooks' doctor log alone"):
         assert chats.doctor_log() == []
-    with when("a hook logged a failed listing"):
+    with when("the user typed in LOBBY, so the hooks wake, and a hook logged a failed listing"):
+        chats.send("LOBBY", "UserPromptSubmit", prompt="carry on", session_title="LOBBY")
         chats.set_listing([], exit_code=3)
         chats.tool("WEB", "AskUserQuestion", {"questions": []})
         logged = chats.doctor_log()
@@ -100,7 +106,8 @@ def test_in_cursor_none_of_these_parts_run_and_the_doctor_says_why(home, chats):
         every_part_on(home)
         home.step("on", "cursor_link")
         chats.set_listing([chats.row("LOBBY", pid=os.getpid(), session=CURSOR_CHAT)])
-    with and_("the same calls from a Claude Code chat with that id are refused"):
+    with and_("the same calls from a Claude Code chat with that id are refused, once the user typed in it"):
+        chats.send(CURSOR_CHAT, "UserPromptSubmit", prompt="carry on", session_title="LOBBY")
         assert chats.tool(CURSOR_CHAT, "Bash", commit).refused
         assert chats.tool(CURSOR_CHAT, "Agent", task).refused
         assert os.path.exists(notes)

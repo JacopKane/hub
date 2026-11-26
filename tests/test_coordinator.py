@@ -7,6 +7,7 @@ dispatcher in a temporary HOME. The chat listing is a fake `claude agents
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -82,18 +83,22 @@ def test_a_lobby_chat_is_refused_topic_work_and_a_web_chat_is_not(home, chats):
         assert chats.tool("LOBBY", "Write", state_note).ran
 
 
-def test_the_coordinator_is_off_until_switched_on_and_its_name_defaults_to_hub(home, chats):
+def test_the_coordinator_is_on_by_default_until_turned_off_and_its_name_defaults_to_hub(home, chats):
     source = os.path.join(home.work, "app.py")
     edit = {"file_path": source, "old_string": "a", "new_string": "b"}
     with given("hub is installed with the coordinator at its default, and a chat named hub runs and is listed"):
         home.install()
         chats.start("HUB", title="hub")
         chats.set_listing([chats.row("hub", pid=os.getpid(), session=SESSIONS["HUB"])])
+    with then("the chat named hub is refused, whatever the case of its name"):
+        assert chats.tool("HUB", "Edit", edit).refused
+    with when("the user turns the coordinator off in /hub"):
+        home.step_from_mod("off", "coordinator")
     with then("the chat edits freely"):
         assert chats.tool("HUB", "Edit", edit).ran
-    with when("the user switches the coordinator on and leaves its name alone"):
+    with when("the user switches the coordinator on again and leaves its name alone"):
         home.step("on", "coordinator")
-    with then("the chat named hub is refused, whatever the case of its name"):
+    with then("the chat named hub is refused again"):
         assert chats.tool("HUB", "Edit", edit).refused
     with when("WEB is renamed to HUB in the middle of its session"):
         chats.start("WEB", title="WEB")
@@ -152,14 +157,19 @@ def test_with_a_live_lobby_a_question_in_web_goes_to_lobby(home, chats):
         assert reused.ran
 
 
-def test_a_lobby_with_no_hub_record_gets_questions_by_its_name(home, chats):
+def test_a_lobby_that_started_before_hub_gets_questions_by_its_name_from_its_next_prompt(home, chats):
     with given("LOBBY started before hub was on, so only the listing knows it"):
         coordinator_on(home)
         chats.start("WEB", title="WEB")
         chats.set_listing([chats.row("LOBBY", pid=os.getpid()), chats.row("WEB", pid=os.getpid())])
     with when("WEB opens a question dialog"):
+        early = chats.tool("WEB", "AskUserQuestion", QUESTION)
+    with then("the dialog opens, since the coordinator's hooks sleep while no chat they know has its name"):
+        assert early.ran and chats.listing_calls() == 0
+    with when("the user types in LOBBY, and WEB opens a question dialog"):
+        chats.send("LOBBY", "UserPromptSubmit", prompt="carry on", session_title="LOBBY")
         asked = chats.tool("WEB", "AskUserQuestion", QUESTION)
-    with then("it is refused, and the address is LOBBY's name"):
+    with then("it is refused, and the address is LOBBY's name from the listing"):
         assert asked.refused and "at address LOBBY." in asked.reason
     with when("the listing shows LOBBY with no process, as a chat that has ended"):
         chats.set_listing([chats.row("LOBBY"), chats.row("WEB", pid=os.getpid())])
@@ -265,3 +275,44 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
         home.step("on", "coordinator.instructions.relay")
     with then("the link points at the shipped skill again"):
         assert os.readlink(link) == os.path.join(home.state, "built", "skills", "hub-coordinator")
+
+
+def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
+    readme = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md")
+    with given("the coordinator is on, and chat_board too, so every section of the skill runs"):
+        coordinator_on(home)
+        home.step("on", "chat_board")
+        link = os.path.join(home.root, ".claude", "skills", "hub-coordinator")
+        with open(os.path.join(home.plugin, "parts", "coordinator", "skill", "SKILL.md")) as handle:
+            shipped = handle.read()
+        purpose = next(block for block in shipped.split("\n\n") if "single master" in block)
+    with then("the purpose comes before the first section, so no switch can drop it"):
+        assert shipped.index(purpose) < shipped.index("<!-- hub:section ")
+        assert "talks only to the coordinator chat" in purpose
+        assert "takes its orders from this one" in purpose
+        assert "Permission prompts are the exception. They still show in that chat's own window." in purpose
+        assert "protection" not in purpose
+        assert DASH not in purpose
+        section_ids = re.findall(r"<!-- hub:section coordinator\.instructions\.(\w+) -->", shipped)
+        section_headings = []
+        for section_id in section_ids:
+            start = shipped.index(f"<!-- hub:section coordinator.instructions.{section_id} -->")
+            body = shipped[start:shipped.index("<!-- hub:end -->", start)]
+            section_headings += re.findall(r"^## .+$", body, re.MULTILINE)
+        assert section_ids and len(section_headings) == len(section_ids)
+    with when("the user turns off every instruction section the shipped skill has"):
+        for section_id in section_ids:
+            home.step("off", f"coordinator.instructions.{section_id}")
+    with then("the built skill has no section headings left and still states the purpose"):
+        with open(os.path.join(link, "SKILL.md")) as handle:
+            copy = handle.read()
+        assert [heading for heading in section_headings if heading in copy] == []
+        assert purpose in copy
+    with and_("the README's opening says the same purpose"):
+        with open(readme, encoding="utf-8") as handle:
+            opening = handle.read().split("\n## ", 1)[0]
+        assert "main purpose of hub" in opening and "talk only to the coordinator chat" in opening
+        assert "every other chat takes its orders from it" in opening
+        assert "Permission prompts still need you in that chat's own window." in opening
+        assert "lowers one of hub's protections" not in opening
+        assert DASH not in opening

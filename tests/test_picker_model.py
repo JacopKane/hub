@@ -30,8 +30,9 @@ def picker_fixture():
 
 
 def test_the_full_model_gives_each_row_its_kind_type_values_and_what_it_waits_for(home):
-    with given("the day 9 fixture, where researcher is offered and coordinator is off"):
+    with given("the day 9 fixture, where researcher is offered, and the user turned the coordinator off in /hub"):
         day9(home)
+        home.step_from_mod("off", "coordinator")
     with when("hub screen --json --all runs"):
         found = rows(screen(home, "--all"))
     with then("a part row carries its part kind, and a switch takes off and on"):
@@ -56,8 +57,9 @@ def test_the_full_model_gives_each_row_its_kind_type_values_and_what_it_waits_fo
 
 
 def test_a_part_that_is_on_waits_for_the_part_it_needs(home):
-    with given("the day 9 fixture"):
+    with given("the day 9 fixture, where the user turned the coordinator off in /hub"):
         day9(home)
+        home.step_from_mod("off", "coordinator")
     with when("the user turns permission_relay on while coordinator is off"):
         home.step("on", "permission_relay")
         found = rows(screen(home, "--all"))

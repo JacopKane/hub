@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from chats import Chats
 from conftest import PLUGIN, REPO, HookResult, load_fixture
 from steps import and_, given, then, when
 from test_other_tiers import agent_transcript, agent_transcript_path, main_transcript
@@ -178,7 +179,8 @@ def test_the_group_for_every_other_tool_starts_python_only_when_a_part_that_hand
         assert marker(home) is None
     with when("the agent reads a file nine times through the group"):
         runs = [group.read("a0000000000000021") for _ in range(9)]
-    with then("each call ends with no answer, and only the shell and cat start, with no error"):
+    with then("each call ends with no answer, and only the shell and cat start, with no error, since the "
+              "coordinator's hooks sleep"):
         assert [result.output for result, _seconds in runs] == [{}] * 9
         assert group.python_starts() == 0 and group.fast_path()
 
@@ -266,17 +268,18 @@ def test_the_post_tool_use_and_stop_groups_start_python_only_when_one_of_their_p
 
 
 def test_the_prompt_group_starts_python_for_one_of_its_parts_or_a_notice_that_waits_for_a_chat(home):
-    with given("hub is installed as it ships, where no part that handles a typed prompt runs"):
+    with given("hub is installed as it ships, where the only part that handles a typed prompt is the coordinator, "
+               "and no chat has its name"):
         home.install()
         group = EveryToolGroup(home, "UserPromptSubmit", 0)
         typed = load_fixture("claude_code", "UserPromptSubmit.json")
         typed.update(cwd=home.work, prompt="Add the layout test.")
         notices = os.path.join(home.state, "chat_notices")
-    with then("apply leaves no marker for the group"):
-        assert marker(home, USER_PROMPT_PARTS) is None
-    with when("the user types a prompt"):
+    with then("apply marks the group for the coordinator alone"):
+        assert marker(home, USER_PROMPT_PARTS) == ["coordinator"]
+    with when("the user types a prompt in a chat with no title"):
         result, _seconds = group.send(typed)
-    with then("it ends with no answer, and Python never starts"):
+    with then("it ends with no answer, and Python never starts, since the coordinator's hooks sleep"):
         assert result.output == {} and group.python_starts() == 0
 
     with when("a part that has since been turned off left a notice for this chat"):
@@ -294,7 +297,7 @@ def test_the_prompt_group_starts_python_for_one_of_its_parts_or_a_notice_that_wa
         home.step("on", "knowledge_only")
         group.send(typed)
     with then("apply marks it, and the group starts the dispatcher"):
-        assert marker(home, USER_PROMPT_PARTS) == ["knowledge_only"]
+        assert sorted(marker(home, USER_PROMPT_PARTS)) == ["coordinator", "knowledge_only"]
         assert group.python_starts() == 2
 
 
@@ -315,11 +318,14 @@ def tool_marker(home, tool):
 
 
 def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_part_names(home):
-    with given("hub is installed as it ships, where tier_rule is off, so no running part names a tool"):
+    with given("hub is installed as it ships, where tier_rule is off and the coordinator runs, but no chat has "
+               "the coordinator's name"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 1)
-    with then("apply marks no tool"):
-        assert os.listdir(os.path.join(home.state, TOOL_PARTS)) == []
+    with then("apply marks only the coordinator's tools, and Agent and SendMessage not at all"):
+        assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == [
+            "AskUserQuestion", "Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Write"]
+        assert tool_marker(home, "Read") == ["coordinator"]
     with when("the main chat reads, greps, globs, edits, writes, edits a notebook, asks and sends through the group"):
         calls = [("Read", None), ("Grep", {"pattern": "x"}), ("Glob", {"pattern": "*"}), ("Edit", None),
                  ("Write", None), ("NotebookEdit", None), ("AskUserQuestion", {"questions": []}),
@@ -339,14 +345,16 @@ def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_
         assert tool_marker(home, "Agent") == ["tier_rule"]
         assert group.python_starts() == 1
 
-    with when("the user switches the coordinator on, which names Read, and a large Write comes"):
-        home.step("on", "coordinator")
+    with when("a chat named HUB starts, which wakes the coordinator's hooks, and a read and a large Write come"):
+        chats = Chats(home)
+        try:
+            chats.start("HUB", title="HUB")
+        finally:
+            chats.close()
         named_call(group, "Read")
         big = {"file_path": os.path.join(home.work, "big.md"), "content": "line \"quoted\" 100%s\n" * 50000}
         named_call(group, "Write", big)
-    with then("apply marks Read for it, the group starts the dispatcher for both, "
-              "and the dispatcher read the whole input"):
-        assert tool_marker(home, "Read") == ["coordinator"]
+    with then("the group starts the dispatcher for both, and the dispatcher read the whole input"):
         assert group.python_starts() == 3
         assert not os.path.exists(os.path.join(home.state, "errors.log"))
     with when("the user switches it off again in /hub"):
@@ -430,20 +438,25 @@ def test_without_a_done_mark_the_other_groups_start_the_dispatcher_too(home, eve
 
 
 def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(home):
-    with given("hub is installed as it ships, where no running part names Bash"):
+    with given("hub is installed as it ships, where only the coordinator names Bash, and no chat has its name"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 0)
         listing = home.hook_input("claude_code", "PreToolUse", "ls")
         listing.update(cwd=home.work)
-    with then("apply marks no Bash, and a command starts only the shell and cat"):
-        assert tool_marker(home, "Bash") is None
+    with then("apply marks Bash for the coordinator, and a command starts only the shell and cat, since the "
+              "coordinator's hooks sleep"):
+        assert tool_marker(home, "Bash") == ["coordinator"]
         result, _seconds = group.send(listing)
         assert result.output == {} and group.python_starts() == 0 and not any(group.errors)
-    with when("the user switches the coordinator on, which names Bash"):
-        home.step("on", "coordinator")
+    with when("a chat named HUB starts, which wakes the coordinator's hooks"):
+        chats = Chats(home)
+        try:
+            chats.start("HUB", title="HUB")
+        finally:
+            chats.close()
         group.send(listing)
-    with then("apply marks Bash for it, and the command starts the dispatcher"):
-        assert tool_marker(home, "Bash") == ["coordinator"] and group.python_starts() == 1
+    with then("the command starts the dispatcher"):
+        assert group.python_starts() == 1
     with when("the user switches it off again in /hub"):
         home.step_from_mod("off", "coordinator")
         group.send(listing)
