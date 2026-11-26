@@ -272,7 +272,7 @@ def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
     readme = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md")
     with given("the coordinator is on, and chat_board too, so every section of the skill runs"):
         coordinator_on(home)
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         link = os.path.join(home.root, ".claude", "skills", "hub-coordinator")
         with open(os.path.join(home.plugin, "parts", "coordinator", "skill", "SKILL.md")) as handle:
             shipped = handle.read()
@@ -293,7 +293,7 @@ def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
         assert section_ids and len(section_headings) == len(section_ids)
     with when("the user turns off every instruction section the shipped skill has"):
         for section_id in section_ids:
-            home.hubctl("off", f"coordinator.instructions.{section_id}")
+            home.step("off", f"coordinator.instructions.{section_id}")
     with then("the built skill has no section headings left and still states the purpose"):
         with open(os.path.join(link, "SKILL.md")) as handle:
             copy = handle.read()
