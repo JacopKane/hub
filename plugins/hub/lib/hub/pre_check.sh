@@ -21,10 +21,12 @@
 # so the dispatcher starts and moves it too.
 # The coordinator is on by default, but it has nothing to do while no chat
 # has its name. So a marker that names only the coordinator starts the
-# dispatcher only while a chat in coordinator_chats may run: one with no pid,
-# or one whose pid runs. On UserPromptSubmit a hook input with a
-# session_title starts it too, so a /rename in a running chat is seen. The
-# coordinator's handler writes and prunes coordinator_chats.
+# dispatcher only while a chat in coordinator_chats may run: one whose pid
+# runs as this user. A mark with no pid counts as gone, and kill -0 fails on
+# another user's pid, which only a reused pid can be. On UserPromptSubmit a
+# hook input with a session_title starts it too, so a /rename in a running
+# chat is seen. The coordinator's handler writes and prunes
+# coordinator_chats.
 # In every other case the hook ends at once with no answer. The dispatcher
 # gets only the event name.
 config_name=  # the settings and state folders' name, from the one file that holds it
@@ -52,7 +54,7 @@ asleep() {  # whether the marker $1 names only the coordinator, and no chat with
     [ -e "$chat" ] || break
     pid=
     read -r pid < "$chat" 2>/dev/null || :
-    case $pid in ''|*[!0-9]*) return 1 ;; esac
+    case $pid in ''|*[!0-9]*) continue ;; esac
     kill -0 "$pid" 2>/dev/null && return 1
   done
   return 0

@@ -6,14 +6,16 @@ is the fake `claude agents --json`, the one outer seam, and the tests count
 its calls. A live chat is a real process that waits, and an inbox is a real
 socket.
 """
+import json
 import os
 import shutil
 
-from chats import Chats
+from chats import SESSIONS, Chats
 from conftest import FIXTURES, PLUGIN, Home
 from steps import and_, given, then, when
 from test_coordinator import QUESTION, part_text
 from test_dispatch_order import EveryToolGroup
+from test_plain_words import step as step_from_tool_call
 
 START_LINE = "To start it, type /rename HUB in the chat you want."
 MARKS = "coordinator_chats"
@@ -63,6 +65,10 @@ def parts_marked(home, name):
         return []
     with open(path) as handle:
         return handle.read().split()
+
+
+def record_path(home, name):
+    return os.path.join(home.state, "sessions", SESSIONS[name] + ".json")
 
 
 def set_up(home):
@@ -123,12 +129,17 @@ def test_the_coordinator_is_on_by_default_and_costs_nothing_until_a_chat_has_its
             assert "/rename" in edit.reason and "turn the coordinator off in /hub" in edit.reason
         with and_("HUB may still read"):
             assert groups.tool("HUB", "Read", topic_work(home)[0][1]).ran
-        with when("WEB asks the user a question"):
+        with when("WEB's chat record is damaged, and WEB asks the user a question"):
+            with open(record_path(home, "WEB"), "w") as handle:
+                handle.write("{not json")
             asked = groups.tool("WEB", "AskUserQuestion", QUESTION)
-        with then("it is refused, and the reason gives HUB's address, so the question goes to HUB"):
+        with then("the record reads as missing, so the question is refused, and the reason gives HUB's address"):
             assert asked.refused and "uds:" + hub.address in asked.reason
-        with and_("WEB still edits its own files"):
+        with and_("WEB still edits its own files, and its next prompt writes the record again"):
             assert groups.tool("WEB", "Edit", topic_work(home)[3][1]).ran
+            assert groups.type("WEB", "carry on").ran
+            with open(record_path(home, "WEB")) as handle:
+                assert json.load(handle)["session"] == SESSIONS["WEB"]
 
         with when("HUB's process ends without a SessionEnd, as a crash does"):
             hub.end()
@@ -137,10 +148,21 @@ def test_the_coordinator_is_on_by_default_and_costs_nothing_until_a_chat_has_its
         with then("WEB's calls run and sleep again, with no Python start"):
             assert [call.ran for call in after_hub] == [True] * len(after_hub)
             assert groups.python_starts() == starts
+        with and_("a mark that holds no pid keeps them asleep too"):
+            with open(os.path.join(home.state, MARKS, hub.session), "w") as handle:
+                handle.write("\n")
+            assert groups.tool("WEB", "Edit", topic_work(home)[3][1]).ran
+            assert groups.python_starts() == starts
         with when("the next chat starts"):
             chats.start("DOCS")
         with then("its start drops HUB's old mark"):
             assert marks(home) == []
+
+        with when("the user says \"turn off the coordinator\", and Claude runs the switch step from a tool call"):
+            said = step_from_tool_call(home, "off", "coordinator", check=False)
+        with then("the step refuses and names /hub, and the coordinator still runs"):
+            assert said.returncode == 1 and "/hub" in said.stderr, said.stderr
+            assert home.show()["flags"]["coordinator"]["runs"]
 
         with when("the user turns the coordinator off in /hub, the one place that may turn its guard off"):
             home.step_from_mod("off", "coordinator")

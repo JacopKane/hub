@@ -21,9 +21,11 @@ dialog open and leaves one line in the doctor log.
 The part is on by default, so its hooks sleep while no chat has the
 coordinator's name. Each chat that has it gets a mark, a file named for its
 session in the state folder's coordinator_chats, that holds the chat's pid.
-The mark is set or dropped at session start and on each prompt, from the
-title in the hook input or the chat's record, and dropped at session end.
-pre_check.sh starts Python for a tool call only while a mark's pid runs.
+A chat whose pid hub can not find gets no mark. The mark is set or dropped
+at session start and on each prompt, from the title in the hook input or
+the chat's record, and dropped at session end. pre_check.sh starts Python
+for a tool call only while a mark's pid runs as this user, and awake()
+uses the same rule.
 A prompt that carries a title always starts it, so a /rename in a running
 chat wakes the hooks. This handler follows the same rule when another part
 starts Python, so it never reads the chat listing while it sleeps. Each
@@ -78,11 +80,13 @@ def mark_path(session):
 
 
 def set_mark(session, data):
-    """Mark the chat with its pid, or with an empty line when its pid is unknown."""
+    """Mark the chat with its pid. A chat with no known pid gets no mark, since nothing could tell it ended."""
     path = mark_path(session)
-    if path:
-        pid = data.get("pid")
-        files.write_text(path, f"{pid}\n" if isinstance(pid, int) else "\n")
+    pid = data.get("pid")
+    if not isinstance(pid, int) or pid < 1:
+        drop_mark(session)
+    elif path:
+        files.write_text(path, f"{pid}\n")
 
 
 def drop_mark(session):
@@ -102,15 +106,25 @@ def marked():
         return []
 
 
+def runs_as_this_user(pid):
+    """Whether pid runs as this user, as kill -0 in pre_check.sh tells. A chat always runs as its user, so
+    another user's process holds a reused pid, and the chat that had it is gone."""
+    try:
+        os.kill(pid, 0)
+    except (OSError, OverflowError):
+        return False
+    return True
+
+
 def awake():
-    """Whether a marked chat may run now, by the rule pre_check.sh uses: a mark with no pid, or one whose pid runs."""
+    """Whether a marked chat may run now, by the rule pre_check.sh uses: its mark holds a pid that runs as this user."""
     for session in marked():
         try:
             with open(mark_path(session)) as handle:
                 pid = handle.readline().strip()
         except OSError:
             continue
-        if not pid.isdigit() or sessions.pid_runs(int(pid)):
+        if pid.isdigit() and runs_as_this_user(int(pid)):
             return True
     return False
 
