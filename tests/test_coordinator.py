@@ -265,3 +265,31 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
         home.step("on", "coordinator.instructions.relay")
     with then("the link points at the shipped skill again"):
         assert os.readlink(link) == os.path.join(home.state, "built", "skills", "hub-coordinator")
+
+
+def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
+    readme = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "README.md")
+    with given("the coordinator is on, and chat_board too, so every section of the skill runs"):
+        coordinator_on(home)
+        home.hubctl("on", "chat_board")
+        link = os.path.join(home.root, ".claude", "skills", "hub-coordinator")
+        with open(os.path.join(home.plugin, "parts", "coordinator", "skill", "SKILL.md")) as handle:
+            shipped = handle.read()
+        purpose = next(block for block in shipped.split("\n\n") if "single master" in block)
+    with then("the purpose comes before the first section, so no switch can drop it"):
+        assert shipped.index(purpose) < shipped.index("<!-- hub:section ")
+        assert "talks only to the coordinator chat" in purpose
+        assert "never has to type in another chat's own window" in purpose
+        assert DASH not in purpose
+    with when("the user turns off every instruction section of the skill"):
+        for flag_id in ("forward", "relay", "follow_through", "topic_chat", "read_board"):
+            home.hubctl("off", f"coordinator.instructions.{flag_id}")
+    with then("the built skill has no sections left and still states the purpose"):
+        with open(os.path.join(link, "SKILL.md")) as handle:
+            copy = handle.read()
+        assert "## Forward the user's words" not in copy and "## Read the board first" not in copy
+        assert purpose in copy
+    with and_("the README's opening says the same purpose"):
+        with open(readme, encoding="utf-8") as handle:
+            opening = handle.read().split("\n## ", 1)[0]
+        assert "main purpose of hub" in opening and "talk only to the coordinator chat" in opening
