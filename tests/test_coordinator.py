@@ -7,6 +7,7 @@ dispatcher in a temporary HOME. The chat listing is a fake `claude agents
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -279,17 +280,28 @@ def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
     with then("the purpose comes before the first section, so no switch can drop it"):
         assert shipped.index(purpose) < shipped.index("<!-- hub:section ")
         assert "talks only to the coordinator chat" in purpose
-        assert "never has to type in another chat's own window" in purpose
+        assert "takes its orders from this one" in purpose
+        assert "Permission prompts, and a change that lowers one of hub's protections" in purpose
         assert DASH not in purpose
-    with when("the user turns off every instruction section of the skill"):
-        for flag_id in ("forward", "relay", "follow_through", "topic_chat", "read_board"):
-            home.hubctl("off", f"coordinator.instructions.{flag_id}")
-    with then("the built skill has no sections left and still states the purpose"):
+        section_ids = re.findall(r"<!-- hub:section coordinator\.instructions\.(\w+) -->", shipped)
+        section_headings = []
+        for section_id in section_ids:
+            start = shipped.index(f"<!-- hub:section coordinator.instructions.{section_id} -->")
+            body = shipped[start:shipped.index("<!-- hub:end -->", start)]
+            section_headings += re.findall(r"^## .+$", body, re.MULTILINE)
+        assert section_ids and len(section_headings) == len(section_ids)
+    with when("the user turns off every instruction section the shipped skill has"):
+        for section_id in section_ids:
+            home.hubctl("off", f"coordinator.instructions.{section_id}")
+    with then("the built skill has no section headings left and still states the purpose"):
         with open(os.path.join(link, "SKILL.md")) as handle:
             copy = handle.read()
-        assert "## Forward the user's words" not in copy and "## Read the board first" not in copy
+        assert [heading for heading in section_headings if heading in copy] == []
         assert purpose in copy
     with and_("the README's opening says the same purpose"):
         with open(readme, encoding="utf-8") as handle:
             opening = handle.read().split("\n## ", 1)[0]
         assert "main purpose of hub" in opening and "talk only to the coordinator chat" in opening
+        assert "every other chat takes its orders from it" in opening
+        assert "Permission prompts, and a change that lowers one of hub's protections in another chat, still need you in that chat's own window." in opening
+        assert DASH not in opening
