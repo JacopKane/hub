@@ -211,7 +211,7 @@ def handle(event, hook_input, flags, answer):
 
 
 def doctor(flags):
-    """What hubctl doctor says about the board. It reads files only and never runs the chat listing."""
+    """What the step's doctor says about the board. It reads files only and never runs the chat listing."""
     from hub import doctor as doctor_module  # only when the doctor runs
     lines = []
     if not any(gap["part"] == PART for gap in doctor_module.cursor_gaps()):

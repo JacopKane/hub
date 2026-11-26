@@ -1,6 +1,6 @@
 """Slice 13: the band's chats zone and its failed checks counter.
 
-The band draws `hubctl screen --json`, which the mod runs as a child of its
+The band draws `hub screen --json`, which the mod runs as a child of its
 chat. So each chat here runs that command as its own child, and the screen's
 "board" key is what its band would show. The mod picks the full zone, the
 names that fit plus +N, or the folded zone by the width it draws at; tests in
@@ -28,26 +28,26 @@ def chats(home):
     chats.close()
 
 
-def hubctl_args(home, *args):
+def step_args(home, *args):
     return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"), *args]
 
 
 def screen_in(home, chat):
     """The screen model as the band of `chat` reads it."""
-    code, out, err = chat.run(hubctl_args(home, "screen", "--json"))
+    code, out, err = chat.run(step_args(home, "screen", "--json"))
     assert code == 0, out + err
     return json.loads(out)
 
 
 def in_chat(home, chat, *args):
-    code, out, err = chat.run(hubctl_args(home, *args))
+    code, out, err = chat.run(step_args(home, *args))
     assert code == 0, out + err
     return out
 
 
 def board_on(home):
     home.install()
-    home.hubctl("on", "chat_board")
+    home.step("on", "chat_board")
     home.env["HUB_NOW"] = str(T)
 
 
@@ -78,7 +78,7 @@ def two_problems(home):
 
 
 def failed_checks(home):
-    found = json.loads(home.hubctl("doctor", "--json").stdout)
+    found = json.loads(home.step("doctor", "--json").stdout)
     return len(found["problems"]) + sum(1 for line in found["part_lines"] if line["level"] == "warning")
 
 
@@ -135,7 +135,7 @@ def test_the_band_counts_the_failed_checks_of_the_doctors_last_run(home, chats):
     with when("the user turns off status_band.problems"):
         two_problems(home)
         failed_checks(home)
-        home.hubctl("off", "status_band.problems")
+        home.step("off", "status_band.problems")
     with then("the band shows no counter"):
         screen = screen_in(home, web)
         assert screen["band"]["problems"] is False
@@ -147,13 +147,13 @@ def test_turning_off_the_chats_zone_removes_only_that_zone(home, chats):
         board_on(home)
         running = four_chats(home, chats)
     with when("the user turns off status_band.chats"):
-        home.hubctl("off", "status_band.chats")
+        home.step("off", "status_band.chats")
         screen = screen_in(home, running["WEB"])
-    with then("the band has no chats zone, its other zones stay, and hubctl board still lists every chat"):
+    with then("the band has no chats zone, its other zones stay, and hub board still lists every chat"):
         assert screen["band"]["chats"] is False
         assert screen["board"]["chats"] is None
         assert screen["band"]["runs"] is True and screen["band"]["problems"] is True
-        names = [card["name"] for card in json.loads(home.hubctl("board", "--json").stdout)["cards"]]
+        names = [card["name"] for card in json.loads(home.step("board", "--json").stdout)["cards"]]
         assert sorted(names) == ["API", "DOCS", "LOBBY", "WEB"]
 
 
@@ -237,8 +237,8 @@ def test_the_band_outside_any_chat_shows_every_chat(home, chats):
     with given("chat_board is on, and four chats run"):
         board_on(home)
         four_chats(home, chats)
-    with when("hubctl screen --json runs in a terminal that is no chat"):
-        zone = json.loads(home.hubctl("screen", "--json").stdout)["board"]["chats"]
+    with when("hub screen --json runs in a terminal that is no chat"):
+        zone = json.loads(home.step("screen", "--json").stdout)["board"]["chats"]
     with then("no chat is left out"):
         assert zone["full"] == "! API  ● DOCS 2/3  ○ LOBBY  ○ WEB"
 
@@ -262,18 +262,18 @@ def test_only_the_coordinator_chats_band_is_told_to_reread_the_board_while_idle(
     with then("no band is told to reread the board on its own"):
         assert [screen_in(home, running[name])["board"]["coordinator"] for name in ("HUB", "WEB")] == [False, False]
     with when("the user turns the coordinator part on"):
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
     with then("HUB's band is told to, since HUB has the coordinator's name, and WEB's band is not"):
         assert [screen_in(home, running[name])["board"]["coordinator"] for name in ("HUB", "WEB")] == [True, False]
     with and_("a terminal that is no chat is not told to"):
-        assert json.loads(home.hubctl("screen", "--json").stdout)["board"]["coordinator"] is False
+        assert json.loads(home.step("screen", "--json").stdout)["board"]["coordinator"] is False
     with when("the user turns status_band.chats off"):
-        home.hubctl("off", "status_band.chats")
+        home.step("off", "status_band.chats")
     with then("HUB's band is not told to either, since it shows no chats"):
         assert screen_in(home, running["HUB"])["board"]["coordinator"] is False
     with when("the user turns it on again, and turns chat_board off"):
-        home.hubctl("on", "status_band.chats")
-        home.hubctl("off", "chat_board")
+        home.step("on", "status_band.chats")
+        home.step("off", "chat_board")
     with then("HUB's band is not told to, since the board is off"):
         assert screen_in(home, running["HUB"])["board"]["coordinator"] is False
 

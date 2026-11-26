@@ -16,7 +16,7 @@ SessionStart or UserPromptSubmit, whichever parts run.
 A second run of the same tool call (the same session, event and call id), as
 when two copies of the plugin load, waits for the first, returns its stored
 answer and logs nothing. When the first still holds the call's lock after
-CALL_LOCK_WAIT seconds, the second run ends in an error, as below. After hubctl uninstall it does nothing at all. At
+CALL_LOCK_WAIT seconds, the second run ends in an error, as below. After the step's uninstall it does nothing at all. At
 SessionStart it also does its own work, see session_start. An error goes to
 errors.log in the state folder. When hub can not store an answer, that answer still counts. After any other
 error, a public step is refused, because the gate could not check it. In Claude Code, a Slack call off the Slack gate's read

@@ -74,7 +74,7 @@ def pr_check(home, body, *extra, cwd=None, name="body.md"):
     path = os.path.join(home.root, name)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(body)
-    return home.hubctl("pr-check", path, *extra, cwd=cwd, check=False)
+    return home.step("pr-check", path, *extra, cwd=cwd, check=False)
 
 
 def findings(home, body, cwd=None):
@@ -100,7 +100,7 @@ def night(home, at, env=None):
     previous = dict(home.env)
     home.env.update({"HUB_TEST_NOW": at, **(env or {})})
     try:
-        done = home.hubctl("pr-night")
+        done = home.step("pr-night")
     finally:
         home.env.clear()
         home.env.update(previous)
@@ -140,7 +140,7 @@ def test_each_method_drops_alone_when_switched_off_and_comes_back(home):
         methods = instruction_ids(home)
     for method in methods:
         with when(f"the user turns off {method}"):
-            home.hubctl("off", method)
+            home.step("off", method)
             copy = linked_skill(home)
         with then("only that method's section is gone, and the safety rules stay"):
             assert section_text(text, method) not in copy
@@ -150,7 +150,7 @@ def test_each_method_drops_alone_when_switched_off_and_comes_back(home):
             for rule in SAFETY_RULES:
                 assert rule in copy
         with and_("turning it on brings the section back"):
-            home.hubctl("on", method)
+            home.step("on", method)
             assert section_text(text, method).split("\n")[0] in linked_skill(home)
 
 
@@ -162,7 +162,7 @@ def test_open_as_picks_the_draft_or_the_ready_line(home):
     with then("the skill tells Claude to open drafts"):
         assert draft in linked_skill(home) and ready not in linked_skill(home)
     with when("the user sets pr.open_as to ready"):
-        home.hubctl("set", "pr.open_as", "ready")
+        home.step("set", "pr.open_as", "ready")
     with then("the skill tells Claude to open PRs ready for review"):
         assert ready in linked_skill(home) and draft not in linked_skill(home)
 
@@ -185,12 +185,12 @@ def test_a_repo_settings_file_and_every_method_off_still_keep_the_safety_rules(h
     with given("a repo commits a .hub/hub.json that turns every PR method off"):
         home.install()
         for method in instruction_ids(home):
-            home.hubctl("off", method, "--scope", "project")
+            home.step("off", method, "--scope", "project")
         home.git("add", ".hub/hub.json")
         home.git("commit", "-q", "-m", "Turn the PR methods off")
     with and_("the user turns every method off too"):
         for method in instruction_ids(home):
-            home.hubctl("off", method)
+            home.step("off", method)
     with when("the skill is built with the flags the repo's folder resolves to"):
         built = json.loads(home.run([sys.executable, "-I", "-c", BUILD_FOR_FOLDER,
                                      os.path.join(home.plugin, "lib"), home.work]).stdout)
@@ -340,7 +340,7 @@ def test_a_repos_pr_template_wins_over_the_hub_shape_but_a_template_without_a_te
             assert result["findings"] == [], first
             assert result["headings_from"] == os.path.join(".github", "PULL_REQUEST_TEMPLATE", "a_feature.md")
     with when("the user turns the test gate method off"):
-        home.hubctl("off", "pr.instructions.test_gate")
+        home.step("off", "pr.instructions.test_gate")
     with then("the template alone decides again, and the same body passes"):
         assert findings(home, "## Motivation\n\nUsers lose uploads.\n")["findings"] == []
     with and_("with one template again, a body in hub's shape needs the template's own Testing heading"):
@@ -443,7 +443,7 @@ def test_a_tested_part_must_say_what_was_not_tested_near_misses_pass_and_the_tes
             == [("missing_heading", "How to test")]
     with when("the template is gone and the user turns the test gate method off"):
         os.remove(os.path.join(home.work, ".github", "pull_request_template.md"))
-        home.hubctl("off", "pr.instructions.test_gate")
+        home.step("off", "pr.instructions.test_gate")
     with then("a tested part without a not-tested line passes, and so does a body with no tested part"):
         tested_part = "### How it was tested\n\n" + tested_words + "\n\n"
         for body in (only_passing, good_body().replace(tested_part, "")):
@@ -486,13 +486,13 @@ def test_the_step_refuses_wrong_words_and_a_switched_off_part(home):
     with given("hub is installed"):
         home.install()
     with then("pr-check without a file and pr-night with words exit 2 with their usage"):
-        assert home.hubctl("pr-check", check=False).returncode == 2
-        assert home.hubctl("pr-check", "a.md", "--yaml", check=False).returncode == 2
-        assert home.hubctl("pr-night", "now", check=False).returncode == 2
+        assert home.step("pr-check", check=False).returncode == 2
+        assert home.step("pr-check", "a.md", "--yaml", check=False).returncode == 2
+        assert home.step("pr-night", "now", check=False).returncode == 2
     with when("the user turns pr off"):
-        home.hubctl("off", "pr")
+        home.step("off", "pr")
     with then("its commands do not run"):
-        refused = home.hubctl("pr-night", check=False)
+        refused = home.step("pr-night", check=False)
         assert refused.returncode != 0 and "pr is off" in refused.stderr
 
 
@@ -502,8 +502,8 @@ def test_the_step_refuses_wrong_words_and_a_switched_off_part(home):
 def test_night_hold_uses_away_guards_time_zone(home):
     with given("hub is installed, away_guard is on and its time zone is Asia/Tokyo, nine hours ahead of UTC"):
         home.install()
-        home.hubctl("on", "away_guard")
-        home.hubctl_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
+        home.step("on", "away_guard")
+        home.step_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
     with when("the step asks at 22:30 in Tokyo"):
         state = night(home, "2026-03-02T13:30:00Z")
     with then("the steps wait until 07:00 Tokyo time, and the line says so"):
@@ -519,7 +519,7 @@ def test_without_away_guard_the_night_hold_uses_the_system_time_zone(home):
     with given("hub is installed, away_guard is off and the system time zone is UTC"):
         home.install()
         assert not home.show()["flags"]["away_guard"]["runs"]
-        home.hubctl_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
+        home.step_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
     with when("the step asks at 23:30 UTC, which is morning in Tokyo"):
         state = night(home, "2026-03-02T23:30:00Z", {"TZ": "UTC"})
     with then("the steps wait, because away_guard's zone counts only while it runs"):
@@ -534,13 +534,13 @@ def test_the_night_hold_never_holds_when_it_is_off_or_the_hours_are_empty(home):
     with given("hub is installed and the system time zone is UTC"):
         home.install()
     with when("the user turns off the night hold method and the step asks at 23:30 UTC"):
-        home.hubctl("off", "pr.instructions.night_hold")
+        home.step("off", "pr.instructions.night_hold")
         state = night(home, "2026-03-02T23:30:00Z", {"TZ": "UTC"})
     with then("nothing waits"):
         assert not state["held"]
     with when("the method is on again but the quiet hours are empty"):
-        home.hubctl("on", "pr.instructions.night_hold")
-        home.hubctl_from_mod("set", "pr.quiet_hours", "")
+        home.step("on", "pr.instructions.night_hold")
+        home.step_from_mod("set", "pr.quiet_hours", "")
         state = night(home, "2026-03-02T23:30:00Z", {"TZ": "UTC"})
     with then("nothing waits, and there is no line"):
         assert not state["held"] and state["line"] == "" and state["until"] is None
@@ -673,7 +673,7 @@ def test_the_night_hold_the_skill_names_follows_a_repos_hours_and_away_guards_zo
         outside = home.work
     with and_("a repo commits its own quiet hours, 20:00 to 08:00"):
         repo = shop_repo(home)
-        home.hubctl("set", "pr.quiet_hours", "20:00-08:00", "--project", cwd=repo)
+        home.step("set", "pr.quiet_hours", "20:00-08:00", "--project", cwd=repo)
         home.git("add", ".hub/hub.json", cwd=repo)
         home.git("commit", "-q", "-m", "Keep PR steps quiet at night", cwd=repo)
 
@@ -694,8 +694,8 @@ def test_the_night_hold_the_skill_names_follows_a_repos_hours_and_away_guards_zo
         assert late["held"]
         assert not morning["held"] and morning["line"] == quoted(home, "night_release.md").replace("{until}", "08:00")
     with when("the user turns on away_guard in Tokyo, nine hours ahead, and Claude asks at 23:30 UTC in the repo"):
-        home.hubctl("on", "away_guard")
-        home.hubctl_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
+        home.step("on", "away_guard")
+        home.step_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
         tokyo = state("2026-03-02T23:30:00Z", repo)
     with then("it is 08:30 in Tokyo, so nothing waits, and the zone is Tokyo's"):
         assert not tokyo["held"] and tokyo["time_zone"] == "Asia/Tokyo"
@@ -703,7 +703,7 @@ def test_the_night_hold_the_skill_names_follows_a_repos_hours_and_away_guards_zo
         dawn = state("2026-03-02T21:00:00Z", repo)
         assert dawn["held"] and dawn["until"] == "08:00" and "Asia/Tokyo" in dawn["line"]
     with when("the user turns the night hold method off"):
-        home.hubctl("off", "pr.instructions.night_hold")
+        home.step("off", "pr.instructions.night_hold")
     with then("the skill drops its night section, and the command holds nothing even at 23:00 in Tokyo"):
         assert "pr-night" not in linked_skill(home)
         assert not state("2026-03-02T14:00:00Z", repo)["held"]
@@ -804,7 +804,7 @@ def test_the_body_check_and_the_night_hold_read_settings_and_write_nothing_on_a_
         assert read(os.path.join(home.config, "hub.json")) == user_settings
         assert not os.path.exists(home.state) and not os.path.exists(os.path.join(home.root, ".claude"))
     with when("the user sets hub up, then deletes the link to hub's tuner agent"):
-        home.hubctl("apply")
+        home.step("apply")
         tuner_link = os.path.join(home.root, ".claude", "agents", "hub-tuner.md")
         assert os.path.islink(tuner_link)
         os.unlink(tuner_link)

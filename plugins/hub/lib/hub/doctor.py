@@ -1,4 +1,4 @@
-"""hubctl doctor: checks the setup and names what needs the user.
+"""The step's doctor: checks the setup and names what needs the user.
 
 - A local settings file that git tracks. Such a file comes with every clone,
   so hub treats it like a project file, and it can not lower a privacy flag.
@@ -14,17 +14,15 @@
 - A hub link whose target is gone, a program hub needs that is missing, a
   Claude Code version that is not in tested-versions.json, and
   disableAllHooks in any Claude Code settings file.
-- hub's terminal link in ~/.local/bin while that folder is not on PATH. It
-  names the shell file to add it to.
 - A /hub that Claude Code gave to something else, such as the user's own
-  skill named hub. The mod then takes another name and tells hubctl with
-  `hubctl mod-command --json`, which keeps the record in mod-command.json.
+  skill named hub. The mod then takes another name and tells the step with
+  `mod-command --json`, which keeps the record in mod-command.json.
 
 report() also names what runs, the start text it costs, and each beta part
 (untested, off by default) with whether it is on, as "beta" in the JSON. When the Cursor
 link runs, it names each flag that runs in Claude Code but not in Cursor, with
 the reason from its manifest. The text puts those flags in a "Runs in Claude
-Code only:" section after the warnings. hubctl doctor --json gives the report
+Code only:" section after the warnings. doctor --json gives the report
 as JSON.
 
 part_lines adds what each running part says about itself. A handler that

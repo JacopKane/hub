@@ -1,4 +1,4 @@
-"""The rows the feature picker reads: `hubctl screen --json --all` on the day 9 fixture.
+"""The rows the feature picker reads: `hub screen --json --all` on the day 9 fixture.
 
 Only the full model carries each row's kind, flag type, allowed values and what an on
 flag waits for, and each part's new mark. The band's model stays as it was.
@@ -32,7 +32,7 @@ def picker_fixture():
 def test_the_full_model_gives_each_row_its_kind_type_values_and_what_it_waits_for(home):
     with given("the day 9 fixture, where researcher is offered and coordinator is off"):
         day9(home)
-    with when("hubctl screen --json --all runs"):
+    with when("hub screen --json --all runs"):
         found = rows(screen(home, "--all"))
     with then("a part row carries its part kind, and a switch takes off and on"):
         assert {key: found["builder"][key] for key in PICKER_KEYS} == {
@@ -59,13 +59,13 @@ def test_a_part_that_is_on_waits_for_the_part_it_needs(home):
     with given("the day 9 fixture"):
         day9(home)
     with when("the user turns permission_relay on while coordinator is off"):
-        home.hubctl("on", "permission_relay")
+        home.step("on", "permission_relay")
         found = rows(screen(home, "--all"))
     with then("permission_relay is on, does not run, and waits for coordinator"):
         relay = found["permission_relay"]
         assert (relay["effective"], relay["runs"], relay["waits_for"]) == ("on", False, ["coordinator"])
     with when("the user turns coordinator on too"):
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
         found = rows(screen(home, "--all"))
     with then("permission_relay runs and waits for nothing"):
         assert found["permission_relay"]["runs"] is True and found["permission_relay"]["waits_for"] == []

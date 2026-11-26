@@ -47,7 +47,7 @@ def test_a_brief_without_the_live_notes_path_is_refused(home, chats):
         assert chats.tool("WEB", "Agent", brief("Read the docs and report.")).ran
         assert not os.path.exists(notes)
     with given("live_notes is on, and the chat's notes file does not exist yet"):
-        home.hubctl("on", "live_notes")
+        home.step("on", "live_notes")
     with when("the chat starts an agent whose brief does not name the file"):
         refused = chats.tool("WEB", "Agent", brief("Read the docs and report."))
     with then("the call is refused, and the reason gives the path to add"):
@@ -72,7 +72,7 @@ def test_a_brief_without_the_live_notes_path_is_refused(home, chats):
     with then("the call is refused"):
         assert other.refused
     with when("the user turns live_notes.brief_names_file off"):
-        home.hubctl("off", "live_notes.brief_names_file")
+        home.step("off", "live_notes.brief_names_file")
     with then("a brief without the file runs"):
         assert chats.tool("WEB", "Agent", brief("Read the docs and report.")).ran
 
@@ -82,7 +82,7 @@ def test_a_brief_that_starts_background_work_gets_the_stay_line(home, chats):
     stay = told = None
     with given("live_notes is on"):
         home.install()
-        home.hubctl("on", "live_notes")
+        home.step("on", "live_notes")
         stay = part_text(home, "stay_line.md")
         told = part_text(home, "stay_line_told.md", line=stay)
     with when("a brief names the file and starts background work without saying to stay until it ends"):
@@ -105,13 +105,13 @@ def test_a_brief_that_starts_background_work_gets_the_stay_line(home, chats):
         for call in quiet:
             assert call.ran and "updatedInput" not in call.output.get("hookSpecificOutput", {})
     with when("the user turns live_notes.stay_line.tell_sender off"):
-        home.hubctl("off", "live_notes.stay_line.tell_sender")
+        home.step("off", "live_notes.stay_line.tell_sender")
         silent = chats.tool("WEB", "Agent", brief(prompt))
     with then("the line is still added, and the sender is not told"):
         assert silent.output["hookSpecificOutput"]["updatedInput"]["prompt"].endswith(stay)
         assert told not in silent.context
     with when("the user turns live_notes.stay_line off"):
-        home.hubctl("off", "live_notes.stay_line")
+        home.step("off", "live_notes.stay_line")
     with then("the brief runs as it was written"):
         assert "updatedInput" not in chats.tool("WEB", "Agent", brief(prompt)).output.get("hookSpecificOutput", {})
 
@@ -120,7 +120,7 @@ def test_a_message_that_carries_a_new_rule_reminds_the_sender_to_pass_it_on(home
     reminder = None
     with given("live_notes is on"):
         home.install()
-        home.hubctl("on", "live_notes")
+        home.step("on", "live_notes")
         reminder = part_text(home, "broadcast.md")
     with when("a message to an agent carries a new rule"):
         rule = chats.send("WEB", "PostToolUse", "SendMessage", message("From now on, never push to main."),
@@ -142,7 +142,7 @@ def test_a_message_that_carries_a_new_rule_reminds_the_sender_to_pass_it_on(home
         assert reminder not in inbox.context
         assert reminder not in remote.context
     with when("the user turns live_notes.broadcast off"):
-        home.hubctl("off", "live_notes.broadcast")
+        home.step("off", "live_notes.broadcast")
     with then("a rule goes out with no reminder"):
         assert reminder not in chats.send("WEB", "PostToolUse", "SendMessage", message("Never push to main."),
                                           tool_response=SENT).context
@@ -152,8 +152,8 @@ def test_the_notes_file_follows_its_path_setting_and_warns_once_as_it_grows(home
     custom = os.path.join(home.root, "notes", SESSIONS["WEB"] + ".md")
     with given("live_notes is on, with its path set to a folder of its own"):
         home.install()
-        home.hubctl("on", "live_notes")
-        home.hubctl("set", "live_notes.path", "~/notes/{session}.md")
+        home.step("on", "live_notes")
+        home.step("set", "live_notes.path", "~/notes/{session}.md")
     with when("the chat starts an agent without the file"):
         refused = chats.tool("WEB", "Agent", brief("Report."))
     with then("the reason gives the new path, and that file is made"):

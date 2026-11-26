@@ -7,7 +7,7 @@
 
 The key goes into the user's ~/.claude/settings.json. A write keeps the
 file's key order and indent, and goes to a link's target, so the link stays.
-Each key hub wrote is in ~/.local/state/hubctl/keys.json with the value hub
+Each key hub wrote is in ~/.local/state/claude-hub/keys.json with the value hub
 wrote and the value the file held before. A value hub did not write is the
 user's own choice: apply turns the part that wanted the key off, pinned, with
 one line, and leaves the user's value. hub puts an earlier value back only

@@ -34,7 +34,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(REPO, "tests", "fixtures")
 PLUGIN = os.path.join(REPO, "plugins", "hub")
 with open(os.path.join(PLUGIN, "lib", "hub", "config_name")) as _name_file:
-    CONFIG_NAME = _name_file.read().strip()  # the settings folder's name, under ~/.config
+    CONFIG_NAME = _name_file.read().strip()  # the settings and state folders' name, under ~/.config and ~/.local/state
+OLD_NAME = "hubctl"  # the name both folders had before they moved
 DASH = chr(0x2014)  # the em dash, never typed as itself in this repo
 # git's own options that take the next word as their value, before its action, each with a value it could take.
 # They are the ones git.c reads this way today, and --super-prefix, which git read this way up to 2.39.
@@ -59,9 +60,11 @@ def real_home():
 
 def watched_folders():
     """hub's real settings and state folders, from the real home and the XDG values pytest started with."""
-    folders = {os.path.join(real_home(), ".config", CONFIG_NAME), os.path.join(real_home(), ".config", "hubctl"),
-               os.path.join(real_home(), ".local", "state", "hubctl")}
-    for name, folder in (("XDG_CONFIG_HOME", CONFIG_NAME), ("XDG_CONFIG_HOME", "hubctl"), ("XDG_STATE_HOME", "hubctl")):
+    # Both folder names under .config and .local/state: the one hub uses, and the one an earlier hub used.
+    names = (CONFIG_NAME, OLD_NAME)
+    folders = {os.path.join(real_home(), base, name) for base in (".config", os.path.join(".local", "state"))
+               for name in names}
+    for name, folder in [(variable, folder) for variable in ("XDG_CONFIG_HOME", "XDG_STATE_HOME") for folder in names]:
         if os.environ.get(name):
             folders.add(os.path.join(os.environ[name], folder))
     return sorted(folders)
@@ -144,7 +147,7 @@ class Home:
         self.root = root
         self.plugin = os.path.join(root, "plugin-copy", "hub")
         self.config = os.path.join(root, ".config", CONFIG_NAME)
-        self.state = os.path.join(root, ".local", "state", "hubctl")
+        self.state = os.path.join(root, ".local", "state", CONFIG_NAME)
         self.work = os.path.join(root, "work", "demo")
         replay = os.path.join(root, "replay-bin")
         os.makedirs(replay)
@@ -215,9 +218,9 @@ class Home:
             shutil.copytree(os.path.join(FIXTURES, "demo_gate"), demo_gate)
         if demo_refusal:
             shutil.copytree(os.path.join(FIXTURES, "demo_refusal"), os.path.join(self.plugin, "parts", "demo_refusal"))
-        self.hubctl("apply")
+        self.step("apply")
 
-    def hubctl(self, *args, cwd=None, check=True):
+    def step(self, *args, cwd=None, check=True):
         return self.run([sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args], cwd=cwd, check=check)
 
     def set_by(self, by, flag_id, value, check=True):
@@ -227,12 +230,12 @@ class Home:
         return self.run([sys.executable, "-I", "-c", code, os.path.join(self.plugin, "lib"), flag_id,
                          json.dumps(value), by], check=check)
 
-    def hubctl_as_user(self, *args, typed=None, cwd=None, check=True):
-        """hubctl as the user runs it in their own terminal, which can raise a protected flag but not lower it.
+    def step_as_user(self, *args, typed=None, cwd=None, check=True):
+        """The step as the user runs it in their own terminal, which can raise a protected flag but not lower it.
 
         No tool-call mark and no mod mark, and stdin is a terminal (a pty) with one
         line typed into it: the word after the verb, unless `typed` says what to type.
-        hubctl never reads a terminal, so the typed line shows that typing opens no door.
+        The step never reads a terminal, so the typed line shows that typing opens no door.
         """
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
         controller, terminal = pty.openpty()
@@ -271,8 +274,8 @@ class Home:
             os.utime(path, (then, then))
         return ticket
 
-    def hubctl_from_mod(self, *args, ticket=None, cwd=None, check=True):
-        """hubctl as the mod runs it for a change the user typed or clicked: no tool-call marker, no
+    def step_from_mod(self, *args, ticket=None, cwd=None, check=True):
+        """The step as the mod runs it for a change the user typed or clicked: no tool-call marker, no
         terminal, and a fresh door ticket on stdin unless `ticket` gives the line to send."""
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
         line = self.mod_ticket() if ticket is None else ticket
@@ -283,8 +286,8 @@ class Home:
             raise AssertionError(f"{args} exited {process.returncode}\n{process.stdout}\n{process.stderr}")
         return process
 
-    def hubctl_from_mod_started(self, *args):
-        """hubctl started as hubctl_from_mod starts it, with its fresh ticket already sent, and not waited
+    def step_from_mod_started(self, *args):
+        """The step started as step_from_mod starts it, with its fresh ticket already sent, and not waited
         for, so several can run at once."""
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
         process = subprocess.Popen([sys.executable, "-I", os.path.join(self.plugin, "lib", "hub_switch.py"), *args],
@@ -294,7 +297,7 @@ class Home:
         process.stdin.close()
         return process
 
-    def hubctl_process(self, *args):
+    def step_process(self, *args):
         return subprocess.Popen(
             [sys.executable, os.path.join(self.plugin, "lib", "hub_switch.py"), *args],
             cwd=self.work, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -368,7 +371,7 @@ class Home:
             return [json.loads(line) for line in handle]
 
     def show(self, *args):
-        return json.loads(self.hubctl("show", "--json", *args).stdout)
+        return json.loads(self.step("show", "--json", *args).stdout)
 
     def write_json(self, path, data):
         os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -247,7 +247,7 @@ def main(words):
         background([word for word in words if word != "--bg"])
     elif "--session-id" in words or "--resume" in words:
         interactive(words)
-    else:  # hubctl's own calls go to the recorded replay beside this file
+    else:  # the step's own calls go to the recorded replay beside this file
         replay = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude-replay")
         os.execv(sys.executable, [sys.executable, replay, *words])
     return 0

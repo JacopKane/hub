@@ -7,11 +7,11 @@ keeps that rule.
 
 Only the mod lowers a protected flag, for a change the user typed or clicked
 in /hub. It proves the change with a ticket: random bytes it sends as the
-first line of hubctl's stdin, and a file in the state folder's doors folder
-named by their sha256. hubctl takes the ticket once, by removing that file,
+first line of the step's stdin, and a file in the state folder's doors folder
+named by their sha256. The step takes the ticket once, by removing that file,
 and only while the file is under a minute old. The folder holds only hashes,
 so reading it gives nothing. No environment variable, argument or terminal
-claims a door. hubctl in a terminal can raise a protected flag, but not lower
+claims a door. The step in a terminal can raise a protected flag, but not lower
 it. Setup, the tuner and a command the model runs can not lower one either.
 """
 import contextlib
@@ -26,10 +26,13 @@ import time
 from . import files, resolve
 
 MOD_DOOR = "mod"
+# The door a change came through when the step ran it, in a terminal or a tool call.
+# Lines an earlier hub wrote hold that hub's old name there instead, and nothing reads the label back.
+STEP_DOOR = "step"
 GUARD_NAME = "guard"
 GUARD_SUFFIX = "_guard"
 DOORS = "doors"
-# How long a ticket file the mod wrote stays good, and how long hubctl waits for the ticket line.
+# How long a ticket file the mod wrote stays good, and how long the step waits for the ticket line.
 TICKET_SECONDS = 60
 TICKET_WAIT_SECONDS = 2
 TICKET = re.compile(r"[0-9a-f]{64}")

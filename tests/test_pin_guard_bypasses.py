@@ -2,7 +2,7 @@
 
 A protected flag is a privacy check, the mode of a gate part, a guard, or a
 value the user pinned. Only the user door lowers one: the mod, for a change the
-user typed or clicked in /hub, sends hubctl a fresh single-use ticket. hubctl
+user typed or clicked in /hub, sends the step a fresh single-use ticket. the step
 in a terminal can raise a protected flag but never lower it. Every scenario runs as a command the model starts (AI_AGENT
 ends in "_agent") in a temporary HOME, tries one way around that rule, and
 then checks that the protected flag still runs as before.
@@ -63,10 +63,10 @@ def write_answer(home, answer):
 def test_a_command_the_model_runs_can_not_lower_a_gate_or_a_privacy_check(home, caller):
     with given("hub is installed and nobody changed the gate"):
         home.install()
-    with when("the model runs hubctl off for the gate and a privacy check, and set for the gate's mode"):
+    with when("the model runs hub off for the gate and a privacy check, and set for the gate's mode"):
         as_model(home, caller)
-        tries = [home.hubctl("off", GATE, check=False), home.hubctl("off", SECRETS, check=False),
-                 home.hubctl("set", GATE, "off", check=False)]
+        tries = [home.step("off", GATE, check=False), home.step("off", SECRETS, check=False),
+                 home.step("set", GATE, "off", check=False)]
     with then("each is refused, and the refusal says to ask the user"):
         for done in tries:
             assert done.returncode == 1, done.stdout
@@ -76,11 +76,11 @@ def test_a_command_the_model_runs_can_not_lower_a_gate_or_a_privacy_check(home, 
     still_runs(home, SECRETS, "on")
 
 
-def test_hubctl_with_the_tool_call_mark_taken_away_and_no_terminal_can_not_lower_a_gate(home):
+def test_the_step_with_the_tool_call_mark_taken_away_and_no_terminal_can_not_lower_a_gate(home):
     with given("hub is installed"):
         home.install()
-    with when("hubctl runs with neither mark and no terminal, as env -u AI_AGENT gives a tool call"):
-        done = home.hubctl("off", GATE, check=False)
+    with when("the step runs with neither mark and no terminal, as env -u AI_AGENT gives a tool call"):
+        done = home.step("off", GATE, check=False)
     with then("it is refused, points the user to /hub, and offers no terminal door"):
         assert done.returncode == 1
         assert "with /hub where Claude Code loads plugin mods" in done.stderr and "own terminal" not in done.stderr, done.stderr
@@ -91,15 +91,15 @@ def test_hubctl_with_the_tool_call_mark_taken_away_and_no_terminal_can_not_lower
 def test_the_user_lowers_a_gate_with_hub_in_claude_code_and_never_in_their_own_terminal(home):
     with given("hub is installed"):
         home.install()
-    with when("the user runs hubctl off for the gate in a terminal, typing something else or the flag's name"):
-        tries = [home.hubctl_as_user("off", GATE, typed=text, check=False) for text in ("yes", GATE)]
+    with when("the user runs hub off for the gate in a terminal, typing something else or the flag's name"):
+        tries = [home.step_as_user("off", GATE, typed=text, check=False) for text in ("yes", GATE)]
     with then("nothing changes, and each refusal names the gate and points the user to /hub"):
         for done in tries:
             assert done.returncode == 1
             assert GATE in done.stderr and "with /hub where Claude Code loads plugin mods" in done.stderr, done.stderr
         still_runs(home, GATE, "warn")
-    with when("the user switches it off with /hub, so the mod sends hubctl a fresh ticket"):
-        home.hubctl_from_mod("off", GATE)
+    with when("the user switches it off with /hub, so the mod sends the step a fresh ticket"):
+        home.step_from_mod("off", GATE)
     with then("the gate is off, pinned by the user"):
         assert home.settings()["flags"][GATE] == {"value": "off", "by": "user"}
         assert not flag(home, GATE)["runs"]
@@ -108,15 +108,15 @@ def test_the_user_lowers_a_gate_with_hub_in_claude_code_and_never_in_their_own_t
 def test_the_mod_door_lowers_a_gate_only_outside_a_tool_call(home):
     with given("hub is installed"):
         home.install()
-    with when("a command the model runs claims to be the mod and hands hubctl a fresh ticket"):
+    with when("a command the model runs claims to be the mod and hands the step a fresh ticket"):
         as_model(home)
         home.env["HUB_DOOR"] = "mod"
-        claimed = home.run([*home_hubctl(home), "off", GATE], stdin=home.mod_ticket() + "\n", check=False)
+        claimed = home.run([*step_words(home), "off", GATE], stdin=home.mod_ticket() + "\n", check=False)
     with then("it is refused, and the gate still runs"):
         assert claimed.returncode == 1
         still_runs(home, GATE, "warn")
     with when("the mod runs it for a change the user typed"):
-        home.hubctl_from_mod("off", GATE)
+        home.step_from_mod("off", GATE)
     with then("the gate is off, by the user through the mod"):
         assert home.settings()["flags"][GATE] == {"value": "off", "by": "user"}
         assert home.history()[-1]["door"] == "mod"
@@ -125,10 +125,10 @@ def test_the_mod_door_lowers_a_gate_only_outside_a_tool_call(home):
 def test_a_command_the_model_runs_can_not_undo_the_users_raise_of_a_gate(home):
     with given("the user raised the gate to block"):
         home.install()
-        home.hubctl("set", GATE, "block")
-    with when("the model runs hubctl undo"):
+        home.step("set", GATE, "block")
+    with when("the model runs hub undo"):
         as_model(home)
-        done = home.hubctl("undo", check=False)
+        done = home.step("undo", check=False)
     with then("it is refused, and the gate still blocks"):
         assert done.returncode == 1
         still_runs(home, GATE, "block")
@@ -140,12 +140,12 @@ def test_a_tool_call_can_not_add_an_agent_to_the_tier_guards_allowed_list_and_th
         before = flag(home, "tier_rule.guard.allowed")["value"]
     with when("the model adds an agent to the allowed list, which loosens the guard"):
         as_model(home)
-        done = home.hubctl("set", "tier_rule.guard.allowed", *before, "my-helper", check=False)
+        done = home.step("set", "tier_rule.guard.allowed", *before, "my-helper", check=False)
     with then("it is refused, and the list is unchanged"):
         assert done.returncode == 1 and "ask the user" in done.stderr.lower(), done.stderr
         assert flag(home, "tier_rule.guard.allowed")["value"] == before
     with when("the user adds it with /hub in Claude Code"):
-        home.hubctl_from_mod("set", "tier_rule.guard.allowed", *before, "my-helper")
+        home.step_from_mod("set", "tier_rule.guard.allowed", *before, "my-helper")
     with then("the list holds the agent, set by the user"):
         assert flag(home, "tier_rule.guard.allowed")["value"] == [*before, "my-helper"]
         assert flag(home, "tier_rule.guard.allowed")["by"] == "user"
@@ -157,22 +157,22 @@ def test_a_tool_call_can_not_add_an_agent_to_the_tier_guards_allowed_list_and_th
 def test_a_local_file_from_a_tool_call_can_not_lower_a_gate_the_user_raised(home):
     with given("the user raised the gate to block in their own settings"):
         home.install()
-        home.hubctl("set", GATE, "block")
+        home.step("set", GATE, "block")
     with when("the model sets the gate to warn in this repo's local file, which is the shipped default"):
         as_model(home)
-        done = home.hubctl("set", GATE, "warn", "--scope", "local", check=False)
+        done = home.step("set", GATE, "warn", "--scope", "local", check=False)
     with then("it is refused, no local file is written, and the gate still blocks in the repo"):
         assert done.returncode == 1
         assert not os.path.exists(os.path.join(home.work, ".hub", "hub.local.json"))
         still_runs(home, GATE, "block")
 
 
-def test_hubctl_with_no_door_can_not_lower_in_the_local_file_a_gate_that_setup_raised(home):
+def test_the_step_with_no_door_can_not_lower_in_the_local_file_a_gate_that_setup_raised(home):
     with given("setup raised the gate to block, which is no pin"):
         home.install()
         home.set_by("setup", GATE, "block")
-    with when("hubctl with neither mark and no terminal sets the gate to warn in this repo's local file"):
-        done = home.hubctl("set", GATE, "warn", "--scope", "local", check=False)
+    with when("the step with neither mark and no terminal sets the gate to warn in this repo's local file"):
+        done = home.step("set", GATE, "warn", "--scope", "local", check=False)
     with then("it is refused, because the gate would run weaker in the repo, and it still blocks there"):
         assert done.returncode == 1 and "with /hub where Claude Code loads plugin mods" in done.stderr, done.stderr
         assert not os.path.exists(os.path.join(home.work, ".hub", "hub.local.json"))
@@ -182,10 +182,10 @@ def test_hubctl_with_no_door_can_not_lower_in_the_local_file_a_gate_that_setup_r
 def test_a_pin_in_one_scope_holds_against_a_tool_call_in_another(home):
     with given("the user switched builder off, which pins it"):
         home.install()
-        home.hubctl("off", "builder")
+        home.step("off", "builder")
     with when("the model switches builder on in this repo's local file"):
         as_model(home)
-        done = home.hubctl("on", "builder", "--scope", "local", check=False)
+        done = home.step("on", "builder", "--scope", "local", check=False)
     with then("it is refused as the user's pin, and builder stays off in the repo"):
         assert done.returncode == 1 and "only the user can change it, such as with /hub where Claude Code loads plugin mods" in done.stderr
         assert not flag(home, "builder")["runs"]
@@ -202,18 +202,18 @@ def test_a_change_from_a_tool_call_is_set_by_the_model_and_is_never_a_pin(home):
              "options": [{"label": "Block", "does": "Stops the call.", "flags": {GATE: "block"}}]}]})
     with when("the model sets the gate to warn, its default, and switches scout off"):
         as_model(home)
-        home.hubctl("set", GATE, "warn")
-        home.hubctl("off", "scout")
+        home.step("set", GATE, "warn")
+        home.step("off", "scout")
     with then("the gate's value is not kept, and scout's entry is by the model"):
         flags = home.settings()["flags"]
         assert GATE not in flags
         assert flags["scout"] == {"value": "off", "by": "model"}
         assert home.history()[-1]["by"] == "model"
     and_("a --by option is no longer taken")
-    assert home.hubctl("set", "scout", "on", "--by", "user", check=False).returncode == 2
+    assert home.step("set", "scout", "on", "--by", "user", check=False).returncode == 2
     with when("the user then picks Block in setup"):
-        dialog = json.loads(home.hubctl("setup", "--answer", answer).stdout)
-        home.hubctl("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Block"}))
+        dialog = json.loads(home.step("setup", "--answer", answer).stdout)
+        home.step("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Block"}))
     with then("the gate blocks, since the model's write was no pin"):
         still_runs(home, GATE, "block")
 
@@ -233,11 +233,11 @@ def test_setup_can_not_lower_a_gate_or_a_privacy_check(home):
              "options": [{"label": "Yes", "does": "Switches the gate off.", "flags": {GATE: "off"}}]}]})
     with when("the model runs setup"):
         as_model(home)
-        dialog = json.loads(home.hubctl("setup", "--answer", answer).stdout)
+        dialog = json.loads(home.step("setup", "--answer", answer).stdout)
     with then("the dialog leaves out the question that would only lower the gate"):
         assert [question["topic"] for question in dialog["questions"]] == ["use"]
     with when("the reply picks the first option"):
-        home.hubctl("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Work"}))
+        home.step("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Work"}))
     with then("the gate and secrets still run, and the machine fact landed"):
         still_runs(home, GATE, "warn")
         still_runs(home, SECRETS, "on")
@@ -254,7 +254,7 @@ def test_setup_with_a_forged_pending_file_can_not_lower_a_gate(home):
                 {"label": "Go", "does": "", "flags": {GATE: "off"}}]}]})
     with when("the model replies to it"):
         as_model(home)
-        home.hubctl("setup", "--reply", json.dumps({"q": "Go"}), check=False)
+        home.step("setup", "--reply", json.dumps({"q": "Go"}), check=False)
     with then("the gate and secrets still run"):
         still_runs(home, GATE, "warn")
         still_runs(home, SECRETS, "on")
@@ -267,9 +267,9 @@ def test_setup_refuses_a_reply_to_a_question_it_did_not_ask(home):
             {"id": "use", "text": "What do you use this machine for?",
              "options": [{"label": "Work", "does": "Marks it a work machine.", "machine": {"use": "work"}}]}]})
         as_model(home)
-        dialog = json.loads(home.hubctl("setup", "--answer", answer).stdout)
+        dialog = json.loads(home.step("setup", "--answer", answer).stdout)
     with when("the reply answers an id setup did not give"):
-        done = home.hubctl("setup", "--reply", json.dumps({"made_up": "Work"}), check=False)
+        done = home.step("setup", "--reply", json.dumps({"made_up": "Work"}), check=False)
     with then("setup refuses it and names the id, and the first run is not over"):
         assert done.returncode == 1 and "made_up" in done.stderr
         assert not os.path.exists(home.user_file)
@@ -288,7 +288,7 @@ def test_the_tuner_can_not_lower_a_gate_from_a_forged_list(home):
                            {"flag": SECRETS, "value": "off", "reason": "made up"}]})
     with when("the model runs tuner decide and picks both"):
         as_model(home)
-        home.run([*home_hubctl(home), "tuner", "decide", "--answer", "-"],
+        home.run([*step_words(home), "tuner", "decide", "--answer", "-"],
                  stdin=json.dumps({"pick": [GATE, SECRETS]}))
     with then("the gate and secrets still run"):
         still_runs(home, GATE, "warn")
@@ -333,7 +333,7 @@ def test_forged_signals_never_make_a_protected_flag_a_tuner_candidate(home):
 # Writes that land between the check and the write
 
 
-# hubctl with one seam: it writes a mark file when set_flag asks for the settings lock,
+# The step with one seam: it writes a mark file when set_flag asks for the settings lock,
 # so a test that holds the lock knows the command has made its checks so far.
 AT_THE_LOCK = """
 import contextlib, sys, traceback
@@ -353,12 +353,12 @@ sys.exit(cli.main(sys.argv[3:]))
 """
 
 
-def write_while_hubctl_waits_at_the_lock(home, args, change_user_file, from_the_mod=False, path=None):
-    """Run hubctl while the test holds the settings lock, change a settings file once hubctl waits for it,
-    then let hubctl go on. Returns the finished hubctl.
+def write_while_the_step_waits_at_the_lock(home, args, change_user_file, from_the_mod=False, path=None):
+    """Run the step while the test holds the settings lock, change a settings file once the step waits for it,
+    then let the step go on. Returns the finished step.
 
     change_user_file changes the file's data in place, or returns text to write as it is. The file is the
-    user's unless path names another. With from_the_mod, hubctl runs as the mod runs it for the user,
+    user's unless path names another. With from_the_mod, the step runs as the mod runs it for the user,
     with a fresh ticket waiting on stdin.
     """
     path = path or home.user_file
@@ -380,7 +380,7 @@ def write_while_hubctl_waits_at_the_lock(home, args, change_user_file, from_the_
             deadline = time.monotonic() + 30
             while not os.path.exists(mark):
                 assert process.poll() is None, process.communicate()
-                assert time.monotonic() < deadline, "hubctl never asked for the settings lock"
+                assert time.monotonic() < deadline, "the step never asked for the settings lock"
                 time.sleep(0.02)
             data = read_json(path) if os.path.exists(path) else {"version": 1, "flags": {}}
             text = change_user_file(data)
@@ -403,7 +403,7 @@ def test_a_raise_that_lands_while_the_model_sets_the_gate_to_its_default_still_h
         def setup_raises_the_gate(data):
             data.setdefault("flags", {})[GATE] = {"value": "block", "by": "setup"}
 
-        done = write_while_hubctl_waits_at_the_lock(home, ["set", GATE, "warn"], setup_raises_the_gate)
+        done = write_while_the_step_waits_at_the_lock(home, ["set", GATE, "warn"], setup_raises_the_gate)
     with then("the model's change is refused and says to ask the user, and the gate still blocks"):
         assert done.returncode == 1 and "ask the user" in done.stderr.lower(), done.stderr
         assert home.settings()["flags"][GATE] == {"value": "block", "by": "setup"}
@@ -420,7 +420,7 @@ def test_a_pin_that_lands_while_the_model_writes_another_scope_still_holds(home)
         def user_pins_scout(data):
             data.setdefault("flags", {})["scout"] = {"value": "on", "by": "user"}
 
-        done = write_while_hubctl_waits_at_the_lock(home, ["off", "scout", "--scope", "local"], user_pins_scout)
+        done = write_while_the_step_waits_at_the_lock(home, ["off", "scout", "--scope", "local"], user_pins_scout)
     with then("the model's change is refused as the user's pin, and scout still runs in the repo"):
         assert done.returncode == 1 and "only the user can change it, such as with /hub where Claude Code loads plugin mods" in done.stderr, done.stderr
         assert flag(home, "scout")["runs"]
@@ -433,14 +433,14 @@ def test_a_raise_that_lands_while_the_users_change_waits_asks_the_user_to_run_it
         def setup_raises_the_gate(data):
             data.setdefault("flags", {})[GATE] = {"value": "block", "by": "setup"}
 
-        done = write_while_hubctl_waits_at_the_lock(home, ["set", GATE, "warn"], setup_raises_the_gate,
+        done = write_while_the_step_waits_at_the_lock(home, ["set", GATE, "warn"], setup_raises_the_gate,
                                                     from_the_mod=True)
     with then("nothing changes, the user is told to run it again, and the gate still blocks"):
         assert done.returncode == 1 and "changed while hub ran" in done.stderr, done.stderr
         assert home.settings()["flags"][GATE] == {"value": "block", "by": "setup"}
         still_runs(home, GATE, "block")
     with when("the user runs it again with /hub"):
-        home.hubctl_from_mod("set", GATE, "warn")
+        home.step_from_mod("set", GATE, "warn")
     with then("the gate is back at warn, pinned by the user"):
         assert home.settings()["flags"][GATE] == {"value": "warn", "by": "user"}
         still_runs(home, GATE, "warn")
@@ -494,9 +494,9 @@ def test_a_flag_id_that_only_looks_like_a_protected_one_changes_nothing_through_
         with when(f"{door} switches off each look-alike id of the gate and its secrets check"):
             if door == "the model":
                 as_model(home)
-                run = home.hubctl
+                run = home.step
             else:
-                run = home.hubctl_from_mod
+                run = home.step_from_mod
             tries = [(flag_id, run("off", flag_id, check=False)) for flag_id in LOOK_ALIKE_IDS]
         with then("each is refused as an unknown flag, and no file and no history line is written"):
             for flag_id, done in tries:
@@ -511,11 +511,11 @@ def test_a_flag_id_that_only_looks_like_a_protected_one_changes_nothing_through_
 def test_a_gate_value_with_odd_case_spaces_or_quotes_is_refused_even_for_the_user(home):
     with given("hub is installed, and the user raised the gate to block"):
         home.install()
-        home.hubctl("set", GATE, "block")
+        home.step("set", GATE, "block")
         before = user_file_text(home)
     with when("the mod sets the gate to each odd value for a change the user typed"):
-        tries = [(value, home.hubctl_from_mod("set", GATE, value, check=False)) for value in ODD_GATE_VALUES]
-        tries.append(("off block", home.hubctl_from_mod("set", GATE, "off", "block", check=False)))
+        tries = [(value, home.step_from_mod("set", GATE, value, check=False)) for value in ODD_GATE_VALUES]
+        tries.append(("off block", home.step_from_mod("set", GATE, "off", "block", check=False)))
     with then("each is refused with the values the gate takes, and the file is as it was"):
         for value, done in tries:
             assert done.returncode == 1, (value, done.stderr)
@@ -549,8 +549,8 @@ def test_the_mod_door_takes_only_the_tickets_exact_text(home):
         home.install()
         ticket = home.mod_ticket()
         ticket_file = os.path.join(home.state, "doors", hashlib.sha256(ticket.encode()).hexdigest())
-    with when("hubctl off for the gate gets a look-alike of that ticket"):
-        tries = [(text, home.hubctl_from_mod("off", GATE, ticket=text, check=False))
+    with when("hub off for the gate gets a look-alike of that ticket"):
+        tries = [(text, home.step_from_mod("off", GATE, ticket=text, check=False))
                  for text in look_alike_tickets(ticket)]
     with then("each one changes nothing, writes no settings file, and leaves the real ticket unused"):
         for text, done in tries:
@@ -559,7 +559,7 @@ def test_the_mod_door_takes_only_the_tickets_exact_text(home):
         assert user_file_text(home) is None
         assert os.path.exists(ticket_file)
     with when("it gets the exact ticket with spaces around it"):
-        home.hubctl_from_mod("off", GATE, ticket=f"  {ticket}  ")
+        home.step_from_mod("off", GATE, ticket=f"  {ticket}  ")
     with then("the gate is off, pinned by the user, and the ticket is used up"):
         assert home.settings()["flags"][GATE] == {"value": "off", "by": "user"}
         assert not os.path.exists(ticket_file)
@@ -571,7 +571,7 @@ def test_a_scope_given_twice_uses_the_last_one_and_never_lowers_a_protected_flag
         local, project = (os.path.join(home.work, ".hub", name) for name in ("hub.local.json", "hub.json"))
     with when("the model switches the gate off, naming the user scope and a repo scope in both orders"):
         as_model(home)
-        tries = [(scopes, home.hubctl("off", GATE, *scopes, check=False))
+        tries = [(scopes, home.step("off", GATE, *scopes, check=False))
                  for scopes in (["--scope", "local", "--scope", "user"], ["--scope", "user", "--local"],
                                 ["--project", "--scope", "user"], ["--local", "--project"])]
     with then("each is refused for the last scope named, and no settings file is written"):
@@ -580,12 +580,12 @@ def test_a_scope_given_twice_uses_the_last_one_and_never_lowers_a_protected_flag
             assert done.returncode == 1 and refusal in done.stderr.lower(), (scopes, done.stderr)
         nothing_written(home, None)
     with when("the mod lowers the secrets check with --scope local and then --project, for the user"):
-        shared = home.hubctl_from_mod("off", SECRETS, "--scope", "local", "--project", check=False)
+        shared = home.step_from_mod("off", SECRETS, "--scope", "local", "--project", check=False)
     with then("the last scope, project, is the one checked, so it is refused and no file is written"):
         assert shared.returncode == 1 and "project file can not lower it" in shared.stderr, shared.stderr
         assert not os.path.exists(local) and not os.path.exists(project)
     with when("the mod switches builder off with --project and then --scope local"):
-        home.hubctl_from_mod("off", "builder", "--project", "--scope", "local")
+        home.step_from_mod("off", "builder", "--project", "--scope", "local")
     with then("only the local file holds the change"):
         assert read_json(local)["flags"]["builder"] == {"value": "off", "by": "user"}
         assert not os.path.exists(project)
@@ -597,14 +597,14 @@ def test_a_scope_given_twice_uses_the_last_one_and_never_lowers_a_protected_flag
 def test_a_half_written_settings_file_is_refused_and_never_overwritten(home):
     with given("the user raised the gate to block, and their settings file was cut off half way"):
         home.install()
-        home.hubctl("set", GATE, "block")
+        home.step("set", GATE, "block")
         whole = user_file_text(home)
         half = whole[:len(whole) // 2]
         write_text(home.user_file, half)
     with when("the mod lowers the gate for the user, and the model switches builder off"):
-        by_the_user = home.hubctl_from_mod("off", GATE, check=False)
+        by_the_user = home.step_from_mod("off", GATE, check=False)
         as_model(home)
-        by_the_model = home.hubctl("off", "builder", check=False)
+        by_the_model = home.step("off", "builder", check=False)
     with then("both are refused as a file that is not valid JSON, and the file is as it was"):
         for done in (by_the_user, by_the_model):
             assert done.returncode == 1 and "not valid JSON" in done.stderr, done.stderr
@@ -617,12 +617,12 @@ def test_a_half_written_settings_file_is_refused_and_never_overwritten(home):
         def half_a_local_file(_data):
             return '{"version": 1, "flags": {"demo_gate": {"value": "of'
 
-        done = write_while_hubctl_waits_at_the_lock(home, ["off", "builder"], half_a_local_file,
+        done = write_while_the_step_waits_at_the_lock(home, ["off", "builder"], half_a_local_file,
                                                     path=os.path.join(home.work, ".hub", "hub.local.json"))
     with then("it is refused as a file that is not valid JSON, and the user's file is as it was"):
         assert done.returncode == 1 and "not valid JSON" in done.stderr, done.stderr
         assert user_file_text(home) == whole
 
 
-def home_hubctl(home):
+def step_words(home):
     return [sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py")]

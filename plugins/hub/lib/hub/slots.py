@@ -6,8 +6,8 @@ and apply writes what each one prints. Cursor gets its start text as one
 string, so its set is one slot. A size is counted in UTF-16 code units, the
 way the limit is counted, so a character outside the basic plane counts two.
 
-    ~/.local/state/hubctl/slots/<tool>/1.md ... 8.md
-    ~/.local/state/hubctl/slots/<tool>/left_out.json   ids that did not fit
+    ~/.local/state/claude-hub/slots/<tool>/1.md ... 8.md
+    ~/.local/state/claude-hub/slots/<tool>/left_out.json   ids that did not fit
 
 The start text is every node with a text file and the cost "start text" that
 runs, in tree order. A start-text node whose children are start text too is

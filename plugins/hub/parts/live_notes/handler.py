@@ -190,7 +190,7 @@ def handle(event, hook_input, flags, answer):
 
 
 def doctor(flags):
-    """What hubctl doctor says: where the notes are and whether briefs are checked."""
+    """What the step's doctor says: where the notes are and whether briefs are checked."""
     pattern = flags.value(f"{PART}.path") or DEFAULT_PATH
     if flags.runs(f"{PART}.brief_names_file"):
         return [("note", f"every agent brief must name the chat's notes file, which is {pattern}.")]

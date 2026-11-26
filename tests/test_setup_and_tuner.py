@@ -65,7 +65,7 @@ def profile(home):
 
 
 def setup(home, *args):
-    return home.hubctl("setup", *args)
+    return home.step("setup", *args)
 
 
 def replies(dialog, picks):
@@ -91,7 +91,7 @@ def test_first_run_on_a_work_laptop_with_cursor_scans_asks_at_most_three_questio
         for fact in ("cursor", "iterm", "claude.ai", "github-actions", "my-helper", "my-tester"):
             assert fact in context.lower(), fact
         assert "sam@example.com" not in context and "00000000-0000-4000-8000-0000000000aa" not in context
-    with when("the recorded setup answer goes to hubctl setup --answer"):
+    with when("the recorded setup answer goes to hub setup --answer"):
         dialog = json.loads(setup(home, "--answer", os.path.join(ANSWERS, "work_laptop.json")).stdout)
     with then("the dialog holds two questions, each with a skip and an id that hub gave it"):
         assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use"]
@@ -145,8 +145,8 @@ def test_a_new_user_has_builder_and_the_tier_rule_off_until_they_turn_them_on(ho
     assert "| Judgement |" not in start_text and "| Mechanical |" not in start_text
     assert tier_sentence(home) not in start_text
     with when("the user turns builder and the tier rule on"):
-        home.hubctl("on", "builder")
-        home.hubctl("on", "tier_rule")
+        home.step("on", "builder")
+        home.step("on", "tier_rule")
     with then("both run, set by the user, and builder's agent file links to the shipped one"):
         flags = home.show("--all")["flags"]
         for part in OPT_IN:
@@ -209,15 +209,15 @@ def test_a_profile_fact_the_user_types_is_pinned_and_a_scan_or_a_tool_call_leave
         dialog = json.loads(setup(home, "--answer", os.path.join(ANSWERS, "work_laptop.json")).stdout)
         setup(home, "--reply", replies(dialog, {"use": "work"}))
     with when("the user sets this machine's use to home in their own terminal"):
-        said = home.hubctl("profile", "set", "machines.laptop.use", "home").stdout
+        said = home.step("profile", "set", "machines.laptop.use", "home").stdout
     with then("the fact is home and pinned, and the line says so"):
         assert profile(home)["machines"]["laptop"]["use"] == "home"
         assert "machines.laptop.use" in profile(home)["pins"]
         assert "pinned" in said
     with when("a scan runs, and a command the model runs tries to set it back"):
-        home.hubctl("profile", "scan")
+        home.step("profile", "scan")
         home.env["AI_AGENT"] = "claude-code_2-1-319_agent"
-        refused = home.hubctl("profile", "set", "machines.laptop.use", "work", check=False)
+        refused = home.step("profile", "set", "machines.laptop.use", "work", check=False)
     with then("the fact stays home, and the model's command is refused with the reason"):
         assert profile(home)["machines"]["laptop"]["use"] == "home"
         assert refused.returncode == 1 and "Only the user can" in refused.stderr
@@ -246,7 +246,7 @@ def dash_check_on_by_setup(home):
 
 def use_cursor_beta_in_project(home):
     """The Cursor beta, off by default, turned on in the project file, so this machine's first run is not over."""
-    home.hubctl("on", "cursor_link", "--project")
+    home.step("on", "cursor_link", "--project")
 
 
 def seed_signals(home, flag, warned=10, went_ahead=9):
@@ -264,7 +264,7 @@ def pending(home):
 
 
 def decide(home, answer):
-    return home.hubctl("tuner", "decide", "--answer", os.path.join(ANSWERS, answer))
+    return home.step("tuner", "decide", "--answer", os.path.join(ANSWERS, answer))
 
 
 def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo_and_never_touches_a_pinned_flag(home):
@@ -273,7 +273,7 @@ def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo
         on_day(home, 1)
         set_up(home)
         dash_check_on_by_setup(home)
-        home.hubctl("pin", "demo_gate.private_paths")
+        home.step("pin", "demo_gate.private_paths")
     with when("over nine days the dash check warns ten times, and nine times Claude goes ahead unchanged"):
         for number in range(10):
             on_day(home, 1 + number * 9 // 10)
@@ -304,12 +304,12 @@ def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo
         assert len(line) == 1 and line[0]["reason"] == "you went past it 9 times"
         assert (line[0]["flag"], line[0]["old"], line[0]["new"]) == ("demo_gate.dashes", "on", "off")
     and_("the band holds one line for it, with the reason and an undo")
-    strip = json.loads(home.hubctl("screen", "--json").stdout)["strip"]
+    strip = json.loads(home.step("screen", "--json").stdout)["strip"]
     tuned = [entry for entry in strip if entry["id"] == line[0]["id"]]
     assert len(tuned) == 1 and tuned[0]["reason"] == "you went past it 9 times"
     assert tuned[0]["buttons"] == [{"label": "Undo", "args": ["undo", line[0]["id"]]}]
     with when("the user takes the undo"):
-        home.hubctl("undo", line[0]["id"])
+        home.step("undo", line[0]["id"])
     with then("the dash check is back on, pinned"):
         assert home.settings()["flags"]["demo_gate.dashes"] == {"value": "on", "by": "user"}
     and_("every line of the signal log holds only the allowed keys")
@@ -352,7 +352,7 @@ def test_the_tuner_never_picks_a_flag_a_project_file_sets(home):
     with given("the project file sets the dash check on, and the signals would pick it"):
         on_day(home, 1)
         set_up(home)
-        home.hubctl("on", "demo_gate.dashes", "--project")
+        home.step("on", "demo_gate.dashes", "--project")
         project = os.path.join(home.work, ".hub", "hub.json")
         before = open(project).read()
         seed_signals(home, "demo_gate.dashes")
@@ -370,9 +370,9 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
         on_day(home, 1)
         set_up(home)
         dash_check_on_by_setup(home)
-        home.hubctl("off", "status_band")
-        home.hubctl("on", "cursor_link")
-        home.hubctl("on", "cursor_link.tuner_chat_line")
+        home.step("off", "status_band")
+        home.step("on", "cursor_link")
+        home.step("on", "cursor_link.tuner_chat_line")
         seed_signals(home, "demo_gate.dashes")
         session_start(home, "claude_code")
         decide(home, "tuner_picks_more.json")
@@ -396,7 +396,7 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
         assert not cursor_again.startswith(line)
     with when("the user turns the tuner off"):
         assert home.show("--all", "--tool", "cursor")["flags"]["cursor_link.tuner_chat_line"]["runs"] is True
-        home.hubctl("off", "tuner")
+        home.step("off", "tuner")
     with then("Cursor's chat line stops too, because it needs the tuner"):
         assert home.show("--all", "--tool", "cursor")["flags"]["cursor_link.tuner_chat_line"]["runs"] is False
 
@@ -407,7 +407,7 @@ def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_on
         on_day(home, 1)
         set_up(home)
         dash_check_on_by_setup(home)
-        home.hubctl("on", "cursor_link")
+        home.step("on", "cursor_link")
     with and_("Cursor's chat line is off, since it is in beta and off by default"):
         chat_line = home.show("--all", "--tool", "cursor")["flags"]["cursor_link.tuner_chat_line"]
         assert chat_line["runs"] is False
@@ -434,7 +434,7 @@ def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_on
 
 def band_read(home):
     """What the mod reads for the band: the screen model, marked as the band's read."""
-    return json.loads(home.hubctl("screen", "--json", "--band").stdout)
+    return json.loads(home.step("screen", "--json", "--band").stdout)
 
 
 def band_line(model):
@@ -488,8 +488,8 @@ def test_when_the_start_text_told_the_tuners_change_the_band_does_not_show_it_ag
     with then("the band does not show that line again"):
         shown = band_line(model)
         assert shown is None or shown["id"] != change["id"]
-    with and_("hubctl show still lists the change with its undo"):
-        strip = json.loads(home.hubctl("screen", "--json").stdout)["strip"]
+    with and_("hub show still lists the change with its undo"):
+        strip = json.loads(home.step("screen", "--json").stdout)["strip"]
         listed = [line for line in strip if line["id"] == change["id"]]
         assert listed and listed[0]["buttons"] == [{"label": "Undo", "args": ["undo", change["id"]]}]
 
@@ -498,7 +498,7 @@ def test_a_screen_read_without_the_band_mark_hides_no_notice(home):
     with given("a tuner change, and the band on in Claude Code"):
         change = tuner_change(home)
     with when("something other than the band reads the screen, and the next session starts"):
-        home.hubctl("screen", "--json")
+        home.step("screen", "--json")
         on_day(home, 1, hour=11)
         context = context_of(session_start(home, "claude_code"))
     with then("the start text still holds the line"):
@@ -545,14 +545,14 @@ def test_four_builder_runs_with_no_edits_offer_researcher_and_never_switch_it_on
         subagent_stop(home, 5, "builder", ["Read"])
     with then("researcher is offered in offers.json and the strip, with the reason, and it stays off"):
         assert "researcher" in offers(home)
-        strip = json.loads(home.hubctl("screen", "--json").stdout)["strip"]
+        strip = json.loads(home.step("screen", "--json").stdout)["strip"]
         offered = [entry for entry in strip if entry["id"] == "offer:researcher"]
         assert len(offered) == 1 and offered[0]["reason"] == "4 builder runs made no edits"
         assert not home.show()["flags"]["researcher"]["runs"]
     and_("the log holds the runs, with no word of the transcripts")
     assert [line["signal"] for line in home.signals() if line["flag"] == "builder"] == ["no_edit"] * 4
     with when("the user says no, and four more builder runs make no edit"):
-        home.hubctl("no", "researcher")
+        home.step("no", "researcher")
         for number in range(6, 10):
             subagent_stop(home, number, "builder", ["Read"])
     with then("researcher is not offered again, and it stays off"):
@@ -563,11 +563,11 @@ def test_four_builder_runs_with_no_edits_offer_researcher_and_never_switch_it_on
 # The side call
 
 def tuner_ask(home):
-    return json.loads(home.hubctl("tuner", "ask").stdout)
+    return json.loads(home.step("tuner", "ask").stdout)
 
 
 def screen_tuner(home):
-    return json.loads(home.hubctl("screen", "--json").stdout)["tuner"]
+    return json.loads(home.step("screen", "--json").stdout)["tuner"]
 
 
 def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stays_clean(home):
@@ -591,7 +591,7 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
         assert request["model"] == "haiku"
         assert '{"pick"' in request["system"] and "one line with an undo" in request["system"]
         assert "- demo_gate.dashes off: you went past it 9 times" in request["prompt"]
-    with when("the model's answer goes to hubctl tuner decide on stdin"):
+    with when("the model's answer goes to hub tuner decide on stdin"):
         decided = home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "tuner", "decide",
                             "--answer", "-"], stdin='{"pick": ["demo_gate.dashes"]}')
     with then("the dash check is off by the tuner, back at its shipped default, and nothing waits"):
@@ -610,7 +610,7 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
         assert "tuner decide" in late
     with when("the mod asks again, then the user switches the side call off, and new signals come next day"):
         tuner_ask(home)
-        home.hubctl("off", "tuner.tune.side_call")
+        home.step("off", "tuner.tune.side_call")
         on_day(home, 18)
         seed_signals(home, "demo_gate.dashes", warned=10, went_ahead=10)
         off = context_of(session_start(home, "claude_code"))
@@ -631,11 +631,11 @@ def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mo
         assert "tuner decide" not in context_of(session_start(home, "claude_code"))
         since = screen_tuner(home)["since"]
     with when("the mod gives the candidates back for an older list"):
-        home.hubctl("tuner", "give-back", "--since", "2026-11-01T10:00:00Z")
+        home.step("tuner", "give-back", "--since", "2026-11-01T10:00:00Z")
     with then("nothing changes, so a late answer never hands over a newer list"):
         assert screen_tuner(home)["pending"] == 1
     with when("the mod gives back the list it tried, because its model call failed"):
-        home.hubctl("tuner", "give-back", "--since", since)
+        home.step("tuner", "give-back", "--since", since)
     with then("the screen tells the mod nothing waits for it"):
         assert screen_tuner(home)["pending"] == 0
     with when("the next session starts, and then one more"):
@@ -652,7 +652,7 @@ def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mo
 # The setup skill
 SETUP_SKILL = os.path.join(PLUGIN, "skills", "hub-setup", "SKILL.md")
 CURSOR_SETUP_SKILL = "cursor/skills/hub-setup/SKILL.md"
-SKILL_HUBCTL = "python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py"
+SKILL_STEP = "python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py"
 # Verbs the setup skill may run without a prompt. None of them switches a flag the user names.
 SETUP_VERBS = ("setup", "show --all", "profile")
 
@@ -664,10 +664,10 @@ def skill_parts(text):
     return dict(line.split(": ", 1) for line in head.splitlines()), body
 
 
-def skill_commands(body, hubctl=SKILL_HUBCTL):
-    """{first words: the rest} of each hubctl command the skill names in a code span."""
+def skill_commands(body, step_prefix=SKILL_STEP):
+    """{first words: the rest} of each step command the skill names in a code span."""
     found = {}
-    for words in re.findall("`" + re.escape(hubctl) + r" ([^`]+)`", body):
+    for words in re.findall("`" + re.escape(step_prefix) + r" ([^`]+)`", body):
         verb = next(verb for verb in SETUP_VERBS if words.startswith(verb))
         found[words.split(" ")[1] if verb == "setup" else verb] = words
     return found
@@ -684,7 +684,7 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
         assert "set" in head["description"] and "hub" in head["description"]
     with and_("it may run only hub's setup, show --all and profile verbs without a prompt"):
         rules = [rule.strip() for rule in head["allowed-tools"].split(", ")]
-        assert sorted(rules) == sorted(f"Bash({SKILL_HUBCTL} {verb}{' *' if verb == 'setup' else ''})"
+        assert sorted(rules) == sorted(f"Bash({SKILL_STEP} {verb}{' *' if verb == 'setup' else ''})"
                                        for verb in SETUP_VERBS)
     with and_("it starts the setup agent and names the commands for the scan, the answer and the reply"):
         assert "Start the tuner agent" in body
@@ -695,24 +695,24 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
         work_laptop(home)
         home.install()
         use_cursor_beta_in_project(home)
-        hubctl = [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub_switch.py")]
+        step = [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub_switch.py")]
     with then("the first-run start text sends both tools to the skill"):
         assert "hub-setup" in context_of(session_start(home, "claude_code"))
         assert "hub-setup" in context_of(session_start(home, "cursor"))
     with when("the chat runs the skill's commands to look, with nothing set up yet"):
-        home.run(hubctl + shlex.split(commands["show --all"]))
-        home.run(hubctl + shlex.split(commands["profile"]))
+        home.run(step + shlex.split(commands["show --all"]))
+        home.run(step + shlex.split(commands["profile"]))
     with then("looking writes no settings file, so the first run is still on"):
         assert not os.path.exists(home.user_file)
     with when("the chat passes the recorded answer to the skill's answer command"):
         words = shlex.split(commands["--answer"].replace("<file>", os.path.join(ANSWERS, "work_laptop.json")))
-        dialog = json.loads(home.run(hubctl + words).stdout)
+        dialog = json.loads(home.run(step + words).stdout)
     with then("it gets the questions to ask, each with a skip"):
         assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use"]
     with when("the chat passes the user's answers to the skill's reply command"):
         reply = replies(dialog, {"gate_mode": "warn", "use": "work"})
         words = shlex.split(commands["--reply"].replace("<json>", reply))
-        summary = home.run(hubctl + words).stdout
+        summary = home.run(step + words).stdout
     with then("setup is done and the summary says what is on and what starts next session"):
         assert home.settings()["version"] == 1
         assert "Works now" in summary and "Starts next session" in summary
@@ -723,7 +723,7 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
         sys.path.insert(0, os.path.join(PLUGIN, "lib"))
         spec.loader.exec_module(handler)
         cursor_head, cursor_body = skill_parts(handler.plugin_files(PLUGIN, "/opt/my tools/hub")[CURSOR_SETUP_SKILL])
-    with then("Cursor gets hub-setup with only the keys it reads, and the copy's hubctl in every command"):
+    with then("Cursor gets hub-setup with only the keys it reads, and the copy's step in every command"):
         assert cursor_head == {"name": "hub-setup", "description": head["description"]}
         assert "${CLAUDE_" not in cursor_body
         assert skill_commands(cursor_body, "python3 -I '/opt/my tools/hub/lib/hub_switch.py'") == commands

@@ -1,8 +1,8 @@
-"""The screen model every door prints: hubctl show, /hub, the band and the pane.
+"""The screen model every door prints: the step's show, /hub, the band and the pane.
 
     header    the machine, the profile's use, the parts on out of all, the start text
     strip     the newest changes not undone, open offers and update lines, newest first,
-              each with its reason and buttons; a button holds the hubctl arguments it runs.
+              each with its reason and buttons; a button holds the step's arguments it runs.
               A change whose flag changed since has no undo button.
     families  one row per family that has a part, then a row per part and its children.
               The beta parts leave their family for a last group, labelled "Beta, untested".
@@ -246,7 +246,7 @@ def model(cwd=None, tool="claude_code", everything=False):
 
 
 def row_for(flag_id, cwd=None, tool="claude_code"):
-    """One flag's row, as /hub and hubctl print it after a change."""
+    """One flag's row, as /hub and the step print it after a change."""
     data = resolve.current(cwd or os.getcwd())
     node = tree_module.load(files.PARTS_DIR).get(flag_id)
     return row(node, data["tools"][tool]["flags"][flag_id])

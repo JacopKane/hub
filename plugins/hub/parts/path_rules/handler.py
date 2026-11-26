@@ -4,7 +4,7 @@ After a Read, Edit or Write, the file's path is matched against each
 behavior's globs, taken from the repo's top folder (or the working folder
 outside a repo). The text of each behavior that matches and runs is added to
 the chat once per session. The sessions that got a text are kept in
-~/.local/state/hubctl/path_rules/<session>.json.
+~/.local/state/claude-hub/path_rules/<session>.json.
 
 A glob knows `**` (any folders), `*` and `?` (inside one name) and `{a,b}`
 (either word). Cursor's file path key is a guess from its docs, so the

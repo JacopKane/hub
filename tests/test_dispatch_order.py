@@ -183,14 +183,14 @@ def test_the_group_for_every_other_tool_starts_python_only_when_a_part_that_hand
         assert group.python_starts() == 0 and group.fast_path()
 
     with when("the user switches the context budget on"):
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         result, _seconds = group.read("a0000000000000021")
     with then("apply marks it, the group starts the dispatcher, and the agent gets its reminder"):
         assert marker(home) == ["context_budget"]
         assert group.python_starts() == 1 and "135k context" in result.context
 
     with when("the user switches it off again"):
-        home.hubctl("off", "context_budget")
+        home.step("off", "context_budget")
         agent_at(home, "a0000000000000022", 135000)
         result, _seconds = group.read("a0000000000000022")
     with then("the marker is gone and Python does not start"):
@@ -208,7 +208,7 @@ def test_the_group_for_every_other_tool_starts_python_only_when_a_part_that_hand
         assert marker(home) == ["context_budget"]
 
     with when("the user's own setting is off, and the repo turns the budget on in its own .hub/hub.json"):
-        home.hubctl("off", "context_budget")
+        home.step("off", "context_budget")
         home.write_json(os.path.join(home.work, ".hub", "hub.json"),
                         {"version": 1, "flags": {"context_budget": {"by": "user", "value": "on"}}})
         agent_at(home, "a0000000000000023", 135000)
@@ -244,8 +244,8 @@ def test_the_post_tool_use_and_stop_groups_start_python_only_when_one_of_their_p
         assert [group.python_starts() for group in groups.values()] == [0, 0]
 
     with when("the user switches path_rules and link_check on"):
-        home.hubctl("on", "path_rules")
-        home.hubctl("on", "link_check")
+        home.step("on", "path_rules")
+        home.step("on", "link_check")
         stopped, _seconds = groups["Stop"].send(inputs["Stop"])
         groups["PostToolUse"].send(inputs["PostToolUse"])
     with then("apply marks each part for its group, each group starts the dispatcher, "
@@ -256,8 +256,8 @@ def test_the_post_tool_use_and_stop_groups_start_python_only_when_one_of_their_p
         assert stopped.output.get("decision") == "block"
 
     with when("the user switches both off again"):
-        home.hubctl("off", "path_rules")
-        home.hubctl("off", "link_check")
+        home.step("off", "path_rules")
+        home.step("off", "link_check")
         results = {event: group.send(inputs[event])[0] for event, group in groups.items()}
     with then("both markers are gone, and Python does not start again"):
         assert [marker(home, name) for name in EVENT_MARKERS.values()] == [None, None]
@@ -291,7 +291,7 @@ def test_the_prompt_group_starts_python_for_one_of_its_parts_or_a_notice_that_wa
         assert not result.context and group.python_starts() == 1
 
     with when("the user switches knowledge_only on"):
-        home.hubctl("on", "knowledge_only")
+        home.step("on", "knowledge_only")
         group.send(typed)
     with then("apply marks it, and the group starts the dispatcher"):
         assert marker(home, USER_PROMPT_PARTS) == ["knowledge_only"]
@@ -333,14 +333,14 @@ def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_
     with then("Python does not start, because no running part names Agent"):
         assert group.python_starts() == 0
     with when("the user switches tier_rule on, which names Agent, and the main chat starts an agent"):
-        home.hubctl("on", "tier_rule")
+        home.step("on", "tier_rule")
         named_call(group, "Agent", {"description": "Read the docs", "prompt": "Read them", "subagent_type": "worker"})
     with then("apply marks Agent for tier_rule, and the group starts the dispatcher for it"):
         assert tool_marker(home, "Agent") == ["tier_rule"]
         assert group.python_starts() == 1
 
     with when("the user switches the coordinator on, which names Read, and a large Write comes"):
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
         named_call(group, "Read")
         big = {"file_path": os.path.join(home.work, "big.md"), "content": "line \"quoted\" 100%s\n" * 50000}
         named_call(group, "Write", big)
@@ -350,7 +350,7 @@ def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_
         assert group.python_starts() == 3
         assert not os.path.exists(os.path.join(home.state, "errors.log"))
     with when("the user switches it off again in /hub"):
-        home.hubctl_from_mod("off", "coordinator")
+        home.step_from_mod("off", "coordinator")
         named_call(group, "Read")
     with then("the marker is gone, and Python does not start"):
         assert tool_marker(home, "Read") is None and group.python_starts() == 3
@@ -405,7 +405,7 @@ def test_markers_the_check_can_not_trust_start_the_dispatcher(home, how):
         if os.path.isdir(folder):
             os.chmod(folder, 0o700)
     with when("the user runs apply"):
-        home.hubctl("apply")
+        home.step("apply")
         result, _seconds = named_call(group, "Read")
     with then("the markers are whole again, and the next read starts no Python"):
         assert os.path.isfile(os.path.join(home.state, MARKERS_DONE))
@@ -440,12 +440,12 @@ def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(hom
         result, _seconds = group.send(listing)
         assert result.output == {} and group.python_starts() == 0 and not any(group.errors)
     with when("the user switches the coordinator on, which names Bash"):
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
         group.send(listing)
     with then("apply marks Bash for it, and the command starts the dispatcher"):
         assert tool_marker(home, "Bash") == ["coordinator"] and group.python_starts() == 1
     with when("the user switches it off again in /hub"):
-        home.hubctl_from_mod("off", "coordinator")
+        home.step_from_mod("off", "coordinator")
         group.send(listing)
     with then("no marker is left, and Python does not start"):
         assert tool_marker(home, "Bash") is None and group.python_starts() == 1
@@ -475,7 +475,7 @@ def stored_answers(home):
 def test_a_bash_call_a_part_lets_through_loads_only_the_code_it_needs(home):
     with given("hub is installed, with the coordinator on, so a Bash call has a part that checks it"):
         home.install()
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
     with when("the main chat runs git status"):
         result, names = dispatch_loading(home, "git status")
     with then("it runs with no answer, and the dispatcher stored that answer for a second copy of the plugin"):
@@ -489,7 +489,7 @@ def test_a_bash_call_a_part_lets_through_loads_only_the_code_it_needs(home):
 def test_a_marker_that_can_not_be_read_or_is_empty_still_starts_the_dispatcher(home):
     with given("the coordinator is on, so Read and Edit have markers"):
         home.install()
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
         group = EveryToolGroup(home, "PreToolUse", 1)
         os.chmod(os.path.join(home.state, TOOL_PARTS, "Read"), 0)
         with open(os.path.join(home.state, TOOL_PARTS, "Edit"), "w"):
@@ -547,8 +547,8 @@ def test_the_post_tool_use_group_for_every_other_tool_starts_python_only_while_a
     with then("the group ends with no answer, and Python never starts"):
         assert result.output == {} and every.python_starts() == 0
     with when("the user switches the coordinator and the relay on, and a shell call and a read end"):
-        home.hubctl("on", "coordinator")
-        home.hubctl("on", "permission_relay")
+        home.step("on", "coordinator")
+        home.step("on", "permission_relay")
         every.send(bash_input)
         named.send(read_input)
     with then("apply marks the relay as a part for every tool, which both groups read, "
@@ -559,7 +559,7 @@ def test_the_post_tool_use_group_for_every_other_tool_starts_python_only_while_a
     with then("the group for named tools sees the marker first and hands the call on without reading it"):
         assert "cat" not in named.programs()
     with when("the user switches the relay off again in /hub"):
-        home.hubctl_from_mod("off", "permission_relay")
+        home.step_from_mod("off", "permission_relay")
         every.send(bash_input)
     with then("the marker is gone, and Python does not start again"):
         assert marker(home, every_marker) is None and every.python_starts() == 1

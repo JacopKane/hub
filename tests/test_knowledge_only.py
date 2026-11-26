@@ -8,7 +8,7 @@ PASTE = "<pasted_content>" + "The release moves to Thursday. " * 20 + "</pasted_
 def test_a_pasted_page_with_no_ask_gets_a_reminder_to_explain_not_act(home):
     with given("knowledge_only is on"):
         home.install()
-        home.hubctl("on", "knowledge_only")
+        home.step("on", "knowledge_only")
 
     with when("Alex's prompt is mostly a pasted block, a link, or an image with \"fyi\""):
         pasted = prompt(home, "see " + PASTE)
@@ -32,7 +32,7 @@ def test_a_pasted_page_with_no_ask_gets_a_reminder_to_explain_not_act(home):
         assert [result.context for result in results] == ["", "", ""]
 
     with when("the user takes \"btw\" off the marker list"):
-        home.hubctl("set", "knowledge_only.detect_shared_material.markers", "fyi", "side info", "just notifying")
+        home.step("set", "knowledge_only.detect_shared_material.markers", "fyi", "side info", "just notifying")
         result = prompt(home, "btw the docs page moved, update your notes")
     with then("an ask with that word gets no reminder"):
         assert not result.context
@@ -40,7 +40,7 @@ def test_a_pasted_page_with_no_ask_gets_a_reminder_to_explain_not_act(home):
         assert prompt(home, "side info: the docs page moved").context
 
     with when("the user turns the reminder off"):
-        home.hubctl("off", "knowledge_only.reminder")
+        home.step("off", "knowledge_only.reminder")
         result = prompt(home, "https://example.com/release-notes")
     with then("nothing is added"):
         assert not result.context

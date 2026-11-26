@@ -139,17 +139,17 @@ def test_the_settings_folder_moves_to_its_new_name_and_keeps_every_choice(home):
 def test_an_old_settings_file_that_still_names_the_retired_text_gate_loads_and_the_check_finds_nothing(home):
     with given("hub installed, and a settings file from before the public text gate was retired"):
         home.install()
-        baseline = json.loads(home.hubctl("doctor", "--json").stdout)
+        baseline = json.loads(home.step("doctor", "--json").stdout)
         home.write_json(home.user_file, {"version": 1, "private_words": ["quillbrook"], "flags": {
             "public_text_gate": {"by": "user", "value": "block"},
             "public_text_gate.dashes": {"by": "tuner", "value": "off"},
             "public_text_gate.private_paths": {"by": "user", "value": "on"},
             "humanize": {"by": "user", "value": "on"}}})
     with when("hub applies the file, lists its flags and checks the setup"):
-        home.hubctl("apply")
+        home.step("apply")
         flags = home.show()["flags"]
-        doctor = home.hubctl("doctor")
-        found = json.loads(home.hubctl("doctor", "--json").stdout)
+        doctor = home.step("doctor")
+        found = json.loads(home.step("doctor", "--json").stdout)
     with then("the other choices in the file still hold"):
         assert flags["humanize"]["effective"] == "on"
     with and_("no flag of the retired gate is listed"):
@@ -172,7 +172,7 @@ RETIRED_FLAGS = {
 
 
 def doctor_findings(home):
-    found = json.loads(home.hubctl("doctor", "--json").stdout)
+    found = json.loads(home.step("doctor", "--json").stdout)
     return found["problems"], found["part_lines"]
 
 
@@ -184,7 +184,7 @@ def test_a_settings_file_with_the_retired_self_protection_flags_loads_with_no_er
         home.write_json(home.user_file, {"version": 1, "flags": {**RETIRED_FLAGS,
                                                                  "humanize": {"by": "user", "value": "on"}}})
     with then("show reads the file with no error, lists none of the retired flags, and keeps the user's choice"):
-        shown = home.hubctl("show", "--json")
+        shown = home.step("show", "--json")
         assert shown.stderr == "", shown.stderr
         flags = json.loads(shown.stdout)["flags"]
         assert not [flag for flag in flags if flag.startswith("self_protection")]
@@ -194,7 +194,7 @@ def test_a_settings_file_with_the_retired_self_protection_flags_loads_with_no_er
     with when("Claude switches a normal part off and back on, and hub applies its settings again"):
         step(home, "off", "scout")
         step(home, "undo")
-        home.hubctl("apply")
+        home.step("apply")
     with then("each step works, and the retired flags stay in the file as they were"):
         assert home.show()["flags"]["scout"]["effective"] == "on"
         kept = home.settings()["flags"]

@@ -12,16 +12,17 @@ only when one may run (see pre_check.sh), takes away the background jobs an
 older hub ran (see old_jobs.py), adds a line to applies.jsonl, and writes
 resolved.json last. So a hook that finds resolved.json fresh also finds the
 files built from it. Then it runs the on and off commands of the parts that
-were switched (see switched.py). It returns the lines hubctl apply prints.
+were switched (see switched.py). It returns the lines the step's apply prints.
 While cursor_link does not run, apply writes no Cursor slots and removes the
 old ones, since Cursor support is beta and off by default.
 
-After hubctl uninstall, apply changes nothing until a new copy of hub is
+After the step's uninstall, apply changes nothing until a new copy of hub is
 installed (see uninstall.is_out), and ensure_fresh raises Uninstalled.
 
 Apply is stale when resolved.json is missing, a settings file, the profile or
-a manifest changed since, the plugin copy moved, a recorded link is gone, or
-an apply stopped partway and left a step marked in the record.
+a manifest changed since, the plugin copy moved, a recorded link is gone or
+points into a folder that is neither the state folder nor the plugin copy,
+or an apply stopped partway and left a step marked in the record.
 At session start the dispatcher and the eight slot hooks start at once. The
 first to take the lock applies, and the others then find it fresh.
 """
@@ -169,7 +170,10 @@ def is_fresh(data):
     if data is None or data.get("signature") != resolve.signature():
         return False
     entries = links.read_record()
-    return all(os.path.lexists(entry["path"]) and "state" not in entry for entry in entries)
+    roots = (files.state_dir(), files.PLUGIN_ROOT)
+    # A link whose root is another folder points into an earlier state folder, or a plugin copy that moved.
+    return all(os.path.lexists(entry["path"]) and "state" not in entry
+               and (entry["type"] != "link" or entry.get("root") in roots) for entry in entries)
 
 
 def ensure_fresh(session=None):

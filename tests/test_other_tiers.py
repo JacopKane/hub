@@ -1,6 +1,6 @@
 """Slice 3: the other tiers.
 
-Every scenario runs the real hubctl, the dispatcher and the slot hooks as
+Every scenario runs the real step, the dispatcher and the slot hooks as
 processes in a temporary HOME.
 """
 import itertools
@@ -64,21 +64,21 @@ def test_the_new_agents_ship_off_and_each_one_switched_on_adds_its_row(home):
             assert not home.show()["flags"][name]["runs"]
             assert not os.path.lexists(agent_link(home, name))
     with when("the user switches on researcher and worker"):
-        home.hubctl("on", "researcher")
-        home.hubctl("on", "worker")
+        home.step("on", "researcher")
+        home.step("on", "worker")
         text, _ = session_start(home)
     with then("a standard row names both, with the model and effort they share once"):
         assert tiers(text) == ["Mechanical", "Standard", "Judgement"]
         assert "| researcher, worker | sonnet | medium |" in rows(text)["Standard"]
         assert os.path.islink(agent_link(home, "researcher")) and os.path.islink(agent_link(home, "worker"))
     with when("the user sets worker.effort to high"):
-        home.hubctl("set", "worker.effort", "high")
+        home.step("set", "worker.effort", "high")
         text, _ = session_start(home)
     with then("the effort column shows one value per agent, in the same order"):
         assert "| researcher, worker | sonnet | medium, high |" in rows(text)["Standard"]
     with when("the user switches on reviewer, planner and critic"):
         for name in ("reviewer", "planner", "critic"):
-            home.hubctl("on", name)
+            home.step("on", name)
         text, _ = session_start(home)
     with then("every tier has its row, in order, with each agent's model and effort"):
         assert tiers(text) == ["Mechanical", "Standard", "Judgement", "Planning", "Critical"]
@@ -86,14 +86,14 @@ def test_the_new_agents_ship_off_and_each_one_switched_on_adds_its_row(home):
         assert "| planner | opus | high |" in rows(text)["Planning"]
         assert "| critic | opus | high |" in rows(text)["Critical"]
     with when("the user switches builder off and worker off"):
-        home.hubctl("off", "builder")
-        home.hubctl("off", "worker")
+        home.step("off", "builder")
+        home.step("off", "worker")
         text, _ = session_start(home)
     with then("the judgement row names reviewer alone and the standard row researcher alone"):
         assert "| reviewer | opus | high |" in rows(text)["Judgement"]
         assert "| researcher | sonnet | medium |" in rows(text)["Standard"]
     with when("the user switches off the standard row itself"):
-        home.hubctl("off", "tier_rule.table.standard")
+        home.step("off", "tier_rule.table.standard")
         text, _ = session_start(home)
     with then("the row is gone and the researcher agent stays"):
         assert "Standard" not in tiers(text)
@@ -104,7 +104,7 @@ def test_each_new_agent_has_its_model_tools_and_one_marked_section_per_instructi
     with given("hub is installed and every new agent is switched on"):
         home.install()
         for name in NEW_AGENTS:
-            home.hubctl("on", name)
+            home.step("on", name)
     for name, (model, effort, blocked) in NEW_AGENTS.items():
         with then(f"~/.claude/agents/hub-{name}.md links to the shipped file with its model, effort and tools"):
             head = front_matter(agent_link(home, name))
@@ -115,7 +115,7 @@ def test_each_new_agent_has_its_model_tools_and_one_marked_section_per_instructi
                 assert f"{MARKER}section {name}.instructions.{section} -->" in shipped
         with when(f"the user switches off {name}.instructions.{SECTIONS[name][0]}"):
             body_before = section_lines(agent_link(home, name))
-            home.hubctl("off", f"{name}.instructions.{SECTIONS[name][0]}")
+            home.step("off", f"{name}.instructions.{SECTIONS[name][0]}")
         with then("the built copy drops that section only and keeps no marker"):
             body_after = section_lines(agent_link(home, name))
             assert MARKER not in body_after and len(body_after) < len(body_before)
@@ -141,7 +141,7 @@ def test_cursor_gets_a_copy_of_each_new_agent_that_runs(home):
         use_cursor_beta(home)
         home.switch_on("builder", "tier_rule")
         home.install()
-        home.hubctl("on", "reviewer")
+        home.step("on", "reviewer")
     with then("~/.cursor/agents/hub-reviewer.md names the mapped model and effort"):
         assert front_matter(cursor_agent(home, "reviewer"))["model"] == "claude-opus-5-5[effort=high]"
         assert MARKER not in read(cursor_agent(home, "reviewer"))
@@ -205,7 +205,7 @@ def test_the_tier_guard_only_counts_untiered_calls_until_it_is_switched_on_then_
         assert result.ran and not result.context
         assert len(guard_signals(home, "untiered")) == 1
     with when("the user switches the guard on and the same kind of call comes"):
-        home.hubctl("on", "tier_rule.guard")
+        home.step("on", "tier_rule.guard")
         result = agent_call(home, subagent_type="general-purpose")
     with then("it is refused, and the reason names each tier that runs with its agents, model and effort"):
         assert result.refused
@@ -225,7 +225,7 @@ def test_the_tier_guard_only_counts_untiered_calls_until_it_is_switched_on_then_
         review = "Do the job."
         refused = agent_call(home, subagent_type="reviewer", prompt=review)
         assert refused.refused and "(tier_rule.guard)" in refused.reason
-        home.hubctl("on", "reviewer")
+        home.step("on", "reviewer")
         assert agent_call(home, subagent_type="reviewer", prompt=review).ran
         assert "Judgement: builder (opus, high), reviewer (opus, high)" in \
             agent_call(home, subagent_type="general-purpose").reason
@@ -240,7 +240,7 @@ def test_the_tier_guard_only_counts_untiered_calls_until_it_is_switched_on_then_
         assert agent_call(home, subagent_type="repo-helper", cwd=nested).ran
     with when("the user allows one more name"):
         assert agent_call(home, subagent_type="Explore").refused
-        home.hubctl_from_mod("set", "tier_rule.guard.allowed", "Explore")
+        home.step_from_mod("set", "tier_rule.guard.allowed", "Explore")
     with then("that name passes and others are still refused"):
         assert agent_call(home, subagent_type="Explore").ran
         assert agent_call(home, subagent_type="Plan").refused
@@ -259,7 +259,7 @@ def test_cursor_never_gets_the_tier_guard(home):
         use_cursor_beta(home)
         home.switch_on("tier_rule")
         home.install()
-        home.hubctl("on", "tier_rule.guard")
+        home.step("on", "tier_rule.guard")
     with then("Cursor's hooks start hub before no tool call, so never before Task, and the guard does not run there"):
         folder = os.path.join(home.root, ".cursor", "plugins", "local", "hub")
         hooks = json.loads(read(os.path.join(folder, "cursor", "hooks.json")))
@@ -302,7 +302,7 @@ def test_a_handler_that_names_an_unknown_tool_to_run_in_is_a_tree_error(home):
         home.install()
     with when("a manifest's handler says it runs in a tool hub does not know"):
         home.edit_manifest("tier_rule", lambda data: data["handlers"]["PreToolUse"].update(runs_in=["vim"]))
-        result = home.hubctl("apply", check=False)
+        result = home.step("apply", check=False)
     with then("apply stops and names the part and the field"):
         assert result.returncode == 1
         assert "tier_rule" in result.stderr and "runs_in" in result.stderr and "vim" in result.stderr
@@ -327,7 +327,7 @@ def test_a_hand_back_over_the_cap_is_refused_twice_per_agent_then_goes_through_w
         assert not home.show()["flags"]["handback_cap"]["runs"]
         assert handback(home, words(250)).ran
     with when("the user switches the cap on and an agent hands back 250 words"):
-        home.hubctl("on", "handback_cap")
+        home.step("on", "handback_cap")
         result = handback(home, words(250))
     with then("it is refused with the count and the cap"):
         assert result.refused
@@ -346,11 +346,11 @@ def test_a_hand_back_over_the_cap_is_refused_twice_per_agent_then_goes_through_w
         names = [line["signal"] for line in home.signals() if line["flag"].startswith("handback_cap")]
         assert names.count("refused") == 3 and names.count("over_cap") == 1
     with when("the user raises the cap to 300 words"):
-        home.hubctl("set", "handback_cap.words", "300")
+        home.step("set", "handback_cap.words", "300")
     with then("250 words go through"):
         assert handback(home, words(250), agent_id="a0000000000000003").ran
     with when("the user switches off refusing and an agent hands back 400 words"):
-        home.hubctl("off", "handback_cap.refuse_over")
+        home.step("off", "handback_cap.refuse_over")
         result = handback(home, words(400), agent_id="a0000000000000004")
     with then("it goes through with the warning only"):
         assert result.ran and "400 words, the cap is 300" in result.context
@@ -433,7 +433,7 @@ def test_an_agent_is_reminded_once_each_time_its_context_crosses_a_point(home):
     with then("nothing is said while it is off"):
         assert off.ran and not off.context
     with when("the user switches the budget on and the agent makes its next call"):
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         result = tool_call(home)
     with then("it gets one reminder with its size and steps, asking for a hand-back at the next safe point"):
         assert result.ran
@@ -452,8 +452,8 @@ def test_an_agent_is_reminded_once_each_time_its_context_crosses_a_point(home):
         assert not at_170.context
         assert "185k context after 4 steps" in at_185.context
     with when("the user moves the first point to 200k and the every gap to 10k"):
-        home.hubctl("set", "context_budget.agent_tokens.at", "200000")
-        home.hubctl("set", "context_budget.agent_tokens.every", "10000")
+        home.step("set", "context_budget.agent_tokens.at", "200000")
+        home.step("set", "context_budget.agent_tokens.every", "10000")
         transcript.step(195000)
         before = tool_call(home)
         transcript.step(211000)
@@ -461,7 +461,7 @@ def test_an_agent_is_reminded_once_each_time_its_context_crosses_a_point(home):
     with then("the reminder follows the new points"):
         assert not before.context and "211k context" in after.context
     with when("the user switches the agent reminder off"):
-        home.hubctl("off", "context_budget.agent_tokens")
+        home.step("off", "context_budget.agent_tokens")
         transcript.step(260000)
     with then("the agent is not reminded"):
         assert not tool_call(home).context
@@ -470,7 +470,7 @@ def test_an_agent_is_reminded_once_each_time_its_context_crosses_a_point(home):
 def test_a_brief_can_move_the_first_reminder_up_to_a_cap(home):
     with given("the budget is on and an agent's brief sets its hand-back point to 180k"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         transcript = agent_transcript(home, brief="Read the docs.\nHand-back point: 180k\nThen report.")
         transcript.step(135000)
         at_135 = tool_call(home)
@@ -489,7 +489,7 @@ def test_a_brief_can_move_the_first_reminder_up_to_a_cap(home):
     with then("the point is held at the 200k cap"):
         assert not at_190.context and "205k context" in at_205.context
     with when("the user switches brief points off and a third agent's brief sets 180k"):
-        home.hubctl("off", "context_budget.brief_point")
+        home.step("off", "context_budget.brief_point")
         third = agent_transcript(home, agent_id="a0000000000000004", brief="Hand back point: 180k")
         third.step(135000)
     with then("the brief is ignored and the agent is reminded at 130k"):
@@ -499,7 +499,7 @@ def test_a_brief_can_move_the_first_reminder_up_to_a_cap(home):
 def test_an_agent_is_reminded_when_its_steps_cross_a_point_even_with_a_small_context(home):
     with given("the budget is on and an agent has made 148 steps at 50k"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         transcript = agent_transcript(home)
         transcript.steps_at(148, 50000)
         assert not tool_call(home).context
@@ -526,7 +526,7 @@ def test_an_agent_is_reminded_when_its_steps_cross_a_point_even_with_a_small_con
 def test_the_main_chat_is_reminded_to_hand_reading_to_agents(home):
     with given("the budget is on and the main chat is at 100k"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         main = Transcript(main_transcript(home))
         main.step(70000)
         main.step(100000)
@@ -546,7 +546,7 @@ def test_the_main_chat_is_reminded_to_hand_reading_to_agents(home):
     with then("only 230k reminds it, 100k after the first point"):
         assert not at_200.context and "230k context" in at_230.context
     with when("the user switches the main chat reminder off"):
-        home.hubctl("off", "context_budget.main_tokens")
+        home.step("off", "context_budget.main_tokens")
         main.step(340000)
     with then("the main chat is not reminded"):
         assert not tool_call(home, agent_id=None).context
@@ -555,7 +555,7 @@ def test_the_main_chat_is_reminded_to_hand_reading_to_agents(home):
 def test_a_compacted_agent_gets_a_note_with_its_full_transcript(home):
     with given("the budget is on and an agent at 60k"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         transcript = agent_transcript(home)
         transcript.step(60000)
         assert not tool_call(home).context
@@ -569,7 +569,7 @@ def test_a_compacted_agent_gets_a_note_with_its_full_transcript(home):
         assert budget_signals(home, "context_budget.compaction_note") == ["noted"]
         assert not tool_call(home).context
     with when("the user switches the note off and the agent is compacted again"):
-        home.hubctl("off", "context_budget.compaction_note")
+        home.step("off", "context_budget.compaction_note")
         transcript.compaction()
         transcript.step(41000)
     with then("no note comes"):
@@ -579,8 +579,8 @@ def test_a_compacted_agent_gets_a_note_with_its_full_transcript(home):
 def test_models_the_user_lists_get_no_hand_back_reminder_but_still_get_the_note(home):
     with given("the budget is on and the user skips models whose name starts with claude-opus"):
         home.install()
-        home.hubctl("on", "context_budget")
-        home.hubctl("set", "context_budget.skip_models", "claude-opus")
+        home.step("on", "context_budget")
+        home.step("set", "context_budget.skip_models", "claude-opus")
     with when("an agent on such a model passes 130k and is compacted"):
         transcript = agent_transcript(home)
         transcript.step(135000, model="claude-opus-4-1")
@@ -600,7 +600,7 @@ def test_models_the_user_lists_get_no_hand_back_reminder_but_still_get_the_note(
 def test_the_budget_finds_an_agent_transcript_by_its_usual_path_and_stays_quiet_without_one(home):
     with given("the budget is on"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
     with when("an agent call has no transcript path of its own, and its file sits where Claude Code keeps it"):
         transcript = agent_transcript(home, agent_id="a0000000000000006")
         transcript.step(140000)
@@ -692,7 +692,7 @@ def test_the_main_chat_is_told_once_a_day_when_the_ledger_outgrows_its_limits(ho
     with then("nothing is said"):
         assert off.ran and not off.context
     with when("the user switches the budget on and the main chat makes its next call"):
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         result = main_call(home, TODAY)
     with then("it gets one reminder that names the ledger's size, its limit and the old entries"):
         assert "ledger.md is 30k bytes, over the 24k limit" in result.context
@@ -719,7 +719,7 @@ def test_the_main_chat_is_told_once_a_day_when_the_ledger_outgrows_its_limits(ho
     with then("it is told once again"):
         assert "ledger.md is 30k bytes" in next_day.context
     with when("the user switches the size reminder off and a day passes"):
-        home.hubctl("off", "context_budget.store_size")
+        home.step("off", "context_budget.store_size")
         switched_off = main_call(home, "2026-11-22T10:00:00Z")
     with then("nothing is said, while the rest of the budget still runs"):
         assert switched_off.ran and not switched_off.context
@@ -730,7 +730,7 @@ def test_the_main_chat_is_told_when_the_memory_folder_outgrows_its_limits_and_th
     with given("the budget is on, the project has no ledger, memory holds 22 notes of 3k bytes, 2 of them stale, "
                "and the index is 22k bytes, near the 25KB that Claude Code loads"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         write_notes(home, 22, size=3000, stale=2, index_size=22000)
     with when("the main chat makes a call"):
         result = main_call(home, TODAY)
@@ -741,15 +741,15 @@ def test_the_main_chat_is_told_when_the_memory_folder_outgrows_its_limits_and_th
         assert "ledger.md" not in result.context
         assert "(context_budget.store_size)" in result.context
     with when("the user raises the note limits, turns the stale check off with 0, and a day passes"):
-        home.hubctl("set", "context_budget.store_size.notes", "30")
-        home.hubctl("set", "context_budget.store_size.notes_bytes", "100000")
-        home.hubctl("set", "context_budget.store_size.note_days", "0")
+        home.step("set", "context_budget.store_size.notes", "30")
+        home.step("set", "context_budget.store_size.notes_bytes", "100000")
+        home.step("set", "context_budget.store_size.note_days", "0")
         next_day = main_call(home, TOMORROW)
     with then("only the index is still over its limit"):
         assert "MEMORY.md is 22k bytes, over the 20k limit." in next_day.context
         assert "The memory folder has" not in next_day.context and "not changed" not in next_day.context
     with when("the user names another ledger file, which is over its limit, and a day passes"):
-        home.hubctl("set", "context_budget.store_size.ledger", "STATE.md")
+        home.step("set", "context_budget.store_size.ledger", "STATE.md")
         with open(os.path.join(project_folder(home), "STATE.md"), "w") as handle:
             handle.write("s" * 25000)
         renamed = main_call(home, "2026-11-22T10:00:00Z")
@@ -761,7 +761,7 @@ def test_the_size_reminder_stays_quiet_when_all_is_under_the_limits_or_the_files
     with given("the budget is on, the ledger is small with fresh dates, and memory holds 5 small fresh notes "
                "and a normal 8k index"):
         home.install()
-        home.hubctl("on", "context_budget")
+        home.step("on", "context_budget")
         write_ledger(home, ["# Ledger", "- 2026-11-19 fresh", "- 17 Nov fresh"])
         write_notes(home, 5, index_size=8000)
     with when("the main chat makes a call"):
@@ -804,8 +804,8 @@ def test_the_hand_back_cap_and_the_context_budget_run_in_claude_code_only(home):
         os.makedirs(home.config)
         use_cursor_beta(home)
         home.install()
-        home.hubctl("on", "handback_cap")
-        home.hubctl("on", "context_budget")
+        home.step("on", "handback_cap")
+        home.step("on", "context_budget")
     with then("both run in Claude Code and neither runs in Cursor"):
         assert home.show()["flags"]["handback_cap"]["runs"] and home.show()["flags"]["context_budget"]["runs"]
         cursor = home.show("--tool", "cursor")["flags"]
@@ -843,17 +843,17 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
     with given("hub is installed without Cursor, and the user turned the tier rule and its guard on"):
         home.switch_on("tier_rule")
         home.install()
-        home.hubctl("on", "tier_rule.guard")
+        home.step("on", "tier_rule.guard")
     with then("the doctor has no Cursor section"):
-        assert cursor_section(home.hubctl("doctor").stdout) is None
+        assert cursor_section(home.step("doctor").stdout) is None
     with when("the profile lists Cursor with the Cursor beta on, and the guard, the cap, the budget and the band "
               "run in Claude Code"):
         os.makedirs(home.config, exist_ok=True)
         use_cursor_beta(home)
-        home.hubctl("apply")
-        home.hubctl("on", "handback_cap")
-        home.hubctl("on", "context_budget")
-        output = home.hubctl("doctor").stdout
+        home.step("apply")
+        home.step("on", "handback_cap")
+        home.step("on", "context_budget")
+        output = home.step("doctor").stdout
     with then("the section comes after the warnings and names each one with its reason, in tree order"):
         section = cursor_section(output)
         assert section == [f"context_budget: {reason('context_budget', 'context_budget')}",
@@ -863,15 +863,15 @@ def test_the_doctor_names_each_part_that_runs_in_claude_code_but_not_in_cursor_a
         lines = output.splitlines()
         warnings = [index for index, line in enumerate(lines) if line.startswith("warning:")]
         assert not warnings or max(warnings) < lines.index("Runs in Claude Code only:")
-    with and_("hubctl doctor --json gives the same flags and reasons as cursor_gaps"):
-        gaps = json.loads(home.hubctl("doctor", "--json").stdout)["cursor_gaps"]
+    with and_("hub doctor --json gives the same flags and reasons as cursor_gaps"):
+        gaps = json.loads(home.step("doctor", "--json").stdout)["cursor_gaps"]
         assert [f"{gap['flag']}: {gap['reason']}" for gap in gaps] == section
         assert {(gap["part"], gap["tool"]) for gap in gaps} == {
             ("context_budget", "cursor"), ("handback_cap", "cursor"), ("tier_rule", "cursor"),
             ("status_band", "cursor")}
     with when("the user switches the guard off"):
-        home.hubctl_from_mod("off", "tier_rule.guard")
-        section = cursor_section(home.hubctl("doctor").stdout)
+        home.step_from_mod("off", "tier_rule.guard")
+        section = cursor_section(home.step("doctor").stdout)
     with then("the doctor no longer names it, because it does not run in Claude Code either"):
         assert [line.split(":")[0] for line in section] == [
             "context_budget", "handback_cap", "status_band"]

@@ -37,13 +37,13 @@ def test_every_glyph_is_one_cell_wide_and_has_a_plain_word(home):
                 assert unicodedata.east_asian_width(character) not in ("W", "F"), icon
                 assert not is_emoji_default(character) and character != "️", icon
             assert icon["plain"].strip() and icon["label"].strip() and icon["meaning"].strip(), icon
-    with and_("hubctl board --plain prints no glyph from the table"):
+    with and_("hub board --plain prints no glyph from the table"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.write_json(os.path.join(home.state, "board", "chats", "s1.json"),
                         {"session": "s1", "name": "API", "state": "needs_you", "since": 0,
                          "question": "Which retry limit?", "machine": "here"})
-        plain = home.hubctl("board", "--plain").stdout
+        plain = home.step("board", "--plain").stdout
         symbols = {icon["glyph"] for icon in icons if not icon["glyph"].isascii()}
         assert "API" in plain and "needs you" in plain
         assert not [symbol for symbol in symbols if symbol in plain], plain

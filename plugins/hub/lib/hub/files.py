@@ -21,8 +21,11 @@ with open(CONFIG_NAME_FILE, encoding="utf-8") as _name_file:
     CONFIG_NAME = _name_file.read().strip()
 # The folder name the settings had before they moved to config_dir().
 OLD_CONFIG_NAME = "hubctl"
-# Flags hub no longer has, which a settings file may still name: the terminal link, which put hubctl on the
-# PATH, and the queue's flush job. Loading the settings leaves them out, and the next write drops them.
+# The state folder's name, under ~/.local/state, and the name it had before it moved to state_dir().
+STATE_NAME = CONFIG_NAME
+OLD_STATE_NAME = "hubctl"
+# Flags hub no longer has, which a settings file may still name: the terminal link, which put an older
+# hub's command on the PATH, and the queue's flush job. Loading the settings leaves them out, and the next write drops them.
 DROPPED_FLAGS = ("core.terminal_link", "queue.flush_job", "queue.flush_job.every_seconds")
 
 
@@ -94,9 +97,59 @@ def fill_step(text):
     return text.replace(STEP_PLACEHOLDER, step_command())
 
 
+def state_base():
+    return os.environ.get("XDG_STATE_HOME") or os.path.join(home(), ".local", "state")
+
+
 def state_dir():
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(home(), ".local", "state")
-    return os.path.join(base, "hubctl")
+    folder = os.path.join(state_base(), STATE_NAME)
+    move_old_state(old_state_dir(), folder)
+    return folder
+
+
+def old_state_dir():
+    """The state folder's old name."""
+    return os.path.join(state_base(), OLD_STATE_NAME)
+
+
+def move_old_state(old, new):
+    """Move the state folder from its old name on first use, with every record, the history and the held files.
+
+    The links still point into the old folder until the next apply, which sees
+    their recorded root and points them at the new one (see apply.is_fresh).
+    After the rename the old name becomes a link to the new folder, so a chat
+    that still runs an earlier hub writes into the same folder and does not
+    start a second one. That link is never moved again, and uninstall removes it.
+    When both folders exist, the new one wins and the old one stays as it is.
+    Hooks start together, so a rename or a link another process made first is no error.
+    """
+    if os.path.lexists(new) or not os.path.isdir(old) or os.path.islink(old):
+        return
+    try:
+        os.rename(old, new)
+    except OSError:
+        return
+    try:
+        # A relative link, so it still holds when the whole state base moves.
+        os.symlink(os.path.basename(new), old)
+    except OSError:
+        return  # an earlier hub made a new folder there first; that is the both-folders case
+
+
+def is_old_state_link(old, new):
+    """Whether the old state name is the link move_old_state left, pointing at the new folder."""
+    return os.path.islink(old) and os.path.realpath(old) == os.path.realpath(new)
+
+
+def moved_state_path(path):
+    """A path an earlier hub recorded inside the old state folder, as it is after the move.
+
+    A path that is still there, or that is not inside the old folder, stays as it is.
+    """
+    old = old_state_dir()
+    if os.path.lexists(path) or not path.startswith(old + os.sep):
+        return path
+    return os.path.join(state_dir(), os.path.relpath(path, old))
 
 
 def state_path(name):

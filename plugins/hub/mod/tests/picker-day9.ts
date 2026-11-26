@@ -1,4 +1,4 @@
-// The full screen model the feature picker reads, as `hubctl screen --json --all` prints it on
+// The full screen model the feature picker reads, as `hub screen --json --all` prints it on
 // the made-up day 9 fixture, with most children left out. tests/test_picker_model.py checks
 // that each row here still equals the real row of that id.
 import type { HubPickerScreen } from '../types'
@@ -1758,5 +1758,5 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
     "since": "",
     "side_call": true
   },
-  "doors": "/home/sam/.local/state/hubctl/doors"
+  "doors": "/home/sam/.local/state/claude-hub/doors"
 }

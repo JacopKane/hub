@@ -1,7 +1,7 @@
 """What the chat board tells the model, and what the doctor says about it (slice 13, step 7).
 
 keep_task_line is start text that tells each chat to keep its task line with
-`hubctl board task`. read_board is a coordinator skill section that needs
+`hub board task`. read_board is a coordinator skill section that needs
 chat_board. The doctor says how old the chat listing is, that Claude Code's
 own task list is not copied, and why the board does not run in Cursor. The
 chats have made-up names and fake processes, as in the other board scenarios.
@@ -62,7 +62,7 @@ def section(text, flag_id):
 
 
 def doctor(home):
-    return home.hubctl("doctor", check=False).stdout
+    return home.step("doctor", check=False).stdout
 
 
 def board_lines(text):
@@ -84,22 +84,22 @@ def test_each_chat_is_told_to_keep_its_task_line_only_while_the_board_runs(home)
         assert text not in start_text(home)
         assert "board task now" not in start_text(home)
     with when("the user turns chat_board on"):
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
     with then("the start text holds the instruction once, and it names the board task commands"):
         assert start_text(home).count(text) == 1
         assert "board task now" in text and "board task done" in text
         assert DASH not in text
     with when(f"the user turns off {KEEP}"):
-        home.hubctl("off", KEEP)
+        home.step("off", KEEP)
     with then("the instruction leaves the start text, and the board still runs"):
         assert text not in start_text(home)
-        assert json.loads(home.hubctl("board", "--json").stdout)["cards"] == []
+        assert json.loads(home.step("board", "--json").stdout)["cards"] == []
 
 
 def test_every_command_the_task_line_instruction_names_works_in_a_chat(home, chats):
     with given("chat_board is on, and WEB runs"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         web = chats.start("WEB", title="WEB", live=True, commands=True)
         commands = re.findall(r"`python3 -I \S+ (board task [^`]+)`", keep_text(home))
@@ -113,14 +113,14 @@ def test_every_command_the_task_line_instruction_names_works_in_a_chat(home, cha
         assert {shlex.split(command)[2] for command in commands} >= {"now", "add", "done"}
         assert all(code == 0 for code, _out, _err in results), results
     with and_("WEB's ledger ends with the task done"):
-        tasks = json.loads(home.hubctl("board", "--json").stdout)["cards"][0]["tasks"]
+        tasks = json.loads(home.step("board", "--json").stdout)["cards"][0]["tasks"]
         assert [(task["text"], task["state"]) for task in tasks] == [("write the README", "done")]
 
 
 def test_the_coordinator_reads_the_board_only_while_the_board_runs(home):
     with given("the coordinator is on, and chat_board is off"):
         home.install()
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
         shipped = read(part_file(home, "coordinator", "skill", "SKILL.md"))
         wanted = section(shipped, READ_BOARD)
     with then("the shipped skill has a read_board section that runs the step's board --json"):
@@ -133,11 +133,11 @@ def test_the_coordinator_reads_the_board_only_while_the_board_runs(home):
         assert section(shipped, "coordinator.instructions.forward") in copy
         assert "<!-- hub:" not in copy
     with when("the user turns chat_board on"):
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
     with then("the skill text holds the read_board section"):
         assert wanted in skill_text(home)
     with when(f"the user turns off {READ_BOARD}, and chat_board stays on"):
-        home.hubctl("off", READ_BOARD)
+        home.step("off", READ_BOARD)
     with then("the section leaves the skill text again"):
         assert wanted not in skill_text(home)
 
@@ -145,7 +145,7 @@ def test_the_coordinator_reads_the_board_only_while_the_board_runs(home):
 def test_the_doctor_says_how_old_the_listing_is_on_the_board_clock(home):
     with given("chat_board is on, the board clock is fixed, and no listing is kept"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         mirror = os.path.join(home.state, "board", "listing.json")
         cache = os.path.join(home.state, "sessions", "listing.json")
@@ -172,7 +172,7 @@ def test_the_doctor_says_how_old_the_listing_is_on_the_board_clock(home):
 def test_the_doctor_names_the_task_list_source_and_the_cursor_reason_once(home):
     with given("chat_board is on"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         reason = json.loads(read(part_file(home, "chat_board", "part.json")))["reason_not_in"]["cursor"]
     with when("the doctor runs"):
         text = doctor(home)
@@ -186,6 +186,6 @@ def test_the_doctor_names_the_task_list_source_and_the_cursor_reason_once(home):
     with and_("every chat_board line is a note, so the band's failed checks count does not grow"):
         assert board_lines(text) and all(line.startswith("note: ") for line in board_lines(text))
     with when("chat_board is off"):
-        home.hubctl("off", "chat_board")
+        home.step("off", "chat_board")
     with then("the doctor has no chat_board line"):
         assert board_lines(doctor(home)) == []

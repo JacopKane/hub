@@ -1,4 +1,4 @@
-"""The situation profile, ~/.config/hubctl/profile.json.
+"""The situation profile, ~/.config/claude-hub/profile.json.
 
     {"version": 1, "this_machine": "laptop",
      "machines": {"laptop": {"host", "os", "use", "sign_in", "tools", "terminal", "synced_folders"}},

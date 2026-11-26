@@ -9,5 +9,5 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p hub-home/config hub-home/state "$HOME/.config" "$HOME/.local/state"
 ln -s "$PWD/hub-home/config" "$HOME/.config/$(cat "$here/no-mods/hub/lib/hub/config_name")"
-ln -s "$PWD/hub-home/state" "$HOME/.local/state/hubctl"
+ln -s "$PWD/hub-home/state" "$HOME/.local/state/claude-hub"
 python3 -I "$here/no-mods/hub/lib/hub_switch.py" apply

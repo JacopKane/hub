@@ -1,13 +1,15 @@
-"""hubctl uninstall: take hub out and keep what belongs to the user.
+"""The step's uninstall: take hub out and keep what belongs to the user.
 
 It settles the steps an apply left half done (see links.repair), then
 removes every link and copy in the record that is still as hub left it,
 takes away the background jobs an older hub ran (see old_jobs.py), runs the
 off command of each part that runs (see switched.py), and removes hub's own
-state in ~/.local/state/hubctl/ (resolved.json, the slots, the built copies,
+state in ~/.local/state/claude-hub/ (resolved.json, the slots, the built copies,
 the records, offers, signals and history). It keeps the user's settings in
-~/.config/hubctl/, the files hub held in ~/.local/state/hubctl/held/, and
-each folder of the state that a part names under keeps_on_uninstall.
+~/.config/claude-hub/, the files hub held in ~/.local/state/claude-hub/held/,
+each folder of the state that a part names under keeps_on_uninstall, and the
+state folder of an earlier hub that was still there beside the new one. It
+removes the link the state folder move left under the old name.
 
 It puts back each Claude Code value hub wrote, from keys.json, but only where
 the file still holds hub's value, so a value the user changed since stays.
@@ -21,6 +23,7 @@ nothing and apply changes nothing, so a session start or a tool call can not
 bring hub back. A new install is a new copy, and its first apply removes the
 mark.
 """
+import contextlib
 import os
 import shlex
 import shutil
@@ -152,5 +155,14 @@ def run():
     held = os.path.join(state, HELD)
     if os.path.exists(held):
         lines.append(f"  to delete the files hub held for you: rm -rf {shlex.quote(held)}")
+    old_state = files.old_state_dir()
+    if files.is_old_state_link(old_state, state):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(old_state)  # the link the move left for chats that ran an earlier hub
+    elif os.path.isdir(old_state) and not os.path.islink(old_state):
+        old_held = os.path.join(old_state, HELD)
+        if os.path.exists(old_held):
+            lines.append(f"  to delete the files an earlier hub held for you: rm -rf {shlex.quote(old_held)}")
+        lines.append(f"  to delete the state folder of an earlier hub: rm -rf {shlex.quote(old_state)}")
     remove_plugins(lines)
     return lines

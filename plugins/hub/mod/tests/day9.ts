@@ -1,4 +1,4 @@
-// The day 9 screen model, as `hubctl screen --json` prints it on the made-up fixture in
+// The day 9 screen model, as `hub screen --json` prints it on the made-up fixture in
 // tests/fixtures/day9. tests/test_doors.py checks that it still is, with the machine name,
 // the times and the doors folder left out. The times are hours before DAY9_NOW, as in that fixture.
 import type { HubScreen } from '../types'
@@ -790,5 +790,5 @@ export const DAY9: HubScreen = /* json */ {
     "since": "",
     "side_call": true
   },
-  "doors": "/home/sam/.local/state/hubctl/doors"
+  "doors": "/home/sam/.local/state/claude-hub/doors"
 }

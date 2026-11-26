@@ -66,7 +66,7 @@ def task_files(home):
 
 
 def view(home, *args):
-    return home.hubctl("tasks", *args).stdout
+    return home.step("tasks", *args).stdout
 
 
 def listed(home):
@@ -80,7 +80,7 @@ def by_key(home):
 @pytest.fixture
 def tasks_on(home):
     home.install()
-    home.hubctl("on", PART)
+    home.step("on", PART)
     home.env["HUB_NOW"] = str(NOON)
     return home
 
@@ -427,7 +427,7 @@ def test_plain_text_has_no_glyphs_and_show_done_brief_and_empty_state(tasks_on):
         assert brief[0].startswith("Running 2: ") and "WEB" in brief[0]
         assert brief[1].startswith("Running 2 · done today 1")
     with and_("show names a missing task plainly"):
-        missing = home.hubctl("tasks", "show", "nothing like it", check=False)
+        missing = home.step("tasks", "show", "nothing like it", check=False)
         assert missing.returncode == 1 and "No task is called" in missing.stdout + missing.stderr
 
 
@@ -456,7 +456,7 @@ def test_the_command_refuses_while_the_part_is_off(home):
     with given("hub as it ships, with the task list off"):
         home.install()
     with then("tasks says how to switch it on"):
-        result = home.hubctl("tasks", check=False)
+        result = home.step("tasks", check=False)
         assert result.returncode != 0 and "turn on task_list" in result.stdout + result.stderr
 
 
@@ -490,14 +490,14 @@ def test_a_shell_result_starts_python_only_while_the_task_list_or_a_part_for_tha
     with then("Python never starts"):
         assert group.python_starts() == 0 and group.fast_path()
     with when("the task list is on, and the same two calls end again"):
-        home.hubctl("on", PART)
+        home.step("on", PART)
         group.send(dict(shell, tool_use_id="toolu_again1"))
         group.send(dict(read, tool_use_id="toolu_again2"))
     with then("only the shell result starts the dispatcher, and it opens the job"):
         assert group.python_starts() == 1
         assert by_key(home)["bda1d6dpj"]["state"] == "running"
     with when("path_rules, which reads file reads, is on as well"):
-        home.hubctl("on", "path_rules")
+        home.step("on", "path_rules")
         group.send(dict(read, tool_use_id="toolu_again3"))
     with then("the file read starts it too"):
         assert group.python_starts() == 2
@@ -560,7 +560,7 @@ def test_a_question_dialog_without_a_question_list_is_named_by_its_call(tasks_on
 def test_a_question_another_part_refuses_opens_nothing(tasks_on):
     home = tasks_on
     with given("question_check is on"):
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
     with when("a chat opens a short question dialog that gives no context"):
         result = send(home, payload(home, "PreToolUse.AskUserQuestion.json"))
     with then("question_check refuses it and the task list has no question"):
@@ -773,7 +773,7 @@ def test_the_view_and_brief_put_what_needs_you_first(tasks_on):
 def test_a_bad_chat_record_still_lets_later_parts_refuse_a_question(tasks_on, record):
     home = tasks_on
     with given("question_check is on, and hub's record of the asking chat is damaged"):
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
         folder = os.path.join(home.state, "sessions")
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, f"{SENDER}.json"), "w") as handle:

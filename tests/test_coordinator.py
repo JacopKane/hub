@@ -28,9 +28,9 @@ def chats(home):
 
 def coordinator_on(home, name="LOBBY"):
     home.install()
-    home.hubctl("on", "coordinator")
+    home.step("on", "coordinator")
     if name is not None:
-        home.hubctl("set", "coordinator.name", name)
+        home.step("set", "coordinator.name", name)
 
 
 def part_text(home, name):
@@ -92,7 +92,7 @@ def test_the_coordinator_is_off_until_switched_on_and_its_name_defaults_to_hub(h
     with then("the chat edits freely"):
         assert chats.tool("HUB", "Edit", edit).ran
     with when("the user switches the coordinator on and leaves its name alone"):
-        home.hubctl("on", "coordinator")
+        home.step("on", "coordinator")
     with then("the chat named hub is refused, whatever the case of its name"):
         assert chats.tool("HUB", "Edit", edit).refused
     with when("WEB is renamed to HUB in the middle of its session"):
@@ -108,7 +108,7 @@ def test_the_coordinator_is_off_until_switched_on_and_its_name_defaults_to_hub(h
     with then("it is refused too, from the listing"):
         assert api.refused
     with when("the user switches coordinator.work_guard off in /hub"):
-        home.hubctl_from_mod("off", "coordinator.work_guard")
+        home.step_from_mod("off", "coordinator.work_guard")
     with then("the chat named hub edits freely again"):
         assert chats.tool("HUB", "Edit", edit).ran
 
@@ -224,7 +224,7 @@ def test_the_coordinator_loads_its_skill_and_is_reminded_to_delegate(home, chats
         assert line not in chats.tool("LOBBY", "Read", {"file_path": os.path.join(home.work, "c.py")}).context
         assert all(line not in chats.tool("WEB", "Bash", {"command": "ls"}).context for _ in range(3))
     with when("coordinator.delegate_nudge.every is set to 1"):
-        home.hubctl("set", "coordinator.delegate_nudge.every", "1")
+        home.step("set", "coordinator.delegate_nudge.every", "1")
         chats.send("LOBBY", "UserPromptSubmit", prompt="once more")
     with then("every call carries the line"):
         assert line in chats.tool("LOBBY", "Bash", {"command": "ls"}).context
@@ -233,7 +233,7 @@ def test_the_coordinator_loads_its_skill_and_is_reminded_to_delegate(home, chats
 def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_off_alone(home):
     with given("the coordinator is on, and chat_board too, so every section of the skill runs"):
         coordinator_on(home)
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         link = os.path.join(home.root, ".claude", "skills", "hub-coordinator")
         shipped = os.path.join(home.plugin, "parts", "coordinator", "skill")
         with open(os.path.join(home.plugin, "parts", "coordinator", "part.json")) as handle:
@@ -251,7 +251,7 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
         assert sorted(found) == sorted(instructions) and len(found) == 5
         assert DASH not in text
     with when("the user turns off coordinator.instructions.relay"):
-        home.hubctl("off", "coordinator.instructions.relay")
+        home.step("off", "coordinator.instructions.relay")
     with then("the link points at a built copy without the relay section and with the forward section"):
         with open(os.path.join(link, "SKILL.md")) as handle:
             copy = handle.read()
@@ -262,6 +262,6 @@ def test_the_coordinator_skill_has_one_section_per_instruction_and_each_turns_of
         assert section("coordinator.instructions.forward") in copy
         assert "<!-- hub:" not in copy
     with when("the user turns it on again"):
-        home.hubctl("on", "coordinator.instructions.relay")
+        home.step("on", "coordinator.instructions.relay")
     with then("the link points at the shipped skill again"):
         assert os.readlink(link) == os.path.join(home.state, "built", "skills", "hub-coordinator")

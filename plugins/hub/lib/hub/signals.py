@@ -1,4 +1,4 @@
-"""The signal log the tuner reads, ~/.local/state/hubctl/signals.jsonl.
+"""The signal log the tuner reads, ~/.local/state/claude-hub/signals.jsonl.
 
 A line holds a flag id, an event name, a signal name and the UTC time. The
 call takes no text, so chat text can never reach the log.

@@ -17,12 +17,14 @@
 # dispatcher also starts when the settings changed after the last apply, or
 # when the repo has its own hub settings, since it must resolve them first,
 # and while the settings folder still has its old name, so the move happens.
+# A state folder under its old name has no markers_done under the new one,
+# so the dispatcher starts and moves it too.
 # In every other case the hook ends at once with no answer. The dispatcher
 # gets only the event name.
-state="${XDG_STATE_HOME:-$HOME/.local/state}/hubctl"
-config_name=  # the settings folder's name, from the one file that holds it
+config_name=  # the settings and state folders' name, from the one file that holds it
 read -r config_name 2>/dev/null < "${0%/*}/config_name" || :
 [ -n "$config_name" ] || exec python3 -I -S "${0%/*}/dispatch.py" "$1"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/$config_name"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/$config_name"
 old_config="${XDG_CONFIG_HOME:-$HOME/.config}/hubctl"
 event=$1

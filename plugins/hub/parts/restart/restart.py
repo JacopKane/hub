@@ -800,7 +800,7 @@ def run(options, values, rows):
     return 0
 
 
-# what hubctl doctor says
+# what the step's doctor says
 
 def doctor_lines(values):
     """[(level, text)]: what a restart would do now, then how the newest run went."""
