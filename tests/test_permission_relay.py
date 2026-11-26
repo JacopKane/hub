@@ -527,7 +527,13 @@ def test_the_guard_refuses_every_tool_call_that_names_the_relay_folder(home, rel
                ("Bash", {"command": "grep -r preview $XDG_STATE_HOME/claude-hub"}),
                ("Bash", {"command": f"grep -r preview {home.state}"}),
                ("Bash", {"command": f"cat {home.state}/*/*"}),
-               ("Bash", {"command": f"echo null > {folder}/waiting/x.json"})]
+               ("Bash", {"command": f"echo null > {folder}/waiting/x.json"}),
+               ("Bash", {"command": "cat ~/.local/state/hubctl/relay/key"}),
+               ("Bash", {"command": "cat $HOME/.local/state/hubctl/relay/key"}),
+               ("Bash", {"command": "cat ${HOME}/.local/state/hubctl/relay/key"}),
+               ("Bash", {"command": "cat $XDG_STATE_HOME/hubctl/relay/key"}),
+               ("Bash", {"command": "cat ${XDG_STATE_HOME}/hubctl/relay/key"}),
+               ("Bash", {"command": f"cat {os.path.join(os.path.dirname(home.state), 'hubctl', 'relay', 'key')}"})]
     allowed = [("Read", {"file_path": os.path.join(home.work, "notes.md")}),
                ("Bash", {"command": "ls ~/.local/state/claude-hub/sessions"}),
                ("Grep", {"pattern": "relay", "path": home.work}),
