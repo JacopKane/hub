@@ -281,7 +281,8 @@ def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
         assert shipped.index(purpose) < shipped.index("<!-- hub:section ")
         assert "talks only to the coordinator chat" in purpose
         assert "takes its orders from this one" in purpose
-        assert "Permission prompts, and a change that lowers one of hub's protections" in purpose
+        assert "Permission prompts are the exception. They still show in that chat's own window." in purpose
+        assert "protection" not in purpose
         assert DASH not in purpose
         section_ids = re.findall(r"<!-- hub:section coordinator\.instructions\.(\w+) -->", shipped)
         section_headings = []
@@ -303,5 +304,6 @@ def test_the_coordinator_skill_keeps_hubs_purpose_with_every_section_off(home):
             opening = handle.read().split("\n## ", 1)[0]
         assert "main purpose of hub" in opening and "talk only to the coordinator chat" in opening
         assert "every other chat takes its orders from it" in opening
-        assert "Permission prompts, and a change that lowers one of hub's protections in another chat, still need you in that chat's own window." in opening
+        assert "Permission prompts still need you in that chat's own window." in opening
+        assert "lowers one of hub's protections" not in opening
         assert DASH not in opening
