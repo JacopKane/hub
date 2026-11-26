@@ -43,7 +43,7 @@ NODE_FIELDS = {"id", "kind", "type", "does", "default", "values", "runs_in", "ne
 PART_FIELDS = NODE_FIELDS | {"$schema", "family", "offer_when", "never_offered", "handlers", "requires",
                              "keeps_on_uninstall", "commands", "when_switched"}
 WHEN_SWITCHED_FIELDS = {"script", "on", "off"}
-# hubctl's own verbs. A part command may not take one of these names.
+# The step's own verbs. A part command may not take one of these names.
 CORE_VERBS = {"show", "screen", "on", "off", "set", "pin", "no", "undo", "apply", "doctor", "update",
               "offers", "take", "uninstall", "profile", "setup", "tuner", "open", "mail", "mod-command"}
 

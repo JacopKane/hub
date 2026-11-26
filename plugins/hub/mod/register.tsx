@@ -60,7 +60,7 @@ type Top = {
   features: boolean
 }
 
-// The notice's width is in cells, as hubctl counts them where the screen model sends a count.
+// The notice's width is in cells, as the step counts them where the screen model sends a count.
 type Shown = {
   top: Top
   text: string | null
@@ -329,7 +329,7 @@ const LEAST_BESIDE = 40
 // as a change line or a button label. It counts the East Asian wide and full width blocks and two
 // emoji blocks as two cells, and every mark as none. hub's Python counts by each letter's East
 // Asian width, which also makes emoji such as ✅ ❌ ⚡ 🚀 two cells and U+FE0F one, so the two can
-// differ. The mod takes hubctl's count wherever the screen model has one.
+// differ. The mod takes the step's count wherever the screen model has one.
 const WIDE = /[\u{1100}-\u{115F}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE4F}\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{20000}-\u{3FFFD}]/u
 const MARK = /\p{M}/u
 
@@ -367,7 +367,7 @@ function waitingCells(waiting: string, withChats: boolean) {
 }
 
 // The first names, as many as fit, then "+N" for the rest. Every chat that asks keeps its name
-// (hubctl sends those first), so +N only ever hides chats that do not ask. Null when not even
+// (the step sends those first), so +N only ever hides chats that do not ask. Null when not even
 // those names fit.
 function namesThatFit(entries: HubChatsZone['entries'], room: number): Zone | null {
   const lastAsking = entries.reduce((last, entry, index) => (entry.asks ? index : last), -1)
@@ -439,7 +439,7 @@ function failedText(count: number) {
   return count > MOST_FAILED ? `✗${MOST_FAILED}+` : `✗${count}`
 }
 
-// Only the question's line comes with its cells from hubctl; the mod counts the other notices.
+// Only the question's line comes with its cells from the step; the mod counts the other notices.
 function notice(screen: HubScreen, time: number, got: HubCommand): Notice | null {
   const flags = screen.band
   const digit = flags.first_digit

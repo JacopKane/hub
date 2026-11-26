@@ -5,7 +5,7 @@
 
 It applies first when the settings changed (see apply.ensure_fresh), then
 prints its slot file of Claude Code's start text as additionalContext. An
-empty slot prints nothing, and so does every slot after hubctl uninstall.
+empty slot prints nothing, and so does every slot after the step's uninstall.
 An error goes to errors.log, and the hook prints nothing, so a broken hub
 never stops a session from starting.
 """

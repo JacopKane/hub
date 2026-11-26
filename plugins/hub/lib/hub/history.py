@@ -1,6 +1,6 @@
 """The change log every door writes and undo reads.
 
-Each line of ~/.local/state/hubctl/history.jsonl holds an id, the UTC time,
+Each line of ~/.local/state/claude-hub/history.jsonl holds an id, the UTC time,
 the flag, the scope, the repo for the project and local scopes, the old and
 the new value, who set it, the door and a reason. The reason stays empty
 until the tuner fills it in. A change that is not a flag value, such as

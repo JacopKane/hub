@@ -98,7 +98,7 @@ def handle(event, hook_input, flags, answer):
 
 
 def doctor(flags):
-    """What hubctl doctor says: whether names can be resolved from the chat listing."""
+    """What the step's doctor says: whether names can be resolved from the chat listing."""
     rows, problem = sessions.run_listing()
     if problem:
         return [("warning", f"the chat listing (claude agents --json) failed, {problem}, so a message sent to a "

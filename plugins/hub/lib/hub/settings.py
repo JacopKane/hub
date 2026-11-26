@@ -1,9 +1,9 @@
 """The settings files and their scopes.
 
-    local     <repo>/.hub/hub.local.json   this repo only, never committed
-    project   <repo>/.hub/hub.json         committed, the same for everyone in the repo
-    user      ~/.config/hubctl/hub.json    the settings file
-    shipped   part.json of each part       the defaults
+    local     <repo>/.hub/hub.local.json      this repo only, never committed
+    project   <repo>/.hub/hub.json            committed, the same for everyone in the repo
+    user      ~/.config/claude-hub/hub.json   the settings file
+    shipped   part.json of each part          the defaults
 
 The highest scope that sets a value wins. A file keeps only values that
 differ from the default, plus pins (values the user set by hand). It is

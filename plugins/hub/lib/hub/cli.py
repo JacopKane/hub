@@ -1,15 +1,15 @@
 """hub's internal step, which the switch skill and the mod run. lib/hub_switch.py only starts this.
 
-    hubctl show [--all] [--tool claude_code|cursor]     the screen as text, or the old table with --json
-    hubctl screen --json [--all] [--tool ...] [--band]  the screen model every door draws
-    hubctl on|off <flag>       hubctl set <flag> <value>...       hubctl pin <flag>
-    hubctl undo [id]           hubctl no <part>
-    hubctl apply               hubctl doctor [--json]             hubctl update
-    hubctl offers              hubctl take <part>                 hubctl uninstall
-    hubctl setup --answer FILE | --reply JSON
-    hubctl profile [scan | set <path> <value>]
-    hubctl tuner decide --answer FILE|-                 hubctl tuner ask
-    hubctl tuner give-back --since TIME
+    hub show [--all] [--tool claude_code|cursor]     the screen as text, or the old table with --json
+    hub screen --json [--all] [--tool ...] [--band]  the screen model every door draws
+    hub on|off <flag>       hub set <flag> <value>...          hub pin <flag>
+    hub undo [id]           hub no <part>
+    hub apply               hub doctor [--json]                hub update
+    hub offers              hub take <part>                    hub uninstall
+    hub setup --answer FILE | --reply JSON
+    hub profile [scan | set <path> <value>]
+    hub tuner decide --answer FILE|-                 hub tuner ask
+    hub tuner give-back --since TIME
 
 The change verbs take --scope user|project|local, or --project and --local,
 and --json. A value typed here is set by the user, so it is pinned. Inside a
@@ -212,7 +212,7 @@ def main(argv=None):
     extra = part_commands()
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv and argv[0] in extra:
-        # A part command takes every word after its name, leading options too, such as hubctl board --json.
+        # A part command takes every word after its name, leading options too, such as hub board --json.
         args = parser(extra).parse_args(argv[:1])
         args.words = argv[1:]
     else:
