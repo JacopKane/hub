@@ -8,7 +8,7 @@ equals the default is dropped.
 
 Only a user door may weaken a protected flag (see protect.py): setup and the
 tuner leave it, and a command the model runs is refused and told to ask the
-user, unless the user asked for that change in words (protect.WORDS_DOOR).
+user.
 """
 import copy
 import json
@@ -24,8 +24,8 @@ class ChangeError(ValueError):
 # set_flag's expected value when any value may be overwritten.
 ANY = object()
 
-PINNED_BY_USER = ("The user set {flag} by hand, so it changes only when the user asks for it in their own words, "
-                  "or with /hub where Claude Code loads plugin mods.")
+PINNED_BY_USER = ("The user set {flag} by hand, so only the user can change it, such as with /hub where Claude Code loads "
+                  "plugin mods.")
 CHANGED_WHILE_RUNNING = ("Nothing changed, because {flag} changed while hub ran and this change would now "
                          "weaken it. Run it again to check against the new value.")
 USER_ONLY_VERB = "Only the user can {verb}, with /hub where Claude Code loads plugin mods. A command the model runs can not."
@@ -238,9 +238,6 @@ def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, r
     place = repo or cwd
     # The door is found at most once, and only when the change needs it, since finding it reads stdin.
     found = {}
-    if by == "model" and protect.take_words_ticket(flag_id, value, scope):
-        # The user asked for this change in the newest message they typed, and self-protection checked it.
-        by, door, found["door"] = "user", protect.WORDS_DOOR, protect.WORDS_DOOR
 
     def user_door():
         if "door" not in found:

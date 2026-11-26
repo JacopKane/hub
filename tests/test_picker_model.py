@@ -81,7 +81,7 @@ def test_the_band_model_and_the_mod_fixtures_follow_the_real_model(home):
             assert not PICKER_KEYS & row.keys() and "new" not in row
     with then("each row in the picker's fixture equals the real row of that id"):
         copy = picker_fixture()
-        assert copy["header"]["parts_total"] == 33
+        assert copy["header"]["parts_total"] == 32
         copied = rows(copy)
         assert len(copied) > 40
         for row_id, row in copied.items():

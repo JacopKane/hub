@@ -25,7 +25,6 @@ from . import conditions, files, settings, tree as tree_module
 PATH_FLAGS = {"core.private_words_files"}
 RESOLVED = "resolved.json"
 GATES_FAMILY = "gates"  # parts that check a call; they run after every other part
-SELF_PROTECTION = "self_protection"  # the first of the gates
 
 
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -186,8 +185,7 @@ def resolve(tree, layer_list, profile, offers=()):
             record["runs"] = runs(flag_id)
         handlers = {}
         # The gates run last, so they check a call after every part that may rewrite it.
-        # self_protection runs first among them, so a call that touches hub gets its answer.
-        for part in sorted(tree.parts, key=lambda part: (part.family == GATES_FAMILY, part.id != SELF_PROTECTION)):
+        for part in sorted(tree.parts, key=lambda part: part.family == GATES_FAMILY):
             if not records[part.id]["runs"]:
                 continue
             for event, spec in part.handlers.items():

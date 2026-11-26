@@ -370,7 +370,7 @@ def test_cursor_gets_the_same_parts_with_mapped_models(home):
         manifest = json.loads(read(os.path.join(folder, ".cursor-plugin", "plugin.json")))
         hooks = json.loads(read(os.path.join(folder, manifest["hooks"])))
         commands = [entry["command"] for entries in hooks["hooks"].values() for entry in entries]
-        assert set(hooks["hooks"]) == {"preToolUse", "postToolUse", "sessionStart", "stop", "subagentStop"}
+        assert set(hooks["hooks"]) == {"postToolUse", "sessionStart", "stop", "subagentStop"}
         assert all(os.path.join(home.plugin, "lib", "hub", "adapters", "cursor_hooks.py") in command
                    for command in commands)
     with and_("~/.cursor/agents/hub-builder.md names the mapped model"):

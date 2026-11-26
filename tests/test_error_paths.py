@@ -5,6 +5,7 @@ must never let private text out. These scenarios break hub on purpose and
 check that only those calls are refused.
 """
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -48,15 +49,32 @@ def test_settings_that_do_not_parse_stop_public_steps_and_let_other_calls_run(ho
         assert outside.ran and outside.output == {}
 
 
-def test_cursor_is_asked_to_fail_closed_when_the_adapter_itself_crashes():
-    with given("the Cursor hooks file the plugin ships"):
+def cursor_link_handler():
+    sys.path.insert(0, os.path.join(PLUGIN, "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "cursor_link_handler", os.path.join(PLUGIN, "parts", "cursor_link", "handler.py"))
+    handler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(handler)
+    return handler
+
+
+def test_cursor_is_asked_to_fail_closed_when_the_adapter_itself_crashes(home):
+    with given("the Cursor hooks file the plugin ships, and the one hub renders for a plugin copy with the made-up "
+               "demo_refusal gate, which checks shell calls in Cursor"):
+        home.install(demo_refusal=True)
         with open(os.path.join(REPO, "cursor", "hooks.json")) as handle:
-            entries = json.load(handle)["hooks"]["preToolUse"]
-    with then("every entry sets failClosed, so a crash refuses the call instead of letting it run"):
-        assert entries and all(entry.get("failClosed") is True for entry in entries)
+            shipped = json.load(handle)["hooks"]
+        rendered = json.loads(cursor_link_handler().plugin_files(home.plugin, "./plugins/hub")["cursor/hooks.json"])
+    with then("the shipped file starts hub before no tool call, since no shipped part checks one in Cursor"):
+        assert "preToolUse" not in shipped
+    with and_("the rendered file starts hub before each shell call, and every such entry sets failClosed, so a "
+              "crash refuses the call instead of letting it run"):
+        entries = rendered["hooks"]["preToolUse"]
+        assert [entry["matcher"] for entry in entries] == ["Shell"]
+        assert all(entry.get("failClosed") is True for entry in entries)
 
 
-def plant(home, change, name=os.path.join("parts", "self_protection", "handler.py")):
+def plant(home, change, name=os.path.join("parts", "demo_refusal", "handler.py")):
     """Change one file in the plugin copy the dispatcher runs. Returns the code it had before."""
     path = os.path.join(home.plugin, name)
     with open(path) as handle:
@@ -69,8 +87,8 @@ def plant(home, change, name=os.path.join("parts", "self_protection", "handler.p
 
 
 def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool):
-    with given("hub is installed and self-protection's handler raises an error as soon as it runs"):
-        home.install()
+    with given("hub is installed with the made-up demo_refusal gate, whose handler raises an error as soon as it runs"):
+        home.install(demo_refusal=True)
         plant(home, lambda code: code.replace(
             "def handle(event, hook_input, flags, answer):\n",
             "def handle(event, hook_input, flags, answer):\n    raise RuntimeError('planted failure')\n"))
@@ -81,7 +99,7 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
         assert public.refused and "planted failure" in public.reason
         assert status.ran and status.output == {}
         assert "planted failure" in home.errors()
-    with when("hub's shell parser, which self-protection loads, no longer loads at all"):
+    with when("hub's shell parser, which tells a public step from the others, no longer loads at all"):
         plant(home, lambda code: code + "\nthis is not python\n", os.path.join("lib", "hub", "command_steps.py"))
         public = home.hook(tool, "PreToolUse", commit("Fix the save button"), errors_expected=True)
         listing = home.hook(tool, "PreToolUse", "ls -la", errors_expected=True)
@@ -93,8 +111,8 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
 
 def test_after_a_part_crashes_hub_names_a_push_as_public_without_reading_its_commits(home, tool):
     with given("hub is installed, the repo has a local bare remote and a new commit, the "
-               "self-protection's handler raises as soon as it runs, and a git first on PATH logs each call"):
-        home.install()
+               "demo_refusal gate's handler raises as soon as it runs, and a git first on PATH logs each call"):
+        home.install(demo_refusal=True)
         bare = os.path.join(home.root, "remote.git")
         home.git("init", "-q", "--bare", bare)
         home.git("remote", "add", "origin", bare)
@@ -191,9 +209,9 @@ def call_lock(home, hook_input):
 def test_a_call_lock_another_process_holds_stops_only_a_public_step_within_the_hook_time(home):
     holders = []
     try:
-        with given("hub is installed, and two other processes hold the locks of the next commit call and the next "
-                   "status call"):
-            home.install()
+        with given("hub is installed with the made-up demo_refusal gate, so a shell call has a handler to run, and two "
+                   "other processes hold the locks of the next commit call and the next status call"):
+            home.install(demo_refusal=True)
             commit_input = home.hook_input("claude_code", "PreToolUse", commit("Fix the save button"))
             status_input = home.hook_input("claude_code", "PreToolUse", "git status --short")
             os.makedirs(os.path.join(home.state, "calls"), exist_ok=True)

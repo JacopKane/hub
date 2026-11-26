@@ -1,1 +1,0 @@
-The user set {flag} by hand, and this step starts through another program, so hub can not tell it from the user's own terminal. Ask the user to make the change in their own words, or with /hub where Claude Code loads plugin mods.

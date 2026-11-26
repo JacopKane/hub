@@ -260,10 +260,10 @@ def test_cursor_never_gets_the_tier_guard(home):
         home.switch_on("tier_rule")
         home.install()
         home.hubctl("on", "tier_rule.guard")
-    with then("Cursor's hooks watch only the shell and file tools, never Task, and the guard does not run there"):
+    with then("Cursor's hooks start hub before no tool call, so never before Task, and the guard does not run there"):
         folder = os.path.join(home.root, ".cursor", "plugins", "local", "hub")
         hooks = json.loads(read(os.path.join(folder, "cursor", "hooks.json")))
-        assert [entry["matcher"] for entry in hooks["hooks"]["preToolUse"]] == ["Delete|Edit|Shell|Write"]
+        assert "preToolUse" not in hooks["hooks"]
         assert not home.show("--tool", "cursor")["flags"]["tier_rule.guard"]["runs"]
         assert home.show("--tool", "cursor")["flags"]["tier_rule"]["runs"]
     with when("a Cursor Task call for an untiered agent comes through the adapter"):
@@ -283,7 +283,7 @@ def test_every_tool_other_than_bash_and_monitor_reaches_the_dispatcher_once():
         named = sorted({tool for part in tree.load(os.path.join(PLUGIN, "parts")).parts
                         if "claude_code" in part.runs_in
                         for tool in part.handlers.get("PreToolUse", {}).get("tools", []) if tool != "Bash"})
-        assert {"Agent", "AskUserQuestion", "Delete", "SubagentHandback"} <= set(named)
+        assert {"Agent", "AskUserQuestion", "Edit", "SubagentHandback"} <= set(named)
     with then("it keeps the Bash group, adds a group for the named tools, and one group for every other tool"):
         matchers = [group["matcher"] for group in groups]
         assert matchers[:2] == ["Bash", "|".join(named)] and len(matchers) == 3

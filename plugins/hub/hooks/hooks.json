@@ -16,7 +16,7 @@
         ]
       },
       {
-        "matcher": "Agent|AskUserQuestion|Delete|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write",
+        "matcher": "Agent|AskUserQuestion|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write",
         "hooks": [
           {
             "type": "command",
@@ -26,7 +26,7 @@
         ]
       },
       {
-        "matcher": "^(?!(?:Bash|Monitor|Agent|AskUserQuestion|Delete|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write)$)",
+        "matcher": "^(?!(?:Bash|Monitor|Agent|AskUserQuestion|Edit|Glob|Grep|NotebookEdit|Read|SendMessage|SubagentHandback|Write)$)",
         "hooks": [
           {
             "type": "command",

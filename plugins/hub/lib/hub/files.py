@@ -19,9 +19,8 @@ STEP = os.path.join(PLUGIN_ROOT, "lib", "hub_switch.py")
 CONFIG_NAME_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_name")
 with open(CONFIG_NAME_FILE, encoding="utf-8") as _name_file:
     CONFIG_NAME = _name_file.read().strip()
-# The folder name the settings had before they moved to config_dir(), and the flags renamed with the move.
+# The folder name the settings had before they moved to config_dir().
 OLD_CONFIG_NAME = "hubctl"
-RENAMED_FLAGS = {"self_protection.hubctl": "self_protection.lowering"}
 # Flags that went with the terminal link, which put hubctl on the PATH.
 DROPPED_FLAGS = ("core.terminal_link",)
 
@@ -51,15 +50,15 @@ def config_dir():
 
 
 def old_config_dir():
-    """The settings folder's old name. self_protection guards it too, since hub moves what it finds there."""
+    """The settings folder's old name."""
     return os.path.join(config_base(), OLD_CONFIG_NAME)
 
 
 def move_old_config(old, new):
     """Move the settings folder from its old name on first use, with every choice in it.
 
-    A renamed flag keeps its value under the new name. When both folders
-    exist, the new one wins and the old one stays as it is.
+    A dropped flag is taken out. When both folders exist, the new one wins
+    and the old one stays as it is.
     """
     if os.path.lexists(new) or not os.path.isdir(old) or os.path.islink(old):
         return
@@ -73,13 +72,10 @@ def move_old_config(old, new):
     except (OSError, ValueError):
         return  # hub reports a file it can not read when it loads the settings
     flags = data.get("flags") if isinstance(data, dict) else None
-    if not isinstance(flags, dict) or not any(name in flags for name in (*RENAMED_FLAGS, *DROPPED_FLAGS)):
+    if not isinstance(flags, dict) or not any(name in flags for name in DROPPED_FLAGS):
         return
     for name in DROPPED_FLAGS:
         flags.pop(name, None)
-    for old_name, new_name in RENAMED_FLAGS.items():
-        if old_name in flags:
-            flags.setdefault(new_name, flags.pop(old_name))
     write_json(path, data)
 
 

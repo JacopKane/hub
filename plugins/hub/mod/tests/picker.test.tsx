@@ -290,18 +290,18 @@ test('a press on an off row runs on with a fresh ticket, and a press on an on ro
   await ui.unmount()
 })
 
-test('a protected row lowers only through a press, which carries a ticket', async ($, on) => {
+test('a protected row lowers only through its own control, which carries a ticket', async ($, on) => {
   const { ui, fake } = await open($, on)
 
   await ui.press({ key: 'family:gates' })
-  await ui.press({ key: 'more:self_protection' })
+  await ui.press({ key: 'more:demo_gate' })
   await ui.press({ key: 'family:tiers' })
   await ui.press({ key: 'family:gates' })
   await ui.press({ key: 'family:gates' })
   expect(changes(fake)).toEqual([])
 
-  await ui.press({ key: 'row:self_protection' })
-  const lowered = fake.calls.filter(call => call.args === 'off self_protection')
+  await ui.select({ key: 'row:demo_gate.secrets', value: 'off' })
+  const lowered = fake.calls.filter(call => call.args === 'set demo_gate.secrets off')
   expect(lowered).toHaveLength(1)
   expect(lowered[0].stdin).toMatch(/^[0-9a-f]{64}\n$/)
   await ui.unmount()

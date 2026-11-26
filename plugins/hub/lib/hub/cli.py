@@ -25,9 +25,7 @@ import subprocess
 import sys
 
 from . import apply, build, changes, doctor, files, links, resolve, screen, settings, slots, textview, tree as tree_module
-from . import profile, protect, setup, tuner, uninstall
-
-UNINSTALL_ASK = 'Only the user can uninstall hub, by asking in their own words, such as "uninstall hub". Ask the user.'
+from . import profile, setup, tuner, uninstall
 
 
 def add_scope(command):
@@ -296,8 +294,6 @@ def main(argv=None):
             print(f"moved {line['source']} to {line['held']}")
             print_lines(notes)
         elif args.command == "uninstall":
-            if files.in_tool_call() and not protect.take_uninstall_ticket():
-                raise changes.ChangeError(UNINSTALL_ASK)
             print_lines(uninstall.run())
         elif args.command == "setup":
             if [bool(args.answer), args.reply is not None].count(True) != 1:

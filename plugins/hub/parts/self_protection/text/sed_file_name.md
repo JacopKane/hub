@@ -1,1 +1,0 @@
-hub could not read a file name in this sed command. sed reads a name that starts with - as an option, so the name could add a script. Put -- before the file names that hold a variable, as in sed -n 1,5p -- "$file". In double quotes, a name may also start with fixed text, as in "./$file" or "$HOME/notes.txt".
