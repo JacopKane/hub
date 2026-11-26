@@ -17,6 +17,17 @@ from cheap facts first and reads names last, so most calls cost one file
 read. Any error lets the call run (the dispatcher logs it), so a broken
 guard never stops ordinary work. A slow or failing chat listing lets the
 dialog open and leaves one line in the doctor log.
+
+The part is on by default, so its hooks sleep while no chat has the
+coordinator's name. Each chat that has it gets a mark, a file named for its
+session in the state folder's coordinator_chats, that holds the chat's pid.
+The mark is set or dropped at session start and on each prompt, from the
+title in the hook input or the chat's record, and dropped at session end.
+pre_check.sh starts Python for a tool call only while a mark's pid runs.
+A prompt that carries a title always starts it, so a /rename in a running
+chat wakes the hooks. This handler follows the same rule when another part
+starts Python, so it never reads the chat listing while it sleeps. Each
+session start drops the marks of chats that are gone.
 """
 import fnmatch
 import os
@@ -35,6 +46,7 @@ SKILL = "hub-coordinator"
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
 COUNTED = {"Bash", "Read", "Grep", "Glob", "Edit", "Write"}
 URGENT = "[urgent]"
+MARKS = "coordinator_chats"  # pre_check.sh reads the same folder
 # A command segment that starts with one of these only reads or prints, so a test name inside it runs nothing.
 READERS = {"cat", "head", "tail", "less", "more", "grep", "egrep", "rg", "wc", "ls", "sed", "awk", "echo",
            "printf", "file", "stat", "find", "diff", "cmp", "jq", "realpath", "dirname", "basename"}
@@ -54,8 +66,62 @@ def coordinator_name(flags):
     return flags.value(f"{PART}.name") or "HUB"
 
 
-def is_coordinator(hook_input, flags):
-    return sessions.same_name(sessions.name_of(hook_input), coordinator_name(flags))
+def is_coordinator(hook_input, flags, use_listing=True):
+    return sessions.same_name(sessions.name_of(hook_input, use_listing=use_listing), coordinator_name(flags))
+
+
+# marks: which chats have the coordinator's name, so the hooks of every other chat can sleep
+
+def mark_path(session):
+    session = sessions.SAFE_ID.sub("", str(session or ""))
+    return files.state_path(os.path.join(MARKS, session)) if session else None
+
+
+def set_mark(session, data):
+    """Mark the chat with its pid, or with an empty line when its pid is unknown."""
+    path = mark_path(session)
+    if path:
+        pid = data.get("pid")
+        files.write_text(path, f"{pid}\n" if isinstance(pid, int) else "\n")
+
+
+def drop_mark(session):
+    path = mark_path(session)
+    try:
+        if path:
+            os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def marked():
+    folder = files.state_path(MARKS)
+    try:
+        return [name for name in os.listdir(folder) if sessions.SAFE_ID.sub("", name) == name]
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def awake():
+    """Whether a marked chat may run now, by the rule pre_check.sh uses: a mark with no pid, or one whose pid runs."""
+    for session in marked():
+        try:
+            with open(mark_path(session)) as handle:
+                pid = handle.readline().strip()
+        except OSError:
+            continue
+        if not pid.isdigit() or sessions.pid_runs(int(pid)):
+            return True
+    return False
+
+
+def prune_marks():
+    """Drop the marks of chats that ended, were renamed, or whose process no longer runs."""
+    for session in marked():
+        data = sessions.record(session)
+        gone = not data or not data.get("coordinator")
+        if gone or (data.get("pid") is not None and not sessions.is_alive(data)):
+            drop_mark(session)
 
 
 def text(flags, flag_id, **values):
@@ -186,19 +252,29 @@ def handle(event, hook_input, flags, answer):
     session = hook_input.get("session_id")
     if event == "SessionEnd":
         sessions.note(event, hook_input)
+        drop_mark(session)
         return
     if event in ("SessionStart", "UserPromptSubmit"):
+        if event == "SessionStart":
+            prune_marks()
         earlier = sessions.record(session) or {}
         data = sessions.note(event, hook_input)
         if data is None:
             return
-        values = {"coordinator": is_coordinator(hook_input, flags), "prompt_calls": 0}
+        coordinator = is_coordinator(hook_input, flags, use_listing=awake())
+        values = {"coordinator": coordinator, "prompt_calls": 0}
         if event == "SessionStart":
             values["skill_loaded"] = hook_input.get("source") == "resume" and bool(earlier.get("skill_loaded"))
         elif typed_skill(hook_input.get("prompt")):
             values["skill_loaded"] = True
         data = sessions.update(session, **values)
+        if coordinator:
+            set_mark(session, data or {})
+        else:
+            drop_mark(session)
         start_nudge(event, hook_input, flags, answer, data)
+        return
+    if not awake():  # asleep, as pre_check.sh is, since no chat with the coordinator's name runs
         return
     tool = hook_input.get("tool_name")
     if event == "PostToolUse":
