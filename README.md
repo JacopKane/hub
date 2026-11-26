@@ -6,7 +6,7 @@ Every part of your Claude Code setup gets its own switch.
 
 hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
 
-hub is at version 0.20.3. It is early software, so expect changes that break things.
+hub is at version 0.20.4. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 

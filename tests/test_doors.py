@@ -22,8 +22,8 @@ DASH_LINE = "d9dash000001"
 OLD_LINE = "d9old0000001"
 
 
-def utc(hours_ago):
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - hours_ago * 3600))
+def utc(minutes_ago):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - minutes_ago * 60))
 
 
 def read_day9(name):
@@ -39,12 +39,12 @@ def day9(home):
         shutil.copytree(os.path.join(DAY9, "researcher"), researcher)
     offers = read_day9("offers.json")
     for offer in offers["offers"]:
-        offer["since"] = utc(offer.pop("hours_ago"))
+        offer["since"] = utc(offer.pop("minutes_ago"))
     home.write_json(os.path.join(home.state, "offers.json"), offers)
     home.write_json(home.user_file, read_day9("hub.json"))
     with open(os.path.join(home.state, "history.jsonl"), "w") as handle:
         for line in read_day9("history.json"):
-            line["time"] = utc(line.pop("hours_ago"))
+            line["time"] = utc(line.pop("minutes_ago"))
             handle.write(json.dumps(line) + "\n")
     home.step("apply")
 
@@ -107,10 +107,10 @@ def test_show_and_the_screen_model_print_the_same_tree_and_strip_on_day_9(home):
     with and_("the text has no buttons, and the dash row shows who set it"):
         assert "[" not in shown.replace("[undo]", "")
         assert DASHES in shown and "tuner" in shown
-    with and_("a line older than status_band.notices.keep_hours stays out of the strip"):
+    with and_("a line older than status_band.notices.keep_minutes stays out of the strip"):
         assert OLD_LINE not in [line["id"] for line in model["strip"]]
-    with when("the user keeps notices for 48 hours"):
-        home.step("set", "status_band.notices.keep_hours", "48")
+    with when("the user keeps notices for 60 minutes"):
+        home.step("set", "status_band.notices.keep_minutes", "60")
     with then("the older line is back in the strip"):
         assert OLD_LINE in [line["id"] for line in screen(home)["strip"]]
 
@@ -248,18 +248,20 @@ def test_the_band_reads_its_flags_and_each_line_mark_from_the_screen_model(home)
         model = screen(home)
     with then("the band section holds the status_band flags at their defaults"):
         assert model["band"] == {"runs": True, "state": True, "notices": True, "offers": True,
-                                 "chats": False, "problems": True, "first_digit": 1, "keep_hours": 24}
+                                 "chats": False, "problems": True, "first_digit": 1, "keep_minutes": 5,
+                                 "offer_keep_minutes": 24 * 60}
     with and_("the dash line that turned a flag off is marked -, and the offer +"):
         assert strip_line(model, DASH_LINE)["mark"] == "-"
         assert strip_line(model, "offer:researcher")["mark"] == "+"
-    with when("the user moves the digits to 4, keeps lines 48 hours and switches notices off"):
+    with when("the user moves the digits to 4, keeps lines 60 minutes and switches notices off"):
         home.step("set", "status_band.first_digit", "4")
-        home.step("set", "status_band.notices.keep_hours", "48")
+        home.step("set", "status_band.notices.keep_minutes", "60")
         home.step("off", "status_band.notices")
         model = screen(home)
     with then("the band section follows, and the setting lines are marked ~ and -"):
         assert model["band"] == {"runs": True, "state": True, "notices": False, "offers": True,
-                                 "chats": False, "problems": True, "first_digit": 4, "keep_hours": 48}
+                                 "chats": False, "problems": True, "first_digit": 4, "keep_minutes": 60,
+                                 "offer_keep_minutes": 24 * 60}
         marks = [line["mark"] for line in model["strip"] if line["kind"] == "change"]
         assert marks[:3] == ["-", "~", "~"]
     with when("the user turns scout off and on again, and undoes the dash line"):
@@ -274,6 +276,66 @@ def test_the_band_reads_its_flags_and_each_line_mark_from_the_screen_model(home)
         home.step("off", "status_band")
     with then("the band section says it does not run"):
         assert screen(home)["band"]["runs"] is False
+
+
+def age_day9_lines(home, minutes_ago):
+    """Make the dash line and the researcher offer older, as if the user had looked away."""
+    path = os.path.join(home.state, "history.jsonl")
+    with open(path) as handle:
+        lines = [json.loads(text) for text in handle if text.strip()]
+    for line in lines:
+        if line["id"] == DASH_LINE:
+            line["time"] = utc(minutes_ago)
+    with open(path, "w") as handle:
+        handle.writelines(json.dumps(line) + "\n" for line in lines)
+    offers = home.state_file("offers.json")
+    for offer in offers["offers"]:
+        offer["since"] = utc(minutes_ago)
+    home.write_json(os.path.join(home.state, "offers.json"), offers)
+
+
+def test_a_change_line_leaves_the_strip_after_a_few_minutes_and_its_undo_still_works(home):
+    with given("the day 9 fixture, where the tuner turned dashes off, and the user looked away for 6 minutes"):
+        day9(home)
+        age_day9_lines(home, 6)
+    with and_("then the user changes scout's model"):
+        home.step("set", "scout.model", "sonnet")
+        strip = screen(home)["strip"]
+    with then("the 6 minute old dash line has left the strip, past the default 5 minutes"):
+        assert DASH_LINE not in [line["id"] for line in strip]
+        assert f'say "undo {DASH_LINE}"' not in home.step("show").stdout
+    with and_("the fresh scout line is the newest line, with its undo"):
+        assert strip[0]["text"].endswith("set scout.model to sonnet")
+        assert buttons(strip[0]) == {"Undo": ["undo", strip[0]["id"]]}
+    with and_("the researcher offer of the same age stays, since an offer keeps a day"):
+        assert buttons(strip_line(screen(home), "offer:researcher")) == {
+            "Turn on": ["on", "researcher"], "No": ["no", "researcher"]}
+    with when("the user still undoes the dash line by its id, as \"undo that\" does"):
+        home.step("undo", DASH_LINE)
+    with then("dashes is on again, pinned by the user"):
+        assert home.settings()["flags"][DASHES] == {"by": "user", "value": "on"}
+
+
+def test_a_line_time_in_hours_from_an_older_hub_is_dropped_and_the_minutes_default_holds(home):
+    with given("a settings file from an older hub that kept band lines 48 hours"):
+        home.install()
+        data = home.settings() if os.path.exists(home.user_file) else {"version": 1, "flags": {}}
+        data.setdefault("flags", {})["status_band.notices.keep_hours"] = {"by": "user", "value": 48}
+        home.write_json(home.user_file, data)
+    with then("the band keeps change lines the default 5 minutes, and no step lists the old flag"):
+        assert screen(home)["band"]["keep_minutes"] == 5
+        assert "status_band.notices.keep_hours" not in home.show("--all")["flags"]
+        assert "keep_hours" not in home.step("doctor", check=False).stdout
+    with and_("the old flag can not be set any more"):
+        refused = home.step("set", "status_band.notices.keep_hours", "48", check=False)
+        assert refused.returncode == 1 and "no flag named" in refused.stderr
+    with when("the user changes any value, so hub writes the settings file"):
+        home.step("set", "status_band.notices.keep_minutes", "10")
+    with then("the file holds the new minutes and no longer names the hours"):
+        flags = home.settings()["flags"]
+        assert flags["status_band.notices.keep_minutes"]["value"] == 10
+        assert "status_band.notices.keep_hours" not in flags
+        assert screen(home)["band"]["keep_minutes"] == 10
 
 
 def mod_fixture():

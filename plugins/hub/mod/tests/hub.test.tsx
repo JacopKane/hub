@@ -6,7 +6,7 @@ import type { Engine, FoundElement } from 'claude-code/testing'
 import type { ModelCompleteInput, ModelCompleteResult, On, PromptOrigin } from 'claude-code'
 
 import type { HubScreen } from '../types'
-import { DAY9, DAY9_NOW, HOUR } from './day9'
+import { DAY9, DAY9_NOW, HOUR, MINUTE } from './day9'
 
 const BAND = {
   plugin: 'hub',
@@ -138,7 +138,7 @@ for (const surface of SURFACES) {
   })
 }
 
-test('a line older than status_band.notices.keep_hours leaves the band', async ($, on) => {
+test('a change line older than status_band.notices.keep_minutes leaves the band, and an offer stays a day', async ($, on) => {
   const clock = mock.clock(on, { now: DAY9_NOW })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'hub' } }))
@@ -149,8 +149,16 @@ test('a line older than status_band.notices.keep_hours leaves the band', async (
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Button', key: 'd9dash000001:undo' })).toBeDefined()
 
-  // The dash line is 3 hours old and the offer 2, so both are past 24 hours after 23.
-  await clock.advance(23 * HOUR)
+  // The dash line is 3 minutes old and the offer 2. After 3 more the dash line is past 5 minutes.
+  await clock.advance(3 * MINUTE)
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual([
+    'features',
+    'offer:researcher:turn on',
+    'offer:researcher:no',
+  ])
+
+  // An offer stays a day, since only the band and /hub take it.
+  await clock.advance(24 * HOUR)
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
   expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('9 on · start text 1.2k')
   await ui.unmount()
