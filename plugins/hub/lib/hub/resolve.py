@@ -242,7 +242,9 @@ def apply(tree=None, write=True):
     summary_path = files.state_path("update-summary.json")
     seen = files.read_json(seen_path)
     offers = files.read_json(offers_path, {"offers": []})
-    offers = {"offers": [offer for offer in offers["offers"] if not never_offered(tree, offer["id"])]}
+    # An offer for a part that no longer ships is dropped too, since its Turn on button would fail.
+    offers = {"offers": [offer for offer in offers["offers"]
+                         if offer["id"] in tree.nodes and not never_offered(tree, offer["id"])]}
     summary = files.read_json(summary_path, {"changes": []})
     part_ids = [part.id for part in tree.parts]
     child_ids = [node.id for node in tree.nodes.values() if node.parent is not None]

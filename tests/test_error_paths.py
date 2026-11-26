@@ -1,9 +1,8 @@
 """When hub itself is broken, public steps stop and ordinary calls run.
 
 A settings file that does not parse, as after a merge with conflict markers,
-must never let private text out, and must never let a builder or reviewer
-start while a review loop may be stopped. These scenarios break hub on
-purpose and check that only those calls are refused.
+must never let private text out. These scenarios break hub on purpose and
+check that only those calls are refused.
 """
 import hashlib
 import json
@@ -12,10 +11,6 @@ import subprocess
 import sys
 import time
 
-import pytest
-
-import test_review_loop as loop
-from chats import Chats
 from conftest import PLUGIN, REPO, commit
 from steps import and_, given, then, when
 
@@ -180,254 +175,11 @@ def test_hubctl_explains_each_mistake_and_changes_nothing(home):
         assert nothing.returncode == 1 and "nothing to undo" in nothing.stderr
 
 
-# a review loop stop while hub fails
+# a stuck call lock, and settings from a hub that still had the review loop
 
-CANNOT_TELL = "can not tell whether a loop is stopped"
-STOPPED = "export-button failed 2 reviews in a row"
-RAISE_AT_ONCE = ("def handle(event, hook_input, flags, answer):\n",
-                 "def handle(event, hook_input, flags, answer):\n    raise RuntimeError('planted failure')\n")
 # A second process that holds a lock file until its input closes.
 HOLD_LOCK = ("import fcntl, sys\nhandle = open(sys.argv[1], 'a')\nfcntl.flock(handle, fcntl.LOCK_EX)\n"
              "print('held', flush=True)\nsys.stdin.read()\n")
-
-
-@pytest.fixture
-def chats(home):
-    chats = Chats(home)
-    yield chats
-    chats.close()
-
-
-def stopped_loop(home, chats):
-    """hub as it ships, with the loop on the export button stopped after two failed reviews. Returns the list."""
-    loop.installed(home, chats)
-    export = loop.acceptance(home, "export-button")
-    for task in ("Build it.", "Fix A2."):
-        assert loop.start(chats, loop.LOOP, "builder", f"{task}\nAcceptance: {export}").ran
-        assert loop.review(home, chats, loop.LOOP, loop.brief(export), loop.NO_GO)[1].ran
-    assert STOPPED in loop.start(chats, loop.LOOP, "builder", f"Fix A2 again.\nAcceptance: {export}").reason
-    return export
-
-
-def agent_call(home, chats, agent, prompt, chat=loop.LOOP):
-    """An Agent call, sent the way Claude Code sends it, while hub may log an error."""
-    tool_input = {"description": "Run it", "prompt": prompt, "subagent_type": agent}
-    return home.send("claude_code", "PreToolUse", chats.input(chat, "PreToolUse", "Agent", tool_input),
-                     errors_expected=True)
-
-
-def test_a_review_loop_stop_holds_builder_and_reviewer_calls_while_hub_can_not_read_its_settings(home, chats):
-    with given("the loop on the export button is stopped, and the user settings file then holds merge conflict "
-               "markers"):
-        export = stopped_loop(home, chats)
-        write_text(home.user_file, CONFLICT)
-    with when("the loop chat starts a builder, another chat starts a critic on the list, and the loop chat starts "
-              "a scout"):
-        builder = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        critic = agent_call(home, chats, "critic", loop.brief(export), chat=loop.OTHER)
-        scout = agent_call(home, chats, "scout", "Count the files.")
-    with then("the builder and the critic are refused with the error, and the scout runs"):
-        for refused in (builder, critic):
-            assert refused.refused and CANNOT_TELL in refused.reason and "hub.json" in refused.reason
-        assert scout.ran and scout.output == {}
-    with when("the review loop's own handler no longer loads either"):
-        handler = os.path.join("parts", "review_loop", "handler.py")
-        code = plant(home, lambda code: code + "\nthis is not python\n", handler)
-        rough = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-    with then("the builder is still refused"):
-        assert rough.refused and CANNOT_TELL in rough.reason
-    with when("the handler loads again and the loop's file is cut off half way"):
-        plant(home, lambda _: code, handler)
-        state = os.path.join(home.state, "review_loop", "export-button.json")
-        with open(state) as handle:
-            whole = handle.read()
-        write_text(state, whole[:len(whole) // 2])
-        cut = agent_call(home, chats, "worker", "Tidy the export code.")
-    with then("a worker is refused, and the reason names the file"):
-        assert cut.refused and CANNOT_TELL in cut.reason and state in cut.reason
-    with when("no review loop file is left"):
-        os.remove(state)
-        free = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-    with then("the builder runs, since no loop can be stopped"):
-        assert free.ran and free.output == {}
-
-
-def test_a_reviewer_the_user_added_is_held_while_hub_can_not_read_its_settings(home, chats):
-    with given("the loop on the export button is stopped, the user adds an auditor to the reviewers, and the user "
-               "settings file then holds merge conflict markers"):
-        stopped_loop(home, chats)
-        home.hubctl("set", "review_loop.reviewers", "critic", "reviewer", "auditor")
-        write_text(home.user_file, CONFLICT)
-    with when("the loop chat starts an auditor and a scout"):
-        auditor = agent_call(home, chats, "auditor", "Audit the export button.")
-        scout = agent_call(home, chats, "scout", "Count the files.")
-    with then("the auditor is refused with the error, and the scout runs"):
-        assert auditor.refused and CANNOT_TELL in auditor.reason and "hub.json" in auditor.reason
-        assert scout.ran and scout.output == {}
-    with when("hub's resolved settings no longer parse either"):
-        write_text(os.path.join(home.state, "resolved.json"), "{cut off")
-        critic = agent_call(home, chats, "critic", "Review the export button.")
-        builder = agent_call(home, chats, "builder", "Fix A2 again.")
-    with then("the default critic and builder are still refused, and the scout still runs"):
-        for refused in (critic, builder):
-            assert refused.refused and CANNOT_TELL in refused.reason
-        assert agent_call(home, chats, "scout", "Count the files.").ran
-
-
-def agent_ends(home, chats, agent_id, agent_type, event, **extra):
-    """An agent's hand-back or end in the loop chat, sent the way Claude Code sends it, while hub may log an error."""
-    if event == "SubagentStop":
-        hook_input = chats.input(loop.LOOP, event, agent_id=agent_id, agent_type=agent_type, **extra)
-    else:
-        hook_input = chats.input(loop.LOOP, event, "SubagentHandback", {"message": loop.NO_GO}, agent_id=agent_id,
-                                 agent_type=agent_type)
-    return home.send("claude_code", event, hook_input, errors_expected=True)
-
-
-def test_a_reviewers_hand_back_and_end_hold_while_hub_can_not_read_its_settings(home, chats):
-    with given("the loop on the export button has one failed review, a second critic on the list and a critic "
-               "with no list have started, and the user settings file then holds merge conflict markers"):
-        loop.installed(home, chats)
-        export = loop.acceptance(home, "export-button")
-        assert loop.start(chats, loop.LOOP, "builder", f"Build it.\nAcceptance: {export}").ran
-        assert loop.review(home, chats, loop.LOOP, loop.brief(export), loop.NO_GO)[1].ran
-        assert loop.start(chats, loop.LOOP, "builder", f"Fix A2.\nAcceptance: {export}").ran
-        assert loop.start(chats, loop.LOOP, "critic", loop.brief(export)).ran
-        loop.agent_brief(home, loop.LOOP, "a-critic-on-the-list", loop.brief(export))
-        no_list = "Review it.\nAcceptance: none, a one-line typo fix"
-        assert loop.start(chats, loop.LOOP, "critic", no_list).ran
-        loop.agent_brief(home, loop.LOOP, "a-critic-with-no-list", no_list)
-        write_text(home.user_file, CONFLICT)
-    with when("the critic on the list hands back NO-GO"):
-        held = agent_ends(home, chats, "a-critic-on-the-list", "critic", "PreToolUse")
-    with then("the hand-back is refused with the error, since hub can not record the review"):
-        assert held.refused and "could not record this review" in held.reason and "hub.json" in held.reason
-    with when("that critic ends once, and then again after a stop hook kept it going"):
-        first = agent_ends(home, chats, "a-critic-on-the-list", "critic", "SubagentStop", stop_hook_active=False,
-                           last_assistant_message=loop.NO_GO)
-        again = agent_ends(home, chats, "a-critic-on-the-list", "critic", "SubagentStop", stop_hook_active=True,
-                           last_assistant_message=loop.NO_GO)
-    with then("the first end is blocked once with the error, and the second end goes through"):
-        assert first.output.get("decision") == "block"
-        assert "could not record this review" in first.output["reason"] and "hub.json" in first.output["reason"]
-        assert "decision" not in again.output
-    with and_("a scout's hand-back and the hand-back of the critic with no list run"):
-        assert agent_ends(home, chats, "a-scout", "scout", "PreToolUse").ran
-        assert agent_ends(home, chats, "a-critic-with-no-list", "critic", "PreToolUse").ran
-    with when("the user file is fixed and the critic on the list hands back NO-GO again"):
-        os.remove(home.user_file)
-        counted = agent_ends(home, chats, "a-critic-on-the-list", "critic", "PreToolUse")
-    with then("the hand-back runs, and the next builder call on the list is stopped with the rounds"):
-        assert counted.ran, counted.reason
-        stopped = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        assert stopped.refused and STOPPED in stopped.reason
-
-
-def repo_settings(home, name, lists):
-    """A settings file in the repo's .hub folder that adds agent names to the review loop's lists. Returns its path."""
-    path = os.path.join(home.work, ".hub", name)
-    write_text(path, json.dumps({"version": 1, "flags": {
-        f"review_loop.{list_id}": {"value": names, "by": "user"} for list_id, names in lists.items()}}))
-    return path
-
-
-def test_agent_names_the_repo_adds_are_held_while_hub_can_not_read_its_settings(home, chats):
-    with given("the repo's committed settings add a fixer to the builders, its local settings add an inspector to "
-               "the reviewers, the loop on the export button has one failed review, an inspector on the list has "
-               "started, and the user settings file then holds merge conflict markers"):
-        loop.installed(home, chats)
-        repo_settings(home, "hub.json", {"builders": ["fixer"]})
-        local = repo_settings(home, "hub.local.json", {"reviewers": ["inspector"]})
-        export = loop.acceptance(home, "export-button")
-        assert loop.start(chats, loop.LOOP, "builder", f"Build it.\nAcceptance: {export}").ran
-        assert loop.review(home, chats, loop.LOOP, loop.brief(export), loop.NO_GO)[1].ran
-        assert loop.start(chats, loop.LOOP, "fixer", f"Fix A2.\nAcceptance: {export}").ran
-        assert loop.start(chats, loop.LOOP, "inspector", loop.brief(export)).ran
-        loop.agent_brief(home, loop.LOOP, "an-inspector-on-the-list", loop.brief(export))
-        write_text(home.user_file, CONFLICT)
-    with when("the inspector hands back NO-GO and then ends"):
-        held = agent_ends(home, chats, "an-inspector-on-the-list", "inspector", "PreToolUse")
-        ended = agent_ends(home, chats, "an-inspector-on-the-list", "inspector", "SubagentStop",
-                           stop_hook_active=False, last_assistant_message=loop.NO_GO)
-    with then("the hand-back is refused and the end is blocked once, since hub can not record the review"):
-        assert held.refused and "could not record this review" in held.reason and "hub.json" in held.reason
-        assert ended.output.get("decision") == "block" and "could not record this review" in ended.output["reason"]
-    with when("the user file is fixed, the inspector hands back NO-GO again, and the user file then holds merge "
-              "conflict markers again"):
-        os.remove(home.user_file)
-        counted = agent_ends(home, chats, "an-inspector-on-the-list", "inspector", "PreToolUse")
-        write_text(home.user_file, CONFLICT)
-        fixer = agent_call(home, chats, "fixer", f"Fix A2 again.\nAcceptance: {export}")
-        scout = agent_call(home, chats, "scout", "Count the files.")
-    with then("the review counts, the fixer is refused with the error, and the scout runs"):
-        assert counted.ran, counted.reason
-        assert fixer.refused and CANNOT_TELL in fixer.reason and "hub.json" in fixer.reason
-        assert scout.ran and scout.output == {}
-    with when("the repo's local settings file no longer parses either"):
-        write_text(local, "{cut off")
-        unsure = agent_call(home, chats, "scout", "Count the files.")
-    with then("even the scout is refused, since hub can not tell which agents the repo adds"):
-        assert unsure.refused and CANNOT_TELL in unsure.reason
-
-
-def test_a_stop_hub_has_already_answered_stays_when_hub_can_not_store_the_answer(home, chats):
-    with given("the loop on the export button is stopped, and hub can not write the stored answers of its calls"):
-        export = stopped_loop(home, chats)
-        plant(home, lambda code: code.replace(
-            "def write_json(path, data):\n",
-            "def write_json(path, data):\n    if f'{os.sep}calls{os.sep}' in path:\n"
-            "        raise OSError('planted write failure')\n"), os.path.join("lib", "hub", "files.py"))
-    with when("the loop chat starts a builder on the list and a scout"):
-        builder = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        scout = agent_call(home, chats, "scout", "Count the files.")
-    with then("the builder gets the stop's own refusal with the rounds, and the scout runs"):
-        assert builder.refused and STOPPED in builder.reason
-        assert scout.ran and scout.output == {}
-    with and_("errors.log holds the failed write"):
-        assert "planted write failure" in home.errors()
-
-
-def test_a_review_loop_stop_holds_when_another_part_that_checks_agent_calls_raises(home, chats):
-    with given("the loop on the export button is stopped, the live notes part is on, and its handler raises as "
-               "soon as it runs"):
-        export = stopped_loop(home, chats)
-        home.hubctl("on", "live_notes")
-        plant(home, lambda code: code.replace(*RAISE_AT_ONCE), os.path.join("parts", "live_notes", "handler.py"))
-    with when("the loop chat starts a builder on the list and a scout"):
-        builder = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        scout = agent_call(home, chats, "scout", "Count the files.")
-    with then("the builder is refused with the planted error, and the scout runs"):
-        assert builder.refused and CANNOT_TELL in builder.reason and "planted failure" in builder.reason
-        assert scout.ran and scout.output == {}
-
-
-def test_a_review_loop_lock_another_process_holds_refuses_the_call_within_the_hook_time(home, chats):
-    holder = None
-    try:
-        with given("the loop on the export button is stopped, and a second process holds the area's lock"):
-            export = stopped_loop(home, chats)
-            lock = os.path.join(home.state, "review_loop", "export-button.lock")
-            holder = subprocess.Popen([sys.executable, "-I", "-c", HOLD_LOCK, lock], stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE, text=True)
-            assert holder.stdout.readline().strip() == "held"
-        with when("the loop chat starts a builder on the list"):
-            started = time.monotonic()
-            builder = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-            took = time.monotonic() - started
-        with then("the builder is refused well inside the 15 s hook time, and the reason names the loop's folder"):
-            assert builder.refused and CANNOT_TELL in builder.reason
-            assert os.path.join(home.state, "review_loop") in builder.reason
-            assert took < 10, took
-        with when("the second process ends and the loop chat starts the builder again"):
-            holder.stdin.close()
-            holder.wait(timeout=10)
-            again = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        with then("the builder gets the stop's own refusal with the rounds"):
-            assert again.refused and STOPPED in again.reason
-    finally:
-        if holder is not None:
-            holder.kill()
-            holder.wait(timeout=10)
 
 
 def call_lock(home, hook_input):
@@ -436,42 +188,77 @@ def call_lock(home, hook_input):
     return os.path.join(home.state, "calls", hashlib.sha256(raw.encode()).hexdigest()[:32] + ".lock")
 
 
-def test_a_call_lock_another_process_holds_refuses_a_builder_while_a_stop_is_open_within_the_hook_time(home, chats):
+def test_a_call_lock_another_process_holds_stops_only_a_public_step_within_the_hook_time(home):
     holders = []
     try:
-        with given("the loop on the export button is stopped, and two other processes hold the locks of the loop "
-                   "chat's next builder call and its next scout call"):
-            export = stopped_loop(home, chats)
-            builder_input = chats.input(loop.LOOP, "PreToolUse", "Agent", {
-                "description": "Run it", "prompt": f"Fix A2 again.\nAcceptance: {export}", "subagent_type": "builder"})
-            scout_input = chats.input(loop.LOOP, "PreToolUse", "Agent", {
-                "description": "Run it", "prompt": "Count the files.", "subagent_type": "scout"})
-            for hook_input in (builder_input, scout_input):
+        with given("hub is installed, and two other processes hold the locks of the next commit call and the next "
+                   "status call"):
+            home.install()
+            commit_input = home.hook_input("claude_code", "PreToolUse", commit("Fix the save button"))
+            status_input = home.hook_input("claude_code", "PreToolUse", "git status --short")
+            os.makedirs(os.path.join(home.state, "calls"), exist_ok=True)
+            for hook_input in (commit_input, status_input):
                 holders.append(subprocess.Popen([sys.executable, "-I", "-c", HOLD_LOCK, call_lock(home, hook_input)],
                                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True))
                 assert holders[-1].stdout.readline().strip() == "held"
-        with when("the loop chat sends the builder call"):
+        with when("Claude sends the commit"):
             started = time.monotonic()
-            builder = home.send("claude_code", "PreToolUse", builder_input, errors_expected=True)
+            public = home.send("claude_code", "PreToolUse", commit_input, errors_expected=True)
             took = time.monotonic() - started
-        with then("the builder is refused well inside the 15 s hook time, the reason names the stopped loop's file "
-                  "and the held lock"):
-            assert builder.refused and CANNOT_TELL in builder.reason
-            assert os.path.join(home.state, "review_loop", "export-button.json") in builder.reason
-            assert "stayed locked" in builder.reason
+        with then("the commit is refused well inside the 15 s hook time, and the reason names the held lock"):
+            assert public.refused and "could not read its settings" in public.reason
+            assert "stayed locked" in public.reason
             assert took < 10, took
-        with when("the loop chat sends the scout call"):
-            scout = home.send("claude_code", "PreToolUse", scout_input, errors_expected=True)
-        with then("the scout runs, since the review loop does not hold it"):
-            assert scout.ran and scout.output == {}
-        with when("both processes end and the loop chat starts the builder again"):
-            for holder in holders:
-                holder.stdin.close()
-                holder.wait(timeout=10)
-            again = agent_call(home, chats, "builder", f"Fix A2 again.\nAcceptance: {export}")
-        with then("the builder gets the stop's own refusal with the rounds"):
-            assert again.refused and STOPPED in again.reason
+        with when("Claude sends the status call"):
+            status = home.send("claude_code", "PreToolUse", status_input, errors_expected=True)
+        with then("it runs, since it publishes nothing"):
+            assert status.ran and status.output == {}
     finally:
         for holder in holders:
             holder.kill()
             holder.wait(timeout=10)
+
+
+def test_settings_and_state_from_a_hub_that_had_the_review_loop_load_with_no_error(home):
+    with given("hub is installed, and the user file, the repo's file and hub's state still hold the review loop "
+               "from an older hub: switched on with its lists and rounds, offered once, and stopped on one area"):
+        home.install()
+        old_flags = {"review_loop": {"value": "on", "by": "user"},
+                     "review_loop.reviewers": {"value": ["critic", "reviewer", "auditor"], "by": "user"},
+                     "review_loop.stop_after.rounds": {"value": 3, "by": "user"},
+                     "review_loop.require_list": {"value": "on", "by": "user"}}
+        write_text(home.user_file, json.dumps({"version": 1, "flags": old_flags}))
+        write_text(os.path.join(home.work, ".hub", "hub.json"),
+                   json.dumps({"version": 1, "flags": {"review_loop.builders": {"value": ["fixer"], "by": "user"}}}))
+        write_text(os.path.join(home.state, "review_loop", "export-button.json"),
+                   json.dumps({"area": "export-button", "stop": {"rounds": 2}}))
+        offers = home.state_file("offers.json")
+        write_text(os.path.join(home.state, "offers.json"), json.dumps(
+            {"offers": [*offers["offers"], {"id": "review_loop",
+                                            "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                            "does": "Keeps a build and review loop on a written list."}]}))
+    with when("hub applies its settings, shows them and runs the doctor"):
+        home.hubctl("apply")
+        shown = home.hubctl("show", "--all", check=False)
+        doctor = home.hubctl("doctor", check=False)
+    with then("each step exits 0, no flag of the review loop is listed, and the doctor does not name it"):
+        assert shown.returncode == 0, shown.stderr
+        assert not any(flag_id.startswith("review_loop") for flag_id in home.show("--all")["flags"])
+        assert doctor.returncode == 0, doctor.stdout + doctor.stderr
+        assert "review_loop" not in doctor.stdout + doctor.stderr
+    with and_("the screen offers no part that is gone"):
+        screen = json.loads(home.hubctl("screen", "--json").stdout)
+        assert "offer:review_loop" not in [line["id"] for line in screen["strip"]]
+    with when("Claude starts a builder with no acceptance list and a critic hands back with no verdict lines"):
+        agent = home.hook_input("claude_code", "PreToolUse", "")
+        agent.update(tool_name="Agent", tool_input={"description": "Fix it", "prompt": "Fix the export button.",
+                                                    "subagent_type": "builder"})
+        builder = home.send("claude_code", "PreToolUse", agent)
+        hand_back = home.hook_input("claude_code", "PreToolUse", "")
+        hand_back.update(tool_name="SubagentHandback", tool_input={"message": "Looks fine."},
+                         agent_id="a-critic", agent_type="critic")
+        critic = home.send("claude_code", "PreToolUse", hand_back)
+    with then("both run with no answer and no error, though the old stop file is still there"):
+        assert builder.ran and builder.output == {}
+        assert critic.ran and critic.output == {}
+        assert not os.path.exists(os.path.join(home.state, "errors.log"))

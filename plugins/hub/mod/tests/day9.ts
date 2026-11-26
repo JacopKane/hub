@@ -12,9 +12,9 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 10,
-    "parts_total": 37,
-    "start_text": 2099
+    "parts_on": 9,
+    "parts_total": 36,
+    "start_text": 1210
   },
   "strip": [
     {
@@ -103,8 +103,8 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "tiers",
-      "parts_on": 4,
-      "parts_total": 12,
+      "parts_on": 3,
+      "parts_total": 11,
       "parts": [
         {
           "id": "builder",
@@ -228,24 +228,6 @@ export const DAY9: HubScreen = /* json */ {
           "hidden_because": null,
           "cost": "",
           "next_session": true,
-          "claude_code_only": false,
-          "stage": null,
-          "children": []
-        },
-        {
-          "id": "review_loop",
-          "name": "review_loop",
-          "depth": 0,
-          "does": "Keeps a build and review loop on a written acceptance list, and stops it after two failed reviews of one area until the user decides. It is not a sandbox.",
-          "value": "on",
-          "effective": "on",
-          "runs": true,
-          "by": "default",
-          "scope": "shipped",
-          "relevant": true,
-          "hidden_because": null,
-          "cost": "",
-          "next_session": false,
           "claude_code_only": false,
           "stage": null,
           "children": []

@@ -18,9 +18,7 @@
 
 An Agent call from a subagent carries agent_id and passes, since its own
 brief already named the notes. A subagent's messages get the reminder too.
-The dispatcher logs any error and lets the call run, except a builder or
-reviewer call while a review loop file holds a stop or can not be read.
-That call is refused.
+The dispatcher logs any error and lets the call run.
 """
 import hashlib
 import json
