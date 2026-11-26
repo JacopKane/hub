@@ -244,6 +244,10 @@ def pin_deleted(lines):
 
     It settles a stopped apply's marks first. So a link that hub was
     removing, or had not made yet, never counts as one the user deleted.
+    Returns the paths reconcile must leave alone this run. Before setup
+    writes hub.json, a deleted link keeps its record and is not made again,
+    and its part waits for setup's own apply. hub.json is how the tuner knows
+    setup ran, so creating it here would skip setup.
     """
     entries, kept, gone = repair(), [], []
     for entry in entries:
@@ -252,8 +256,10 @@ def pin_deleted(lines):
         else:
             kept.append(entry)
     if not gone:
-        return
+        return set()
     path = files.user_settings_path()
+    if not os.path.exists(path):
+        return {entry["path"] for entry in gone}
     data = settings.read(path) or settings.empty()
     for entry in gone:
         stored = settings.entry(data, entry["part"])
@@ -264,6 +270,7 @@ def pin_deleted(lines):
                      f"Say \"turn on {entry['part']}\" to bring it back.")
     settings.write(path, data)
     write_record(kept)
+    return set()
 
 
 def user_agents(folder=None):
@@ -531,9 +538,10 @@ def clear_stale_built(entries):
                 shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.unlink(path)
 
 
-def reconcile(tree, resolved, lines):
+def reconcile(tree, resolved, lines, held=()):
     """Make every wanted link and copy, remove hub's own that are no longer wanted.
 
+    The recorded paths in held stay as they are, with their record (see pin_deleted).
     Returns the listing cost of each linked agent and skill.
     """
     entries, offers, listing = wanted(tree, resolved, lines)
@@ -550,6 +558,10 @@ def reconcile(tree, resolved, lines):
             files.write_json(files.state_path(AGENTS_FOLDER_MADE), {"made": folder})
     for entry in entries:
         path, before = entry["path"], old.pop(entry["path"], None)
+        if before is not None and path in held:
+            record.append(before)
+            listing.pop(entry["part"], None)
+            continue
         if before is None and os.path.lexists(path):
             lines.append(f"hub left {path} as it is, because it is not a file hub made.")
             listing.pop(entry["part"], None)
@@ -564,6 +576,10 @@ def reconcile(tree, resolved, lines):
         save()
         skills_changed = skills_changed or (changed and entry["kind"] == "skill")
     for path, entry in list(old.items()):
+        if path in held:
+            record.append(entry)
+            del old[path]
+            continue
         if is_own(entry):
             old[path] = dict(entry, state="removing")
             save()

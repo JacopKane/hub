@@ -239,8 +239,8 @@ def test_only_the_user_turns_a_beta_flag_on(home):
             {"id": "cursor", "text": "Should hub run in Cursor too?",
              "options": [{"label": "yes", "does": "Turns on the Cursor beta.", "flags": {"cursor_link": "on"}}]}]})
         dialog = json.loads(home.step("setup", "--answer", answer).stdout)
-    with then("setup drops that option, so the question has nothing left and is not asked"):
-        assert dialog["questions"] == []
+    with then("setup drops that option, so the question has nothing left and only hub's own question is asked"):
+        assert [question["topic"] for question in dialog["questions"]] == ["remote_control"]
     with and_("nothing is written for Cursor"):
         nothing_for_cursor(home)
     with when("the model runs the command the user would type, from a tool call"):

@@ -184,14 +184,14 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
         home.step("on", "hub_style")
         text = read(claude_settings(home))
         assert json.loads(text) == {"theme": "dark", "permissions": {"allow": ["Read"]}, "remoteControlAtStartup": True,
-                                    "outputStyle": STYLE_NAME}
-        assert list(json.loads(text)) == ["theme", "permissions", "remoteControlAtStartup", "outputStyle"]
+                                    "attribution": {"sessionUrl": False}, "outputStyle": STYLE_NAME}
+        assert list(json.loads(text)) == ["theme", "permissions", "remoteControlAtStartup", "attribution", "outputStyle"]
         assert '\n    "theme": "dark"' in text and '\n        "allow"' in text
         assert os.path.islink(style_link(home))
         assert f"name: {STYLE_NAME}" in read(style_link(home))
     with when("the user picks another style in /output-style, which writes the key"):
         write_claude_settings(home, {"theme": "dark", "permissions": {"allow": ["Read"]}, "remoteControlAtStartup": True,
-                                     "outputStyle": "Explanatory"})
+                                     "attribution": {"sessionUrl": False}, "outputStyle": "Explanatory"})
     with and_("apply runs"):
         result = home.step("apply")
     with then("hub_style is off by user, one line says so, and outputStyle keeps the user's pick"):
@@ -210,8 +210,10 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
         home.step("off", "hub_style")
     with then("the user's pick is back, in the same key order"):
         data = json.loads(read(claude_settings(home)))
-        assert data["outputStyle"] == "Explanatory" and list(data) == ["theme", "permissions", "remoteControlAtStartup", "outputStyle"]
-        assert [item["key"] for item in home.state_file("keys.json")["keys"]] == ["remoteControlAtStartup"]
+        assert data["outputStyle"] == "Explanatory"
+        assert list(data) == ["theme", "permissions", "remoteControlAtStartup", "attribution", "outputStyle"]
+        assert [item["key"] for item in home.state_file("keys.json")["keys"]] == ["remoteControlAtStartup",
+                                                                                 "attribution.sessionUrl"]
 
 
 def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names_it(home):
@@ -237,7 +239,8 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
         write_claude_settings(home, {"theme": "dark"})
         home.step("apply")
     with then("outputStyle names hub's style, and the doctor no longer names the file"):
-        assert json.loads(read(path)) == {"theme": "dark", "remoteControlAtStartup": True, "outputStyle": STYLE_NAME}
+        assert json.loads(read(path)) == {"theme": "dark", "remoteControlAtStartup": True,
+                                          "attribution": {"sessionUrl": False}, "outputStyle": STYLE_NAME}
         assert path not in home.step("doctor").stdout
     with when("the file breaks again and the user turns hub_style off"):
         with open(path, "w") as handle:
@@ -246,7 +249,8 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
     with then("the switch finishes, hub keeps its record to put the value back later, and the doctor names the file"):
         assert result.returncode == 0, result.stderr
         assert read(path) == broken
-        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == ["outputStyle", "remoteControlAtStartup"]
+        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == ["outputStyle", "remoteControlAtStartup",
+                                                                                   "attribution.sessionUrl"]
         assert path in home.step("doctor").stdout
 
 
@@ -360,6 +364,7 @@ def test_cursor_gets_the_style_as_rule_text(home):
 
 
 REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
+SESSION_LINK = "sessionUrl"  # under attribution
 
 
 def install_before_remote_control(home):
@@ -378,7 +383,32 @@ def remote_lines(output):
     return [line for line in output.splitlines() if REMOTE_PART in line]
 
 
-def test_an_update_turns_remote_control_on_for_every_new_chat_with_no_offer_and_off_puts_the_file_back(home):
+def setup_dialog(home):
+    """The dialog hub setup prints for the recorded answer that asks nothing of its own."""
+    return json.loads(home.step("setup", "--answer", os.path.join(FIXTURES, "agent_answers", "nothing.json")).stdout)
+
+
+def remote_question(dialog):
+    [question] = [question for question in dialog["questions"] if question["topic"] == REMOTE_PART]
+    return question
+
+
+def labels(question):
+    return [option["label"] for option in question["options"]]
+
+
+def turned_off_lines(output):
+    return [line for line in remote_lines(output) if "is now off" in line]
+
+
+def edit_claude_settings(home, **values):
+    """Change keys in the user's Claude Code settings by hand, as a text editor would, keeping the rest."""
+    data = json.loads(read(claude_settings(home)))
+    data.update(values)
+    write_claude_settings(home, data)
+
+
+def test_an_update_turns_remote_control_on_for_every_new_chat_without_session_links_and_off_puts_the_file_back(home):
     path = claude_settings(home)
     with given("hub was installed before remote_control shipped, and the user's Claude Code settings hold their theme"):
         write_claude_settings(home, {"theme": "dark"})
@@ -388,29 +418,41 @@ def test_an_update_turns_remote_control_on_for_every_new_chat_with_no_offer_and_
     with when("the update brings remote_control and apply runs"):
         shutil.copytree(os.path.join(PLUGIN, "parts", REMOTE_PART), os.path.join(home.plugin, "parts", REMOTE_PART))
         home.step("apply")
-    with then("remote_control runs by default, nothing is offered, and the file turns Remote Control on in the user's key order and indent"):
+    with then("remote_control runs by default, nothing is offered, and the file turns Remote Control on and the "
+              "session link off, in the user's key order and indent"):
         record = home.show()["flags"][REMOTE_PART]
         assert record["by"] == "default" and record["runs"]
         assert REMOTE_PART not in [offer["id"] for offer in home.state_file("offers.json")["offers"]]
         text = read(path)
-        assert json.loads(text) == {"theme": "dark", REMOTE_KEY: True} and '\n    "theme": "dark"' in text
-        [entry] = home.state_file("keys.json")["keys"]
-        assert (entry["key"], entry["part"], entry["had_earlier"]) == (REMOTE_KEY, REMOTE_PART, False)
+        assert json.loads(text) == {"theme": "dark", REMOTE_KEY: True, "attribution": {SESSION_LINK: False}}
+        assert '\n    "theme": "dark"' in text
+        entries = home.state_file("keys.json")["keys"]
+        assert [(entry["key"], entry["part"], entry["had_earlier"]) for entry in entries] == [
+            (REMOTE_KEY, REMOTE_PART, False), (f"attribution.{SESSION_LINK}", None, False)]
     with when("the user turns remote_control off"):
         home.step("off", REMOTE_PART)
-    with then("the file is exactly as the user left it, and hub keeps no record of the key"):
+    with then("the file is exactly as the user left it, with no empty attribution left, and hub keeps no record"):
         assert read(path) == original
         assert home.state_file("keys.json")["keys"] == []
-    with when("the user turns it on again, later sets the key to false by hand, and apply runs"):
+    with when("the user turns it on again, then sets the session link back on by hand, and apply runs"):
         home.step("on", REMOTE_PART)
-        assert json.loads(read(path))[REMOTE_KEY] is True
-        write_claude_settings(home, {"theme": "dark", REMOTE_KEY: False})
+        edit_claude_settings(home, attribution={SESSION_LINK: True})
+        output = home.step("apply").stdout
+    with then("remote_control still runs with no line, and the user's session link setting stays"):
+        assert home.show()["flags"][REMOTE_PART]["runs"]
+        assert turned_off_lines(output) == []
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: True, "attribution": {SESSION_LINK: True}}
+        home.step("apply")
+        assert json.loads(read(path))["attribution"] == {SESSION_LINK: True}
+    with when("the user later sets the Remote Control key to false by hand, and apply runs"):
+        edit_claude_settings(home, **{REMOTE_KEY: False})
         result = home.step("apply")
-    with then("remote_control is off by user, one line says so, and the user's false stays"):
+    with then("remote_control is off by user, one line says so, and both of the user's values stay"):
         assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
-        [line] = remote_lines(result.stdout)
+        [line] = turned_off_lines(result.stdout)
         assert REMOTE_KEY in line and "false" in line and f'Say "turn on {REMOTE_PART}"' in line
-        assert json.loads(read(path))[REMOTE_KEY] is False
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: False, "attribution": {SESSION_LINK: True}}
+        assert home.state_file("keys.json")["keys"] == []
 
 
 def setup_context(home):
@@ -421,14 +463,14 @@ def setup_context(home):
 
 def run_setup(home):
     """hub setup with the recorded answer that asks nothing, and the user's empty reply."""
-    home.step("setup", "--answer", os.path.join(FIXTURES, "agent_answers", "nothing.json"))
+    setup_dialog(home)
     return home.step("setup", "--reply", "{}").stdout
 
 
-def test_a_new_user_who_already_set_remote_control_to_false_still_gets_setup_and_keeps_false(home):
+def test_setup_turns_remote_control_on_for_a_new_user_who_set_it_to_false_and_off_puts_false_back(home):
     path = claude_settings(home)
-    with given("a new user whose Claude Code settings already turn Remote Control off"):
-        write_claude_settings(home, {REMOTE_KEY: False, "theme": "dark"}, indent=2)
+    with given("a new user whose Claude Code settings already turn Remote Control and all attribution off"):
+        write_claude_settings(home, {REMOTE_KEY: False, "theme": "dark", "attribution": False}, indent=2)
         original = read(path)
     with when("hub is installed"):
         output = install_printing(home)
@@ -441,55 +483,130 @@ def test_a_new_user_who_already_set_remote_control_to_false_still_gets_setup_and
         context = setup_context(home)
     with then("hub asks for its setup first"):
         assert "hub setup" in context and "first" in context
-    with when("setup runs"):
-        summary = run_setup(home)
-    with then("remote_control is off and pinned by the user, one line says why and how to bring it back, and false stays"):
-        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
-        assert not home.show()["flags"][REMOTE_PART]["runs"]
-        [line] = remote_lines(summary)
-        assert REMOTE_KEY in line and "false" in line and f'Say "turn on {REMOTE_PART}"' in line
-        [change] = [item for item in home.history() if item.get("flag") == REMOTE_PART]
-        assert (change["old"], change["new"], change["door"]) == ("on", "off", "apply")
-        assert REMOTE_KEY in change["reason"]
-        assert read(path) == original
-    with and_("the next chat does not ask for setup again, and apply says nothing more about remote_control"):
+    with when("setup builds its dialog"):
+        question = remote_question(setup_dialog(home))
+    with then("the last question is hub's own about Remote Control, with On first and Off to untick it"):
+        assert labels(question) == ["On", "Off"]
+        assert "Remote Control" in question["text"] and "unless you pick Off" in question["text"]
+    with when("the user leaves it as it is"):
+        summary = home.step("setup", "--reply", "{}").stdout
+    with then("remote_control runs, Remote Control is on, and the user's false is kept to put back"):
+        assert REMOTE_PART not in home.settings()["flags"]
+        assert home.show()["flags"][REMOTE_PART]["runs"]
+        assert turned_off_lines(summary) == []
+        assert json.loads(read(path)) == {REMOTE_KEY: True, "theme": "dark", "attribution": False}
+        [entry] = home.state_file("keys.json")["keys"]
+        assert (entry["key"], entry["earlier"], entry["had_earlier"]) == (REMOTE_KEY, False, True)
+    with and_("the next chat does not ask for setup again, and apply leaves remote_control as it is"):
         assert "hub setup" not in setup_context(home)
         assert remote_lines(home.step("apply").stdout) == []
-    with when("the user turns remote_control on by hand"):
-        home.step("on", REMOTE_PART)
-    with then("Remote Control is on, and hub keeps the user's false to put back"):
-        assert json.loads(read(path)) == {REMOTE_KEY: True, "theme": "dark"}
-        [entry] = home.state_file("keys.json")["keys"]
-        assert entry["earlier"] is False and entry["had_earlier"]
-    with when("the user turns remote_control off again"):
+        assert json.loads(read(path))[REMOTE_KEY] is True
+    with when("the user turns remote_control off"):
         home.step("off", REMOTE_PART)
     with then("the file is exactly as the user left it"):
         assert read(path) == original
 
 
-def test_a_false_set_by_hand_before_setup_waits_for_setup_and_then_stays(home):
+def test_a_new_user_who_picks_off_in_setup_keeps_their_settings_as_they_were(home):
+    path = claude_settings(home)
+    with given("a new user installs hub, and its first apply turns Remote Control on"):
+        write_claude_settings(home, {"theme": "dark"})
+        original = read(path)
+        install_printing(home)
+        assert json.loads(read(path))[REMOTE_KEY] is True
+    with when("the user picks Off for Remote Control in setup"):
+        question = remote_question(setup_dialog(home))
+        summary = home.step("setup", "--reply", json.dumps({question["id"]: "Off"})).stdout
+    with then("remote_control is off by setup, the summary says so, and the file is exactly as before hub"):
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "setup", "value": "off"}
+        assert not home.show()["flags"][REMOTE_PART]["runs"]
+        assert f"{REMOTE_PART} is \"off\" now, because you picked Off" in summary
+        assert read(path) == original
+        assert home.state_file("keys.json")["keys"] == []
+
+
+def test_a_false_set_by_hand_before_setup_waits_for_setup_and_then_setup_turns_it_on(home):
     path = claude_settings(home)
     with given("a new user installs hub, and its first apply turns Remote Control on"):
         write_claude_settings(home, {"theme": "dark"})
         install_printing(home)
         assert json.loads(read(path))[REMOTE_KEY] is True
     with when("the user sets the key to false by hand before setup, and apply runs"):
-        write_claude_settings(home, {"theme": "dark", REMOTE_KEY: False})
+        edit_claude_settings(home, **{REMOTE_KEY: False})
         output = home.step("apply").stdout
     with then("false stays, hub writes no settings of its own, keeps its record, and setup is still asked for"):
         assert json.loads(read(path))[REMOTE_KEY] is False
         assert not os.path.exists(home.user_file)
-        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == [REMOTE_KEY]
+        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == [
+            REMOTE_KEY, f"attribution.{SESSION_LINK}"]
         assert remote_lines(output) == []
+        assert "hub setup" in setup_context(home)
+    with when("setup runs and the user leaves Remote Control as it is"):
+        summary = run_setup(home)
+    with then("remote_control runs with no line, Remote Control is on again, and hub keeps the user's false"):
+        assert REMOTE_PART not in home.settings()["flags"]
+        assert turned_off_lines(summary) == []
+        assert json.loads(read(path))[REMOTE_KEY] is True
+        entry = next(entry for entry in home.state_file("keys.json")["keys"] if entry["key"] == REMOTE_KEY)
+        assert (entry["earlier"], entry["had_earlier"]) == (False, True)
+    with when("the user turns remote_control off"):
+        home.step("off", REMOTE_PART)
+    with then("the false the user set comes back, and hub's session link setting is gone"):
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: False}
+
+
+def test_a_hub_link_deleted_before_setup_waits_for_setup_and_then_turns_its_part_off(home):
+    with given("a new user installs hub, and its first apply makes hub's agent and skill links"):
+        home.install()
+        entry = next(entry for entry in home.state_file("links.json")["links"] if entry["kind"] in ("agent", "skill"))
+        part, link = entry["part"], entry["path"]
+    with when("the user deletes one of those links before setup, and apply runs twice"):
+        os.unlink(link)
+        first = home.step("apply").stdout
+        second = home.step("apply").stdout
+    with then("hub writes no settings of its own, makes the link no more, and setup is still asked for"):
+        assert not os.path.exists(home.user_file)
+        assert not os.path.lexists(link)
+        assert link not in first + second
+        assert link in [entry["path"] for entry in home.state_file("links.json")["links"]]
         assert "hub setup" in setup_context(home)
     with when("setup runs"):
         summary = run_setup(home)
-    with then("remote_control is off by user with one line, hub drops its record, and false stays"):
+    with then("the part is off and pinned by the user, and one line says why"):
+        assert home.settings()["flags"][part] == {"by": "user", "value": "off"}
+        assert any(link in line and f'Say "turn on {part}"' in line for line in summary.splitlines())
+        assert not os.path.lexists(link)
+
+
+def test_a_silent_update_keeps_a_false_the_user_set_and_turning_on_by_hand_puts_both_keys_back(home):
+    path = claude_settings(home)
+    with given("a user set up before remote_control shipped, with Remote Control off and their own commit line"):
+        write_claude_settings(home, {REMOTE_KEY: False, "attribution": {"commit": "Made with care"}}, indent=2)
+        original = read(path)
+        install_before_remote_control(home)
+        run_setup(home)
+    with when("the update brings remote_control and apply runs"):
+        shutil.copytree(os.path.join(PLUGIN, "parts", REMOTE_PART), os.path.join(home.plugin, "parts", REMOTE_PART))
+        output = home.step("apply").stdout
+    with then("remote_control is off and pinned by the user with one line, and the file does not change"):
         assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
-        [line] = remote_lines(summary)
-        assert f"You set {REMOTE_KEY} to false" in line
-        assert home.state_file("keys.json")["keys"] == []
-        assert json.loads(read(path))[REMOTE_KEY] is False
+        [line] = turned_off_lines(output)
+        assert REMOTE_KEY in line and "false" in line
+        assert read(path) == original
+        assert not os.path.exists(os.path.join(home.state, "keys.json"))
+    with when("the user turns remote_control on by hand"):
+        home.step("on", REMOTE_PART)
+    with then("Remote Control is on, the session link is off next to the user's commit line, and hub keeps both "
+              "earlier values"):
+        assert json.loads(read(path)) == {REMOTE_KEY: True,
+                                          "attribution": {"commit": "Made with care", SESSION_LINK: False}}
+        entries = home.state_file("keys.json")["keys"]
+        assert [(entry["earlier"], entry["had_earlier"], "made_parent" in entry) for entry in entries] == [
+            (False, True, False), (None, False, False)]
+    with when("the user turns remote_control off again"):
+        home.step("off", REMOTE_PART)
+    with then("the file is exactly as the user left it"):
+        assert read(path) == original
 
 
 def test_an_older_false_in_claude_json_makes_remote_control_stand_down_at_update(home):
@@ -542,6 +659,36 @@ def test_a_user_who_opts_out_of_tracking_gets_no_remote_control_from_hub(home):
         assert json.loads(read(path))[REMOTE_KEY] is True
 
 
+def test_setup_keeps_remote_control_off_with_a_reason_when_the_settings_env_block_sets_do_not_track(home):
+    path = claude_settings(home)
+    with given("a new user whose Claude Code settings set DO_NOT_TRACK in their env block"):
+        write_claude_settings(home, {"env": {"DO_NOT_TRACK": "1"}, "theme": "dark"})
+        original = read(path)
+    with when("hub is installed"):
+        install_printing(home)
+    with then("the file is as the user left it, and hub writes no settings of its own"):
+        assert read(path) == original
+        assert not os.path.exists(home.user_file)
+    with when("setup builds its dialog"):
+        question = remote_question(setup_dialog(home))
+    with then("the Remote Control question shows it off, says why, and has no way to turn it on"):
+        assert labels(question) == ["Keep it off", "Skip"]
+        assert "DO_NOT_TRACK is set" in question["text"]
+    with when("the reply still tries to turn it on"):
+        refused = home.step("setup", "--reply", json.dumps({question["id"]: "On"}), check=False)
+    with then("setup refuses it and writes nothing"):
+        assert refused.returncode != 0 and "Keep it off" in refused.stderr
+        assert not os.path.exists(home.user_file) and read(path) == original
+    with when("the user skips the question"):
+        summary = home.step("setup", "--reply", json.dumps({question["id"]: "Skip"})).stdout
+    with then("remote_control is off and pinned by the user, one line names DO_NOT_TRACK, and the file is as before"):
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
+        [line] = turned_off_lines(summary)
+        assert "DO_NOT_TRACK" in line
+        assert read(path) == original
+        assert not os.path.exists(os.path.join(home.state, "keys.json"))
+
+
 def test_uninstall_puts_back_the_values_hub_wrote(home):
     with given("the user had Remote Control off and outputStyle Default, then turned on remote_control and hub_style"):
         write_claude_settings(home, {REMOTE_KEY: False, "outputStyle": "Default"}, indent=2)
@@ -549,14 +696,14 @@ def test_uninstall_puts_back_the_values_hub_wrote(home):
         home.step("on", REMOTE_PART)
         home.step("on", "hub_style")
         data = json.loads(read(claude_settings(home)))
-        assert data == {REMOTE_KEY: True, "outputStyle": STYLE_NAME}
+        assert data == {REMOTE_KEY: True, "outputStyle": STYLE_NAME, "attribution": {SESSION_LINK: False}}
     with and_("the user later changed outputStyle by hand"):
         write_claude_settings(home, dict(data, outputStyle="Learning"), indent=2)
     with when('the user runs "hub uninstall"'):
         home.step("uninstall")
-    with then("remoteControlAtStartup has the user's earlier value again, and keys.json is gone"):
+    with then("remoteControlAtStartup has the user's earlier value again, the session link key is gone, and keys.json is gone"):
         data = json.loads(read(claude_settings(home)))
-        assert data[REMOTE_KEY] is False
+        assert data[REMOTE_KEY] is False and "attribution" not in data
         assert not os.path.exists(os.path.join(home.state, "keys.json"))
     with and_("outputStyle keeps the value the user chose, and the style link is gone"):
         assert data["outputStyle"] == "Learning"

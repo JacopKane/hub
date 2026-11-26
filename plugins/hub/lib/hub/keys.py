@@ -2,7 +2,7 @@
 
     want(key, value, part, lines)   write one key by its dot path, such as env.HUB_NAME
     release(key, lines)             put back the user's earlier value
-    pin_changed(lines)       at apply: a key the user changed since turns its part off
+    pin_changed(lines, retake)      at apply: a key the user changed since turns its part off
     stand_down(key, value, part, lines, env_names)   at apply: a default-on part whose key the user
                              already set to another value, or whose opt-out variable is set, goes off
     restore_all(lines)       at uninstall: put back every earlier value
@@ -12,8 +12,12 @@ file's key order and indent, and goes to a link's target, so the link stays.
 Each key hub wrote is in ~/.local/state/claude-hub/keys.json with the value hub
 wrote and the value the file held before. A value hub did not write is the
 user's own choice: apply turns the part that wanted the key off, pinned, with
-one line, and leaves the user's value. hub puts an earlier value back only
-where the file still holds hub's value. When the file does not parse, hub
+one line, and leaves the user's value. A key recorded with no part only
+follows another key, so a value the user set there stays, and hub writes it no
+more until it releases the key. hub puts an earlier value back only
+where the file still holds hub's value, and removes an object it made to hold
+the key once it is empty. When a key's parent is already a value that is not
+an object, such as attribution set to false, hub leaves it as it is. When the file does not parse, hub
 leaves it and the key as they are, with one line, and the doctor names the
 file until a later apply can read it (see unreadable).
 
@@ -130,10 +134,25 @@ def unreadable_line(key, path):
     return f"hub could not read {path}, so it left {key} as it is. Fix the file, then say \"apply hub's settings\"."
 
 
+def first_missing_parent(data, key):
+    """The dot path of the first object on the way to key that the file lacks, MISSING when there is
+    something else in the way, or None when every parent is there."""
+    node, names = data, key.split(".")[:-1]
+    for depth, name in enumerate(names):
+        if name not in node:
+            return ".".join(names[:depth + 1])
+        node = node[name]
+        if not isinstance(node, dict):
+            return MISSING
+    return None
+
+
 def want(key, value, part, lines):
     """Make the file hold value at key, and record what it held before."""
     entries = read_record()
     entry = find(entries, key)
+    if entry is not None and entry.get("left_to_user"):
+        return
     path = entry["file"] if entry else settings_file()
     try:
         data, indent = load(path)
@@ -144,8 +163,13 @@ def want(key, value, part, lines):
     note_unreadable(key, None)
     current = get(data, key)
     if entry is None:
+        made = first_missing_parent(data, key)
+        if made is MISSING:
+            return
         entry = {"file": path, "key": key, "part": part, "hub_value": value,
                  "had_earlier": current is not MISSING, "earlier": None if current is MISSING else current}
+        if made:
+            entry["made_parent"] = made
         entries.append(entry)
     entry["hub_value"] = value
     write_record(entries)
@@ -156,6 +180,8 @@ def want(key, value, part, lines):
 
 def put_back(entry):
     """Put the earlier value back where the file still holds hub's value. Returns False when unreadable."""
+    if entry.get("left_to_user"):
+        return True
     try:
         data, indent = load(entry["file"])
     except ValueError:
@@ -166,6 +192,8 @@ def put_back(entry):
         put(data, entry["key"], entry["earlier"])
     else:
         delete(data, entry["key"])
+        if entry.get("made_parent") and get(data, entry["made_parent"]) == {}:
+            delete(data, entry["made_parent"])
     save(entry["file"], data, indent)
     return True
 
@@ -185,13 +213,16 @@ def release(key, lines):
     write_record([item for item in entries if item is not entry])
 
 
-def pin_changed(lines):
+def pin_changed(lines, retake=()):
     """Turn off, pinned, each part whose key the user set to another value since hub wrote it.
 
     Returns the keys apply must leave alone this run. Before setup, a changed
-    key keeps its record, and its part waits for setup's own apply.
+    key keeps its record, and its part waits for setup's own apply. A changed
+    key with no part stays the user's (see want). A changed key in retake
+    loses its record instead, so the next want keeps the user's value to put
+    back. Setup's own apply retakes the keys of the parts it turns on.
     """
-    entries, kept, changed = read_record(), [], []
+    entries, kept, changed, marked = read_record(), [], [], False
     for entry in entries:
         try:
             data, _indent = load(entry["file"])
@@ -199,10 +230,17 @@ def pin_changed(lines):
             kept.append(entry)
             continue
         current = get(data, entry["key"])
-        if current == entry["hub_value"] or not entry.get("part"):
+        if current == entry["hub_value"] or entry.get("left_to_user"):
             kept.append(entry)
+        elif not entry.get("part"):
+            kept.append(dict(entry, left_to_user=True))
+            marked = True
+        elif entry["key"] in retake and setup_done():
+            marked = True
         else:
             changed.append((entry, current))
+    if marked:
+        write_record(kept + [entry for entry, _current in changed])
     if not changed:
         return set()
     if not setup_done():
@@ -255,7 +293,7 @@ def opt_out_variable(env_names):
     return None
 
 
-def stand_down(key, value, part, lines, env_names=()):
+def stand_down(key, value, part, lines, env_names=(), users_value_counts=True):
     """Turn a part off, pinned, at apply when the user's own choice comes first. Runs before resolving.
 
     This is for a part that is on by default and that no hub setting names.
@@ -263,7 +301,9 @@ def stand_down(key, value, part, lines, env_names=()):
     while hub has not written key yet, it is a value other than the part's in
     the settings file or in ~/.claude.json. The part then goes off with one
     line, and the user's value stays. If the user later turns the part on by
-    hand, hub writes its value and keeps theirs to put back.
+    hand, hub writes its value and keeps theirs to put back. Setup's own apply
+    counts only the opt-out variable (users_value_counts False), since setup
+    turns the part on over an earlier value and keeps that value to put back.
 
     Returns True when apply must leave key alone this run. That is when the
     choice is there but setup has not run yet, so hub writes nothing until
@@ -278,7 +318,7 @@ def stand_down(key, value, part, lines, env_names=()):
         reason = f"{variable} is set"
         line = f"{variable} is set, so {part} is now off."
     else:
-        if find(read_record(), key) is not None:
+        if not users_value_counts or find(read_record(), key) is not None:
             return False
         try:
             current = users_value(key)

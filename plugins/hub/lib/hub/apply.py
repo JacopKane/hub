@@ -7,10 +7,14 @@ A run turns off, pinned, each part whose hub link the user deleted or whose
 Claude Code key the user changed (see keys.pin_changed), and
 turns off, pinned, a default-on part whose key the user set to another value
 before hub wrote it or whose opt-out variable is set (see keys.stand_down).
-Before setup, those two steps leave the key alone and pin nothing (see keys.py). It resolves
+Before setup, those steps leave the link or key alone and pin nothing (see
+keys.py). Setup's own apply turns remote_control on over a false the user
+set earlier, and keeps that false to put back. Only an opt-out variable
+still turns it off there. It resolves
 every flag, makes and removes the links and built copies, sets outputStyle
-while hub_style runs and remoteControlAtStartup while remote_control runs
-(see keys.py), writes the slot
+while hub_style runs, and while remote_control runs sets remoteControlAtStartup
+to true and attribution.sessionUrl to false, so commits and pull requests
+carry no claude.ai session link (see keys.py). It writes the slot
 files and cost.json, marks the parts of the hook groups that start Python
 only when one may run (see pre_check.sh), takes away the background jobs an
 older hub ran (see old_jobs.py), adds a line to applies.jsonl, and writes
@@ -54,8 +58,21 @@ OLD_MARKERS = ("post_tool_use_parts",)
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
 REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
+SESSION_LINK_KEY = "attribution.sessionUrl"  # false keeps the claude.ai link out of commits and pull requests
 REMOTE_OPT_OUT = ("DO_NOT_TRACK",)  # a user who opts out of tracking gets no Remote Control from hub
 CURSOR_PART = "cursor_link"
+in_setup = False  # True while setup applies the user's replies (see setup_run)
+
+
+@contextlib.contextmanager
+def setup_run():
+    """Mark the applies inside it as setup's own, which turn remote_control on over an earlier false."""
+    global in_setup
+    in_setup = True
+    try:
+        yield
+    finally:
+        in_setup = False
 
 
 def run(tree=None):
@@ -65,13 +82,13 @@ def run(tree=None):
     from . import old_jobs, switched  # only an apply needs them, not every hook that loads this module
     lines = []
     ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
-    links.pin_deleted(lines)
-    held = keys.pin_changed(lines)
-    if keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines, REMOTE_OPT_OUT):
+    held_links = links.pin_deleted(lines)
+    held = keys.pin_changed(lines, retake=(REMOTE_KEY,) if in_setup else ())
+    if keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines, REMOTE_OPT_OUT, users_value_counts=not in_setup):
         held.add(REMOTE_KEY)
     tree = tree or tree_module.load(files.PARTS_DIR)
     data = resolve.apply(tree, write=False)
-    listing = links.reconcile(tree, data, lines)
+    listing = links.reconcile(tree, data, lines, held_links)
     set_style(data, lines, held)
     set_remote_control(data, lines, held)
     cost = {}
@@ -115,13 +132,17 @@ def set_style(data, lines, held=()):
 
 
 def set_remote_control(data, lines, held=()):
-    """remoteControlAtStartup is true while remote_control runs in Claude Code, else the user's earlier value."""
+    """While remote_control runs in Claude Code, remoteControlAtStartup is true and attribution.sessionUrl is
+    false. Otherwise both hold the user's earlier values again. The session link key has no part of its own,
+    so a value the user sets there stays and turns nothing off."""
     if REMOTE_KEY in held:
         return
     if data["tools"]["claude_code"]["flags"].get(REMOTE_PART, {}).get("runs"):
         keys.want(REMOTE_KEY, True, REMOTE_PART, lines)
+        keys.want(SESSION_LINK_KEY, False, None, lines)
     else:
         keys.release(REMOTE_KEY, lines)
+        keys.release(SESSION_LINK_KEY, lines)
 
 
 def first_units(tool, tree, flags):
@@ -190,10 +211,11 @@ def remove(path):
 def is_fresh(data):
     if data is None or data.get("signature") != resolve.signature():
         return False
-    entries = links.read_record()
+    entries, set_up = links.read_record(), keys.setup_done()
     roots = (files.state_dir(), files.PLUGIN_ROOT)
+    # Before setup, a link the user deleted waits for setup's own apply (see links.pin_deleted).
     # A link whose root is another folder points into an earlier state folder, or a plugin copy that moved.
-    return all(os.path.lexists(entry["path"]) and "state" not in entry
+    return all((os.path.lexists(entry["path"]) or not set_up) and "state" not in entry
                and (entry["type"] != "link" or entry.get("root") in roots) for entry in entries)
 
 

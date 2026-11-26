@@ -305,8 +305,9 @@ def test_a_users_agent_of_the_same_name_holds_the_hub_link_with_an_offer_to_swit
 
 
 def test_a_deleted_hub_link_becomes_a_pinned_off_with_one_line(home):
-    with given("hub is installed with scout on"):
+    with given("hub is installed and set up, with scout on"):
         home.install()
+        home.write_json(home.user_file, {"version": 1, "flags": {}})
     with when("the user deletes ~/.claude/agents/hub-scout.md and apply runs"):
         os.unlink(agent_link(home, "scout"))
         result = home.step("apply")
@@ -319,8 +320,9 @@ def test_a_deleted_hub_link_becomes_a_pinned_off_with_one_line(home):
 
 
 def test_a_hub_link_deleted_between_sessions_is_seen_at_the_next_session_start(home):
-    with given("hub is installed with scout on"):
+    with given("hub is installed and set up, with scout on"):
         home.install()
+        home.write_json(home.user_file, {"version": 1, "flags": {}})
     with when("the user deletes the scout link and a session starts"):
         os.unlink(agent_link(home, "scout"))
         text, _ = session_start(home)
