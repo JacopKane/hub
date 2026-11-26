@@ -14,12 +14,14 @@ since only the user turns one on. Every question gets
 Skip as its last option and an id of hub's own. The agent's id stays as the
 question's topic.
 
-Setup adds one question of its own, last, for remote_control, outside
-tuner.setup.questions. On comes first and is what setup does when the user
-skips it, even over a false the user set earlier (see apply.setup_run). When
-DO_NOT_TRACK is set, the question says why Remote Control stays off and
-offers no way to turn it on. Setup leaves it out in Cursor, which has no
-Remote Control, and when the user already turned the part on or off by hand.
+Setup adds one question of its own for remote_control, last, outside
+tuner.setup.questions. On comes first, and a skip counts as On, even over a
+false the user set earlier (see apply.setup_run). When DO_NOT_TRACK or
+DISABLE_TELEMETRY is set, the question says why Remote Control stays off and
+offers no way to turn it on. Setup leaves the question out in Cursor, which
+has no Remote Control. It also leaves it out once the user switched the part
+by hand or picked Off in an earlier setup. The part then stays as they chose
+until they ask for a change in plain words.
 
 The reply scans this machine into the profile, applies the chosen options
 by setup, turns off the instructions compare_rules found, writes hub.json
@@ -144,7 +146,7 @@ def remote_question(tree):
     if tree.get(REMOTE_TOPIC) is None or os.environ.get("CURSOR_AGENT") == "1":
         return None
     stored = settings.entry(settings.read(files.user_settings_path()) or settings.empty(), REMOTE_TOPIC)
-    if stored is not None and stored.get("by", "user") == "user":
+    if apply.chosen_by_user(REMOTE_TOPIC) or (stored is not None and stored.get("value") == "off"):
         return None
     variable = keys.opt_out_variable(apply.REMOTE_OPT_OUT)
     if variable:

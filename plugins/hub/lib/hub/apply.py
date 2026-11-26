@@ -9,8 +9,9 @@ turns off, pinned, a default-on part whose key the user set to another value
 before hub wrote it or whose opt-out variable is set (see keys.stand_down).
 Before setup, those steps leave the link or key alone and pin nothing (see
 keys.py). Setup's own apply turns remote_control on over a false the user
-set earlier, and keeps that false to put back. Only an opt-out variable
-still turns it off there. It resolves
+set earlier, and keeps that false to put back. An opt-out variable still
+turns it off there. So does a false the user set after they switched the
+part by hand in hub. It resolves
 every flag, makes and removes the links and built copies, sets outputStyle
 while hub_style runs, and while remote_control runs sets remoteControlAtStartup
 to true and attribution.sessionUrl to false, so commits and pull requests
@@ -39,7 +40,7 @@ import os
 import re
 import shutil
 
-from . import files, keys, links, resolve, slots, tree as tree_module, uninstall
+from . import files, keys, links, resolve, settings, slots, tree as tree_module, uninstall
 
 APPLIES = "applies.jsonl"
 COST = "cost.json"
@@ -59,7 +60,8 @@ TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
 REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
 SESSION_LINK_KEY = "attribution.sessionUrl"  # false keeps the claude.ai link out of commits and pull requests
-REMOTE_OPT_OUT = ("DO_NOT_TRACK",)  # a user who opts out of tracking gets no Remote Control from hub
+# The Remote Control docs treat both the same, so either one keeps hub from turning it on.
+REMOTE_OPT_OUT = ("DO_NOT_TRACK", "DISABLE_TELEMETRY")
 CURSOR_PART = "cursor_link"
 in_setup = False  # True while setup applies the user's replies (see setup_run)
 
@@ -83,7 +85,7 @@ def run(tree=None):
     lines = []
     ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
     held_links = links.pin_deleted(lines)
-    held = keys.pin_changed(lines, retake=(REMOTE_KEY,) if in_setup else ())
+    held = keys.pin_changed(lines, retake=(REMOTE_KEY,) if in_setup and not chosen_by_user(REMOTE_PART) else ())
     if keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines, REMOTE_OPT_OUT, users_value_counts=not in_setup):
         held.add(REMOTE_KEY)
     tree = tree or tree_module.load(files.PARTS_DIR)
@@ -119,6 +121,12 @@ def run(tree=None):
     for part, which in switched.changes(tree, ran_before, running):
         lines += switched.run(part, which)
     return lines
+
+
+def chosen_by_user(part):
+    """Whether the user switched part by hand in hub, so a key they change stays theirs even in setup."""
+    stored = settings.entry(settings.read(files.user_settings_path()) or settings.empty(), part)
+    return stored is not None and stored.get("by", "user") == "user"
 
 
 def set_style(data, lines, held=()):

@@ -168,7 +168,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | queue | Holds a message to an idle chat for a short time, so two quick messages wake it once | off | Claude Code | "turn on the queue" |
 | restart | Restarts the running chats, each under its own name | off | Claude Code | "turn on restart" |
 | status_band | Two rows above the prompt with your other chats, hub's state, recent changes and offers | on | Claude Code | "turn off the status band" |
-| remote_control | Starts every new Claude Code chat with Remote Control on, so you can follow it from claude.ai or the Claude app, and keeps the claude.ai chat link out of your commits and pull requests. It needs a Pro, Max, Ultra, Team or Enterprise plan. Setup asks about it, with On first. After setup, an update keeps it off if you set it to false yourself, and DO_NOT_TRACK keeps it off. See Help and privacy | on | Claude Code | "turn off remote control" |
+| remote_control | Starts every new Claude Code chat with Remote Control on, so you can follow it from claude.ai or the Claude app, and keeps the claude.ai chat link out of your commits and pull requests. It needs a Pro, Max, Ultra, Team or Enterprise plan. Setup asks about it, with On first. After setup, an update keeps it off if you set it to false yourself, and DO_NOT_TRACK or DISABLE_TELEMETRY keeps it off. See Help and privacy | on | Claude Code | "turn off remote control" |
 | cursor_link | Beta. Gives Cursor the same parts, hooks and agents | off | Claude Code, Cursor | "turn on the Cursor link" |
 
 Each part also has smaller switches inside it, such as an agent's model and effort. They switch the same way.

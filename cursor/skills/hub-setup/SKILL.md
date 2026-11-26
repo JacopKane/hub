@@ -7,7 +7,7 @@ Look first, ask little, and start small.
 
 1. Look. The scan is in hub's start text. If this machine was set up before, there is none, so run `python3 -I ./plugins/hub/lib/hub_switch.py profile` instead. Then run `python3 -I ./plugins/hub/lib/hub_switch.py show --all` for hub's parts and instruction ids, and read the files the scan lists under "Your own rules".
 2. Start the tuner agent with the scan, those rules and the output of show. It answers with one JSON object.
-3. Save the answer to a file and run `python3 -I ./plugins/hub/lib/hub_switch.py setup --answer <file>`. hub drops what it does not know and prints the questions. The last one is hub's own, about Remote Control. Show each option as hub printed it, in the same order.
+3. Save the answer to a file and run `python3 -I ./plugins/hub/lib/hub_switch.py setup --answer <file>`. hub drops what it does not know and prints the questions. In Claude Code, the last one is hub's own, about Remote Control. Show each option as hub printed it, in the same order.
 4. Ask only those questions. In Claude Code, ask them all in one AskUserQuestion dialog. In Cursor, ask them in one plain message. If there are none, go on.
 5. Run `python3 -I ./plugins/hub/lib/hub_switch.py setup --reply '<json>'` with the answers. Key each answer by the id that step 3 printed for its question, such as {"3f9a1c2e": "work"}. Leave out each question the user skipped.
 6. Show the summary exactly as hub printed it. It already says what is on and why. Add one line of your own at most, then go back to the user's task.

@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from conftest import DASH, FIXTURES, PLUGIN, REPO, load_fixture
 from steps import and_, given, then, when
 from test_start_text_and_links import SLOT_LIMIT, read, session_start, slot_files, text_of, use_cursor_beta
@@ -393,6 +395,10 @@ def remote_question(dialog):
     return question
 
 
+def topics(dialog):
+    return [question["topic"] for question in dialog["questions"]]
+
+
 def labels(question):
     return [option["label"] for option in question["options"]]
 
@@ -523,6 +529,19 @@ def test_a_new_user_who_picks_off_in_setup_keeps_their_settings_as_they_were(hom
         assert f"{REMOTE_PART} is \"off\" now, because you picked Off" in summary
         assert read(path) == original
         assert home.state_file("keys.json")["keys"] == []
+    with when("setup runs again later, and the user answers nothing"):
+        dialog = setup_dialog(home)
+        home.step("setup", "--reply", "{}")
+    with then("setup does not ask about Remote Control again, and it stays off with the file as before hub"):
+        assert REMOTE_PART not in topics(dialog)
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "setup", "value": "off"}
+        assert not home.show()["flags"][REMOTE_PART]["runs"]
+        assert read(path) == original
+    with when("the user asks in plain words to turn it on"):
+        home.step("on", REMOTE_PART)
+    with then("Remote Control is on with the session link off, and a later setup run still does not ask"):
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: True, "attribution": {SESSION_LINK: False}}
+        assert REMOTE_PART not in topics(setup_dialog(home))
 
 
 def test_a_false_set_by_hand_before_setup_waits_for_setup_and_then_setup_turns_it_on(home):
@@ -552,6 +571,33 @@ def test_a_false_set_by_hand_before_setup_waits_for_setup_and_then_setup_turns_i
     with when("the user turns remote_control off"):
         home.step("off", REMOTE_PART)
     with then("the false the user set comes back, and hub's session link setting is gone"):
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: False}
+
+
+def test_a_false_set_by_hand_after_turning_remote_control_on_stays_through_a_setup_rerun(home):
+    path = claude_settings(home)
+    with given("a set-up user who turned remote_control on in plain words"):
+        write_claude_settings(home, {"theme": "dark"})
+        install_printing(home)
+        run_setup(home)
+        home.step("on", REMOTE_PART)
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "on"}
+    with when("the user sets the key to false by hand, then runs setup again"):
+        edit_claude_settings(home, **{REMOTE_KEY: False})
+        dialog = setup_dialog(home)
+        summary = home.step("setup", "--reply", "{}").stdout
+    with then("setup does not ask about Remote Control, the false stays, and remote_control is off by the user "
+              "with one line"):
+        assert REMOTE_PART not in topics(dialog)
+        assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: False}
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
+        [line] = turned_off_lines(summary)
+        assert REMOTE_KEY in line and "false" in line
+    with when("the user turns it on again in plain words, then off"):
+        home.step("on", REMOTE_PART)
+        assert json.loads(read(path))[REMOTE_KEY] is True
+        home.step("off", REMOTE_PART)
+    with then("the false the user set comes back"):
         assert json.loads(read(path)) == {"theme": "dark", REMOTE_KEY: False}
 
 
@@ -630,28 +676,29 @@ def test_an_older_false_in_claude_json_makes_remote_control_stand_down_at_update
         assert not os.path.exists(os.path.join(home.state, "keys.json"))
 
 
-def test_a_user_who_opts_out_of_tracking_gets_no_remote_control_from_hub(home):
+@pytest.mark.parametrize("variable", ["DO_NOT_TRACK", "DISABLE_TELEMETRY"])
+def test_a_user_who_opts_out_of_tracking_gets_no_remote_control_from_hub(home, variable):
     path = claude_settings(home)
-    with given("a set-up user from before remote_control shipped, with DO_NOT_TRACK=0, which leaves tracking on"):
+    with given("a set-up user from before remote_control shipped, with the opt-out variable at 0, which leaves tracking on"):
         write_claude_settings(home, {"theme": "dark"})
         original = read(path)
         install_before_remote_control(home)
         run_setup(home)
-        home.env["DO_NOT_TRACK"] = "0"
+        home.env[variable] = "0"
     with when("the update brings remote_control and apply runs"):
         shutil.copytree(os.path.join(PLUGIN, "parts", REMOTE_PART), os.path.join(home.plugin, "parts", REMOTE_PART))
         home.step("apply")
     with then("Remote Control is on, because 0 does not opt out"):
         assert json.loads(read(path))[REMOTE_KEY] is True
-    with when("the user sets DO_NOT_TRACK=1 and apply runs"):
-        home.env["DO_NOT_TRACK"] = "1"
+    with when("the user sets the variable to 1 and apply runs"):
+        home.env[variable] = "1"
         output = home.step("apply").stdout
-    with then("remote_control is off and pinned by the user, one line names DO_NOT_TRACK, and the file is as before hub"):
+    with then("remote_control is off and pinned by the user, one line names the variable, and the file is as before hub"):
         assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
         [line] = remote_lines(output)
-        assert "DO_NOT_TRACK" in line and f'Say "turn on {REMOTE_PART}"' in line
+        assert variable in line and f'Say "turn on {REMOTE_PART}"' in line
         [change] = [item for item in home.history() if item.get("flag") == REMOTE_PART]
-        assert "DO_NOT_TRACK" in change["reason"]
+        assert variable in change["reason"]
         assert read(path) == original
     with when("the user still turns remote_control on by hand"):
         home.step("on", REMOTE_PART)
@@ -659,10 +706,11 @@ def test_a_user_who_opts_out_of_tracking_gets_no_remote_control_from_hub(home):
         assert json.loads(read(path))[REMOTE_KEY] is True
 
 
-def test_setup_keeps_remote_control_off_with_a_reason_when_the_settings_env_block_sets_do_not_track(home):
+@pytest.mark.parametrize("variable", ["DO_NOT_TRACK", "DISABLE_TELEMETRY"])
+def test_setup_keeps_remote_control_off_with_a_reason_when_the_settings_env_block_opts_out_of_tracking(home, variable):
     path = claude_settings(home)
-    with given("a new user whose Claude Code settings set DO_NOT_TRACK in their env block"):
-        write_claude_settings(home, {"env": {"DO_NOT_TRACK": "1"}, "theme": "dark"})
+    with given("a new user whose Claude Code settings set the variable in their env block"):
+        write_claude_settings(home, {"env": {variable: "1"}, "theme": "dark"})
         original = read(path)
     with when("hub is installed"):
         install_printing(home)
@@ -673,7 +721,7 @@ def test_setup_keeps_remote_control_off_with_a_reason_when_the_settings_env_bloc
         question = remote_question(setup_dialog(home))
     with then("the Remote Control question shows it off, says why, and has no way to turn it on"):
         assert labels(question) == ["Keep it off", "Skip"]
-        assert "DO_NOT_TRACK is set" in question["text"]
+        assert f"{variable} is set" in question["text"]
     with when("the reply still tries to turn it on"):
         refused = home.step("setup", "--reply", json.dumps({question["id"]: "On"}), check=False)
     with then("setup refuses it and writes nothing"):
@@ -681,10 +729,10 @@ def test_setup_keeps_remote_control_off_with_a_reason_when_the_settings_env_bloc
         assert not os.path.exists(home.user_file) and read(path) == original
     with when("the user skips the question"):
         summary = home.step("setup", "--reply", json.dumps({question["id"]: "Skip"})).stdout
-    with then("remote_control is off and pinned by the user, one line names DO_NOT_TRACK, and the file is as before"):
+    with then("remote_control is off and pinned by the user, one line names the variable, and the file is as before"):
         assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
         [line] = turned_off_lines(summary)
-        assert "DO_NOT_TRACK" in line
+        assert variable in line
         assert read(path) == original
         assert not os.path.exists(os.path.join(home.state, "keys.json"))
 
