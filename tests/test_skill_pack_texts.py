@@ -32,7 +32,6 @@ ZONE_TEXTS = {
     ("core", "instead_unknown.md"): {"name", "projects"},
     ("core", "zone_question.md"): ZONE_FILL,
     ("core", "share_dry_run.md"): {"folder", "reach", "undo", "private_words", "private_paths", "secrets"},
-    ("self_protection", "write_refusal.md"): ZONE_FILL - {"name"},
     ("live_notes", "zone_line.md"): set(),
     ("coordinator", "ledger.md"): set(),
     ("coordinator", "ledger_line.md"): {"path"},
@@ -46,7 +45,7 @@ SETUP_TEXTS = {
     "setup_summary.md": {"start_costs", "skill_costs", "ledger_path", "ledger_zone", "notes_path", "notes_zone"},
 }
 ONE_LINE = {"reach_local.md", "reach_share.md", "reach_sync.md", "reach_unknown.md", "reach_listed.md",
-            "instead_unknown.md", "write_refusal.md", "zone_line.md", "ledger_line.md",
+            "instead_unknown.md", "zone_line.md", "ledger_line.md",
             "turn_off_option.md", "skill_cost_line.md"}
 # The reach texts end the sentence "its folder ...", and the logic adds the full stop.
 REACH = {"reach_local.md", "reach_share.md", "reach_sync.md", "reach_unknown.md", "reach_listed.md"}
@@ -102,9 +101,8 @@ def test_the_zone_share_leak_and_ledger_texts_fill_the_values_their_logic_passes
         question = read(CORE_TEXT, "zone_question.md")
         options = [match[1] for match in map(OPTION_LINE.match, question.splitlines()) if match]
         assert options == ["Keep it local (Recommended)", "Share it", "Skip"]
-    with and_("only the user's own typed share opens a folder, in the question and in the refusal"):
+    with and_("the question waits for the user's own share message"):
         assert 'Wait for their own "share {folder}" message' in question
-        assert 'only their own typed "share {folder}"' in read(PARTS, "self_protection", "text", "write_refusal.md")
     with then("the share dry run lists the leak check's three kinds of finding and how to take it back"):
         dry_run = read(CORE_TEXT, "share_dry_run.md")
         for heading in ("Private words", "Home and temp paths", "Secrets and chat session links"):

@@ -1,1 +1,0 @@
-Nothing changed. This change to {flag} would weaken a protection or change a pinned value, and hub skips a repo's {scope} file for that, so it would never apply. Make the change in the user's own settings instead, with --scope user or no scope option, not a project or local scope. That means not --project or --local, and not --scope project or --scope local.

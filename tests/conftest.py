@@ -199,16 +199,22 @@ class Home:
         with open(path) as handle:
             return [json.loads(line) for line in handle]
 
-    def install(self, source=PLUGIN):
+    def install(self, source=PLUGIN, demo_refusal=False):
         """Copy the plugin, plus demo_gate: a made-up guard part with a mode, children, options and signals.
 
         No real part has that shape, and the scenarios for modes, scopes, guards and the tuner need one.
         It has no handler, so it never checks or stops a command.
+
+        With demo_refusal, it also copies demo_refusal: a made-up gate that refuses a shell command holding
+        REFUSE_ME in both tools. No shipped part refuses a shell call in Cursor, and the scenarios for refusals,
+        call locks and broken handlers need one. It goes in before the first apply, so it starts on and is no offer.
         """
         shutil.copytree(source, self.plugin, ignore=shutil.ignore_patterns("__pycache__"))
         demo_gate = os.path.join(self.plugin, "parts", "demo_gate")
         if not os.path.exists(demo_gate):
             shutil.copytree(os.path.join(FIXTURES, "demo_gate"), demo_gate)
+        if demo_refusal:
+            shutil.copytree(os.path.join(FIXTURES, "demo_refusal"), os.path.join(self.plugin, "parts", "demo_refusal"))
         self.hubctl("apply")
 
     def hubctl(self, *args, cwd=None, check=True):

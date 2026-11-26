@@ -12,8 +12,8 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 9,
-    "parts_total": 36,
+    "parts_on": 8,
+    "parts_total": 35,
     "start_text": 1210
   },
   "strip": [
@@ -502,8 +502,8 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "gates",
-      "parts_on": 2,
-      "parts_total": 5,
+      "parts_on": 1,
+      "parts_total": 4,
       "parts": [
         {
           "id": "chrome_lock",
@@ -558,24 +558,6 @@ export const DAY9: HubScreen = /* json */ {
               "stage": null
             }
           ]
-        },
-        {
-          "id": "self_protection",
-          "name": "self_protection",
-          "depth": 0,
-          "does": "Stops a tool call that would lower hub's own protections, so only you change them.",
-          "value": "on",
-          "effective": "on",
-          "runs": true,
-          "by": "default",
-          "scope": "shipped",
-          "relevant": true,
-          "hidden_because": null,
-          "cost": "per use",
-          "next_session": false,
-          "claude_code_only": false,
-          "stage": null,
-          "children": []
         },
         {
           "id": "sentry_write_gate",

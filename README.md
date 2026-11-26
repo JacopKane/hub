@@ -6,11 +6,11 @@ Every part of your Claude Code setup gets its own switch.
 
 hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
 
-hub is at version 0.17.0. It is early software, so expect changes that break things.
+hub is at version 0.18.0. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
-- Working today are the settings file and its switches, a first-run setup, self-protection, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
+- Working today are the settings file and its switches, a first-run setup, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
 - Cursor support is in beta and untested. It works only from a checkout of this repo, not from the plugin install.
 - Still planned is a sandbox command.
 
@@ -23,7 +23,7 @@ claude plugin marketplace add JacopKane/hub
 claude plugin install hub@hub
 ```
 
-Then start a new chat, because hub's agents and parts show only from the next chat. hub offers its setup there. A small Haiku agent reads your setup, asks a few questions in one dialog, and turns on a small starting set. Ask Claude "what does hub have on?" to see what it turned on. To remove hub, tell Claude "uninstall hub". hub removes its links and puts back the settings keys it changed. It does this only when your own newest message asks for it.
+Then start a new chat, because hub's agents and parts show only from the next chat. hub offers its setup there. A small Haiku agent reads your setup, asks a few questions in one dialog, and turns on a small starting set. Ask Claude "what does hub have on?" to see what it turned on. To remove hub, tell Claude "uninstall hub". hub removes its links and puts back the settings keys it changed. Your settings file stays, so you can install hub again later.
 
 To update hub, run these two commands and then start a new chat:
 
@@ -47,14 +47,13 @@ Tell Claude what to change in plain words. For example:
 "check the hub setup"         check the setup
 ```
 
-Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in its own folder under `~/.local/state/`. A protection is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
+Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in its own folder under `~/.local/state/`. Only you can lower a protection, with `/hub`. When Claude tries to lower one, hub refuses and Claude asks you. Claude can raise a protection at any time.
 
 Known limits:
 
-- `/hub` and the status band are optional extras. They work where Claude Code loads plugin mods. Without the mod, plain words still switch parts, lower a protection and uninstall hub. Only pinning a value and taking or declining an offer need `/hub`.
-- In Cursor, a protection cannot be lowered by words. Lower it from Claude Code instead.
+- `/hub` and the status band are optional extras. They work where Claude Code loads plugin mods. Without the mod, plain words still switch parts and uninstall hub. Lowering a protection, pinning a value and taking or declining an offer need `/hub`.
+- In Cursor, a protection can not be lowered. Lower it with `/hub` in Claude Code instead.
 - Restarting chats from hub works only in iTerm2 or tmux.
-- Self-protection reads the chat and the commands Claude writes. It is not a sandbox. [Self-protection limits](docs/self-protection-limits.md) names where its checks end.
 
 ## How hub compares
 
@@ -158,8 +157,6 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | away_guard | Tells a chat when you are away, so it keeps working while a question waits. It never holds a question | off | Claude Code | "turn on the away guard" |
 | knowledge_only | Reminds the chat to explain shared material and change nothing | off | Claude Code | "turn on knowledge only" |
 | question_check | Opens a question dialog only when it carries enough context to answer | off | Claude Code | "turn on the question check" |
-| self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
-| containers (in self_protection) | Lets hub's switch step run in a container that can not reach your home folder, where it changes only the container's copy of hub's settings | on | Claude Code, Cursor | "turn off containers" |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |
 | sentry_write_gate | Experimental. Asks before a Sentry tool changes what the team sees | off | Claude Code | "turn on the Sentry gate" |
 | slack_write_gate | Experimental. Lets a chat read Slack but never post | off | Claude Code | "turn on the Slack gate" |

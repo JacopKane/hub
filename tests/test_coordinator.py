@@ -77,13 +77,8 @@ def test_a_lobby_chat_is_refused_topic_work_and_a_web_chat_is_not(home, chats):
     with and_("LOBBY may also write its memory folder"):
         memory = os.path.join(home.root, ".claude", "projects", "demo", "memory", "fact.md")
         assert chats.tool("LOBBY", "Write", {"file_path": memory, "content": "x"}).ran
-    with and_("a write to hub's state folder is refused by self-protection, not by the work guard"):
+    with and_("the work guard lets LOBBY write hub's state folder"):
         state_note = {"file_path": os.path.join(home.state, "note.md"), "content": "x"}
-        guarded = chats.tool("LOBBY", "Write", state_note)
-        assert guarded.refused and "owns the work" not in guarded.reason
-    with when("the user turns self_protection.settings_files off in /hub"):
-        home.hubctl_from_mod("off", "self_protection.settings_files")
-    with then("the work guard lets LOBBY write hub's state folder"):
         assert chats.tool("LOBBY", "Write", state_note).ran
 
 

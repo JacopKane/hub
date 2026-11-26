@@ -15,8 +15,8 @@ python3 -I ${CLAUDE_PLUGIN_ROOT}/lib/hub_switch.py <words>
 - To give a flag a value, use `set <flag> <value>`.
 - For "undo that", use `undo`. To undo an older change, find its id in the output of `screen --json` and use `undo <id>`.
 - To check the setup, use `doctor`.
-- For "uninstall hub", use `uninstall`. It removes hub's links and puts back the settings hub changed, and it keeps the user's own files.
+- For "uninstall hub", use `uninstall`. It removes hub's links and puts back the settings hub changed, and it keeps the user's own files. Run it only when the user asks for it.
 
 Reply with the line hub printed, in a code block, and nothing more. It says what changed and how to undo it.
 
-A protection, such as a gate or self-protection, changes only when the newest message the user typed asks for it by name. Uninstalling works the same way, so the user must ask to "uninstall hub" in their own words. If hub refuses, show its answer and tell the user the exact change you need. Do not look for another way around it.
+Claude can raise a protection, such as a gate, but only the user can lower one, with /hub where Claude Code loads plugin mods. If hub refuses, show its answer and tell the user the exact change you need. Do not look for another way around it.

@@ -19,8 +19,7 @@ answer and logs nothing. When the first still holds the call's lock after
 CALL_LOCK_WAIT seconds, the second run ends in an error, as below. After hubctl uninstall it does nothing at all. At
 SessionStart it also does its own work, see session_start. An error goes to
 errors.log in the state folder. When hub can not store an answer, that answer still counts. After any other
-error, a call that touches hub itself is refused, because self_protection could not check it, and so is a
-public step, because the gate could not check it. In Claude Code, a Slack call off the Slack gate's read
+error, a public step is refused, because the gate could not check it. In Claude Code, a Slack call off the Slack gate's read
 list is refused, and a Sentry call off the Sentry gate's read list asks the user first, even when those gates
 are off. Every other call runs, so a broken hub never stops ordinary work.
 """
@@ -43,15 +42,10 @@ from hub import chat_notices, files, resolve, signals, uninstall  # noqa: E402
 CALLS = "calls"
 CALL_AGE = 24 * 3600  # stored answers older than this are removed
 CALL_LOCK_WAIT = 5  # seconds, so a lock that stays held ends in an error well inside the 15 s hook time
-SELF_PROTECTION = "self_protection"
-# Used only when self_protection itself can not load: a call that names the switch step, a marker or a hub file.
-ROUGH_HUB = re.compile(r"hubctl|hub_switch|AI_AGENT|CURSOR_AGENT|HUB_DOOR|\.hub/hub")
 # Used only when the shell parser can not load: any git or gh call counts as public.
 ROUGH_PUBLIC = re.compile(r"\b(?:git|gh)\b")
 BROKEN = ("hub could not read its settings or parts, so it stopped this public step. "
           "Fix the error below, then send the command again.")
-BROKEN_SELF = ("hub could not read its settings or parts, so it stopped this call, which touches hub itself. "
-               "Ask the user to fix hub.")
 # Each write gate for MCP tools, with the word in its server names and its answer when hub fails before
 # the gate can decide. A call whose server name has that word gets that answer, unless the gate's read
 # list shows it is a read.
@@ -343,27 +337,15 @@ def write_gate_failure(hook_input):
     return None
 
 
-def self_protection_refusal(hook_input, raw):
-    """When hub failed: self_protection's refusal with every check on, or a rough one when it can not load."""
-    try:
-        return load_handler(SELF_PROTECTION).refusal_without_settings(hook_input)
-    except Exception:
-        text = json.dumps(hook_input.get("tool_input")) if isinstance(hook_input, dict) else raw
-        return BROKEN_SELF if ROUGH_HUB.search(text or "") else None
-
-
 def failure(event, hook_input, raw, error, tool="claude_code"):
     """The neutral answer after an error.
 
-    It refuses a call that touches hub and a public step. A call a write gate checks gets that gate's answer,
-    and every other call gets nothing.
+    It refuses a public step. A call a write gate checks gets that gate's answer, and every other call gets
+    nothing.
     """
     detail = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
     if event != "PreToolUse":
         return None
-    own = self_protection_refusal(hook_input, raw)
-    if own:
-        return {"refusal": f"{own}\n{detail}"}
     if is_public_step(hook_input, raw):
         return {"refusal": f"{BROKEN}\n{detail}"}
     gate = write_gate_failure(hook_input) if tool == "claude_code" else None
@@ -391,8 +373,7 @@ def main(argv):
         raw = sys.stdin.read()
         hook_input = json.loads(raw)
         output = claude_output(event, run(event, hook_input))
-    except Exception as error:  # a broken hub stops only public steps, calls that touch hub and a write gate's
-        # calls
+    except Exception as error:  # a broken hub stops only public steps and a write gate's calls
         log_error()
         output = claude_output(event, failure(event, hook_input, raw, error))
     if output:

@@ -1,1 +1,0 @@
-hub can not read the prompt this interactive Claude run gets, and the run writes its prompt into its own chat as if the user typed it. Write the prompt in the command as plain text, so hub can check it.

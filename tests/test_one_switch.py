@@ -16,8 +16,8 @@ from steps import and_, given, then, when
 # The made-up guard part from tests/fixtures/demo_gate, which every test home installs. It has a mode, children and
 # options, but no handler.
 GATE = "demo_gate"
-# A command that self-protection refuses in both tools: it clears the marker that says an agent runs the command.
-CLEARS_THE_MARKER = "AI_AGENT= python3 tool.py"
+# A command that the made-up demo_refusal gate refuses in both tools. Only scenarios that add that gate get it.
+REFUSED = "python3 tool.py REFUSE_ME"
 
 
 def flags(home, cwd=None):
@@ -379,25 +379,25 @@ def test_a_caller_that_needs_only_the_steps_can_skip_reading_the_pushed_commits(
 
 
 def test_cursors_shell_call_gets_the_same_refusal_in_cursors_own_keys(home):
-    with given("the recorded Cursor input for a shell call that clears the agent marker"):
-        home.install()
+    with given("the made-up demo_refusal gate, and the recorded Cursor input for a shell call that it refuses"):
+        home.install(demo_refusal=True)
         data = load_fixture("cursor", "preToolUse.Shell.json")
         data.update(cwd=home.work, workspace_roots=[home.work])
-        data["tool_input"] = {"command": CLEARS_THE_MARKER, "working_directory": home.work}
+        data["tool_input"] = {"command": REFUSED, "working_directory": home.work}
     with when("the adapter runs it"):
         cursor = home.send("cursor", "PreToolUse", data)
     with then("the answer is in Cursor's keys, with the same refusal text as Claude Code's"):
         assert set(cursor.output) == {"permission", "user_message", "agent_message"}
         assert cursor.output["permission"] == "deny"
-        claude = home.hook("claude_code", "PreToolUse", CLEARS_THE_MARKER)
+        claude = home.hook("claude_code", "PreToolUse", REFUSED)
         assert claude.refused and cursor.reason == claude.reason
         assert "hookSpecificOutput" not in cursor.output
 
 
 def test_a_second_run_of_the_same_tool_call_returns_the_first_answer(home, tool):
-    with given("hub is installed, and a tool call that self-protection refuses"):
-        home.install()
-        data = home.hook_input(tool, "PreToolUse", CLEARS_THE_MARKER)
+    with given("hub is installed with the made-up demo_refusal gate, and a tool call that it refuses"):
+        home.install(demo_refusal=True)
+        data = home.hook_input(tool, "PreToolUse", REFUSED)
     with when("the same tool call reaches the dispatcher twice, as when two plugin copies load"):
         first = home.send(tool, "PreToolUse", data)
         lines = len(home.signals())
@@ -428,9 +428,10 @@ def test_the_manifests_schemas_and_hooks_files_agree():
         assert set(hub_schema["properties"]) == settings.TOP_KEYS
         assert set(hub_schema["$defs"]["entry"]["properties"]) == settings.ENTRY_KEYS
         assert set(part_schema["properties"]["handlers"]["propertyNames"]["enum"]) == set(tree.EVENTS)
-    with and_("every event a part handles is in the hooks file of each tool the part runs in"):
+    with and_("every event a part handles is in the hooks file of each tool the part and its handler run in"):
         def handled_in(tool):
-            return {event for part in parts.parts if tool in part.runs_in for event in part.handlers}
+            return {event for part in parts.parts if tool in part.runs_in
+                    for event, spec in part.handlers.items() if tree.handler_runs_in(spec, tool)}
         assert handled_in("claude_code") and handled_in("claude_code") <= claude_events
         assert handled_in("cursor") and {tree.CURSOR_EVENT_NAMES[event] for event in handled_in("cursor")} <= cursor_events
     with and_("the marketplace names the one plugin"):

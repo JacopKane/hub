@@ -1,13 +1,6 @@
 {
   "version": 1,
   "hooks": {
-    "preToolUse": [
-      {
-        "matcher": "Delete|Edit|Shell|Write",
-        "command": "python3 -I ./plugins/hub/lib/hub/adapters/cursor_hooks.py preToolUse",
-        "failClosed": true
-      }
-    ],
     "postToolUse": [
       {
         "matcher": "Edit|Read|Write",

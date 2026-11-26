@@ -315,36 +315,29 @@ def tool_marker(home, tool):
 
 
 def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_part_names(home):
-    with given("hub is installed as it ships, where the gate names Bash, self_protection names Bash, Delete, "
-               "Edit and Write, and tier_rule is off, so no running part names Agent"):
+    with given("hub is installed as it ships, where tier_rule is off, so no running part names a tool"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 1)
-    with then("apply marks only the four tools of the gate and self_protection"):
-        assert sorted(os.listdir(os.path.join(home.state, TOOL_PARTS))) == ["Bash", "Delete", "Edit", "Write"]
-        assert tool_marker(home, "Agent") is None
-        assert [tool_marker(home, tool) for tool in ("Delete", "Edit", "Write")] == [["self_protection"]] * 3
-    with when("the main chat reads, greps, globs, edits a notebook, asks and sends seven times through the group"):
-        calls = [("Read", None), ("Grep", {"pattern": "x"}), ("Glob", {"pattern": "*"}), ("NotebookEdit", None),
-                 ("AskUserQuestion", {"questions": []}), ("SendMessage", {"to": "WEB"}), ("Read", None)]
+    with then("apply marks no tool"):
+        assert os.listdir(os.path.join(home.state, TOOL_PARTS)) == []
+    with when("the main chat reads, greps, globs, edits, writes, edits a notebook, asks and sends through the group"):
+        calls = [("Read", None), ("Grep", {"pattern": "x"}), ("Glob", {"pattern": "*"}), ("Edit", None),
+                 ("Write", None), ("NotebookEdit", None), ("AskUserQuestion", {"questions": []}),
+                 ("SendMessage", {"to": "WEB"}), ("Read", None)]
         runs = [named_call(group, name, tool_input) for name, tool_input in calls]
     with then("each call ends with no answer, and only the shell and cat start, with no error"):
-        assert [result.output for result, _seconds in runs] == [{}] * 7
+        assert [result.output for result, _seconds in runs] == [{}] * 9
         assert group.python_starts() == 0 and group.fast_path()
-    with when("the main chat edits and writes a file in the repo"):
-        edits = [named_call(group, "Edit"), named_call(group, "Write")]
-    with then("the group starts the dispatcher for self_protection each time, and both calls run"):
-        assert [result.output for result, _seconds in edits] == [{}] * 2
-        assert group.python_starts() == 2
     with when("the main chat starts an agent"):
         named_call(group, "Agent", {"description": "Read the docs", "prompt": "Read them", "subagent_type": "worker"})
     with then("Python does not start, because no running part names Agent"):
-        assert group.python_starts() == 2
+        assert group.python_starts() == 0
     with when("the user switches tier_rule on, which names Agent, and the main chat starts an agent"):
         home.hubctl("on", "tier_rule")
         named_call(group, "Agent", {"description": "Read the docs", "prompt": "Read them", "subagent_type": "worker"})
     with then("apply marks Agent for tier_rule, and the group starts the dispatcher for it"):
         assert tool_marker(home, "Agent") == ["tier_rule"]
-        assert group.python_starts() == 3
+        assert group.python_starts() == 1
 
     with when("the user switches the coordinator on, which names Read, and a large Write comes"):
         home.hubctl("on", "coordinator")
@@ -354,13 +347,14 @@ def test_the_group_for_named_tools_starts_python_only_for_a_tool_that_a_running_
     with then("apply marks Read for it, the group starts the dispatcher for both, "
               "and the dispatcher read the whole input"):
         assert tool_marker(home, "Read") == ["coordinator"]
-        assert group.python_starts() == 5
+        assert group.python_starts() == 3
         assert not os.path.exists(os.path.join(home.state, "errors.log"))
     with when("the user switches it off again in /hub"):
         home.hubctl_from_mod("off", "coordinator")
         named_call(group, "Read")
     with then("the marker is gone, and Python does not start"):
-        assert tool_marker(home, "Read") is None and group.python_starts() == 5
+        assert tool_marker(home, "Read") is None and group.python_starts() == 3
+
 
 
 BROKEN_MARKS = [
@@ -436,31 +430,26 @@ def test_without_a_done_mark_the_other_groups_start_the_dispatcher_too(home, eve
 
 
 def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(home):
-    with given("hub is installed as it ships, where self_protection names Bash"):
+    with given("hub is installed as it ships, where no running part names Bash"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 0)
         listing = home.hook_input("claude_code", "PreToolUse", "ls")
         listing.update(cwd=home.work)
-    with then("apply marks Bash for it, and a command starts the dispatcher"):
-        assert tool_marker(home, "Bash") == ["self_protection"]
-        group.send(listing)
-        assert group.python_starts() == 1
-    with when("the user switches self_protection off in /hub"):
-        home.hubctl_from_mod("off", "self_protection")
-        result, _seconds = group.send(listing)
-    with then("the Bash marker is gone, and the command starts only the shell and cat"):
+    with then("apply marks no Bash, and a command starts only the shell and cat"):
         assert tool_marker(home, "Bash") is None
-        assert result.output == {} and group.python_starts() == 1 and not any(group.errors)
-    with when("the user switches the coordinator on, which also names Bash"):
+        result, _seconds = group.send(listing)
+        assert result.output == {} and group.python_starts() == 0 and not any(group.errors)
+    with when("the user switches the coordinator on, which names Bash"):
         home.hubctl("on", "coordinator")
         group.send(listing)
     with then("apply marks Bash for it, and the command starts the dispatcher"):
-        assert tool_marker(home, "Bash") == ["coordinator"] and group.python_starts() == 2
+        assert tool_marker(home, "Bash") == ["coordinator"] and group.python_starts() == 1
     with when("the user switches it off again in /hub"):
         home.hubctl_from_mod("off", "coordinator")
         group.send(listing)
     with then("no marker is left, and Python does not start"):
-        assert tool_marker(home, "Bash") is None and group.python_starts() == 2
+        assert tool_marker(home, "Bash") is None and group.python_starts() == 1
+
 
 
 # Code a Bash call never needs: the job code, which loads an XML parser, and the code that changes a
@@ -483,9 +472,10 @@ def stored_answers(home):
     return sorted(name for name in os.listdir(folder) if name.endswith(".json")) if os.path.isdir(folder) else []
 
 
-def test_a_bash_call_the_guards_let_through_loads_only_the_code_they_need(home):
-    with given("hub is installed as it ships, where self_protection checks every command"):
+def test_a_bash_call_a_part_lets_through_loads_only_the_code_it_needs(home):
+    with given("hub is installed, with the coordinator on, so a Bash call has a part that checks it"):
         home.install()
+        home.hubctl("on", "coordinator")
     with when("the main chat runs git status"):
         result, names = dispatch_loading(home, "git status")
     with then("it runs with no answer, and the dispatcher stored that answer for a second copy of the plugin"):
@@ -493,11 +483,7 @@ def test_a_bash_call_the_guards_let_through_loads_only_the_code_they_need(home):
         assert not os.path.exists(os.path.join(home.state, "errors.log"))
     with and_("the dispatcher loaded no job or change code"):
         assert sorted(set(NOT_FOR_A_CHECKED_CALL) & names) == []
-    with when("the main chat turns self_protection off with hubctl"):
-        result, _names = dispatch_loading(home, "hubctl off self_protection")
-    with then("self_protection still refuses it"):
-        assert result.refused and "(self_protection.lowering)" in result.reason
-        assert len(stored_answers(home)) == 2
+
 
 
 def test_a_marker_that_can_not_be_read_or_is_empty_still_starts_the_dispatcher(home):

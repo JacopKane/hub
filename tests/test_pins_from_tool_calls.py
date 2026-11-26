@@ -27,9 +27,9 @@ def test_a_pinned_flag_does_not_change_from_a_command_the_model_runs(home, calle
     with when("the model runs hubctl on for it inside a tool call"):
         as_caller(home, caller)
         done = home.hubctl("on", "demo_gate.dashes", check=False)
-    with then("hubctl refuses and says it changes only when the user asks in their own words"):
+    with then("hubctl refuses and says only the user can change it, with /hub"):
         assert done.returncode == 1
-        assert "only when the user asks for it in their own words" in done.stderr
+        assert "only the user can change it, such as with /hub where Claude Code loads plugin mods" in done.stderr
         assert "terminal" not in done.stderr
     and_("the settings file is unchanged")
     assert home.settings() == before

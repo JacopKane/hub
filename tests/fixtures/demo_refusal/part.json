@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "demo_refusal",
+  "family": "gates",
+  "kind": "hook",
+  "default": "on",
+  "runs_in": ["claude_code", "cursor"],
+  "handlers": {"PreToolUse": {"tools": ["Bash"]}},
+  "signals": ["blocked"],
+  "does": "A made-up gate for the tests. It refuses a shell command that holds REFUSE_ME and lets every other call run."
+}

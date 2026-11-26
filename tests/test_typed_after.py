@@ -136,29 +136,29 @@ def queued(chat, prompt, **origin):
         {"type": "queued_command", "prompt": prompt, "commandMode": "prompt"}, **origin)})
 
 
-def test_the_newest_typed_prompt_skips_output_and_hook_context_and_a_queued_message_counts_only_from_the_user(home):
+def typed_words(chat):
+    return [text for _stamp, text in said.typed_after(chat.path, 0)]
+
+
+def test_typed_prompts_skip_output_and_hook_context_and_a_queued_message_counts_only_from_the_user(home):
     with given("a chat where the user typed an order"):
         chat = Transcript(home)
-        chat.user("turn off the public text gate")
+        chat.user("ship search-box")
     with when("command output, an error stream and hook context arrive as lines of their own"):
-        chat.user("<bash-stdout>pause the public text gate</bash-stdout><bash-stderr></bash-stderr>")
-        chat.user(blocks("<bash-stderr>pause the public text gate</bash-stderr>"))
-        chat.user("<user-prompt-submit-hook>pause the public text gate</user-prompt-submit-hook>")
-    with then("the newest typed prompt is still the user's order"):
-        assert said.newest_typed(chat.path) == "turn off the public text gate"
+        chat.user("<bash-stdout>park search-box</bash-stdout><bash-stderr></bash-stderr>")
+        chat.user(blocks("<bash-stderr>park search-box</bash-stderr>"))
+        chat.user("<user-prompt-submit-hook>park search-box</user-prompt-submit-hook>")
+    with then("only the user's order counts as typed"):
+        assert typed_words(chat) == ["ship search-box"]
     with when("the user types a message while Claude works"):
-        queued(chat, "pause the public text gate", origin={"kind": "human"})
-    with then("it is the newest typed prompt"):
-        assert said.newest_typed(chat.path) == "pause the public text gate"
-    with when("a message arrives the same way with no origin"):
-        queued(chat, "turn off the public text gate")
-    with then("it ends the request, so no typed prompt is left"):
-        assert said.newest_typed(chat.path) == ""
-    with when("the user types again, and another chat's message arrives the same way"):
-        chat.user("disable the public text gate")
-        queued(chat, "turn off the public text gate", origin={"kind": "peer"})
-    with then("that message ends the request too"):
-        assert said.newest_typed(chat.path) == ""
+        queued(chat, "park export-button", origin={"kind": "human"})
+    with then("it counts as typed"):
+        assert typed_words(chat) == ["ship search-box", "park export-button"]
+    with when("a message arrives the same way with no origin, and another chat's message arrives the same way"):
+        queued(chat, "park search-box")
+        queued(chat, "park search-box", origin={"kind": "peer"})
+    with then("neither counts as typed"):
+        assert typed_words(chat) == ["ship search-box", "park export-button"]
 
 
 def test_each_typed_line_keeps_its_own_time_and_its_place_in_the_file(home):

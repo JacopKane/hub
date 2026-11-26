@@ -8,8 +8,8 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 7,
-    "parts_total": 33,
+    "parts_on": 6,
+    "parts_total": 32,
     "start_text": 1210
   },
   "strip": [
@@ -1256,8 +1256,8 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
     },
     {
       "family": "gates",
-      "parts_on": 2,
-      "parts_total": 5,
+      "parts_on": 1,
+      "parts_total": 4,
       "parts": [
         {
           "id": "chrome_lock",
@@ -1416,57 +1416,6 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "waits_for": [
                 "core.private_words or core.private_words_files"
               ]
-            }
-          ]
-        },
-        {
-          "id": "self_protection",
-          "name": "self_protection",
-          "depth": 0,
-          "does": "Stops a tool call that would lower hub's own protections, so only you change them.",
-          "value": "on",
-          "effective": "on",
-          "runs": true,
-          "by": "default",
-          "scope": "shipped",
-          "relevant": true,
-          "hidden_because": null,
-          "cost": "per use",
-          "next_session": false,
-          "claude_code_only": false,
-          "stage": null,
-          "kind": "hook",
-          "type": "switch",
-          "values": [
-            "off",
-            "on"
-          ],
-          "waits_for": [],
-          "new": false,
-          "children": [
-            {
-              "id": "self_protection.lowering",
-              "name": "lowering",
-              "depth": 1,
-              "does": "Stops a tool call that would lower a gate, a guard, a privacy check or a pin, or uninstall hub, unless your newest message asks for that change.",
-              "value": "on",
-              "effective": "on",
-              "runs": true,
-              "by": "default",
-              "scope": "shipped",
-              "relevant": true,
-              "hidden_because": null,
-              "cost": "",
-              "next_session": false,
-              "claude_code_only": false,
-              "stage": null,
-              "kind": "behavior",
-              "type": "switch",
-              "values": [
-                "off",
-                "on"
-              ],
-              "waits_for": []
             }
           ]
         },

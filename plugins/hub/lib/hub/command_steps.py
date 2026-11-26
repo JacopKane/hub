@@ -16,7 +16,7 @@ shell reads from a pipe, a process substitution or standard input, as in
 printf ... | bash. A script that a shell reads from a heredoc is read line
 by line, like any other command.
 
-Self-protection and the dispatcher read commands with it.
+The dispatcher reads commands with it, to tell a public step from the others when hub fails.
 
 Design limits. It reads the commands the model writes, inside command
 substitutions and shell wrappers. It is not a sandbox.
@@ -112,9 +112,9 @@ API_READ = CHANGED_WORD + "\x0f"
 # A variable that zsh changes even in double quotes: a modifier such as $name:h, a subscript such as $name[1], or a
 # ${...} form with more than the name in it, such as ${name:-1}. The parser puts UNREADABLE before its $.
 CHANGED_VARIABLE = re.compile(r"\x00\$(?:[A-Za-z_]\w*(?:\[|:[A-Za-z&])|\{(?![A-Za-z_]\w*\}))")
-# Added only when a reader asks for it, as self-protection does. It goes before each spot the shell may fill in
-# with several words or with none: an expansion outside double quotes, which bash splits and both shells drop when
-# it is empty, and "$@", an array or zsh's (f) flag inside them.
+# Added only when a reader asks for it, as marked_reader does for a git or gh step. It goes before each spot the
+# shell may fill in with several words or with none: an expansion outside double quotes, which bash splits and both
+# shells drop when it is empty, and "$@", an array or zsh's (f) flag inside them.
 MANY_WORDS = "\x07"
 # Put with MANY_WORDS, and only when a reader asks for it, before each character outside quotes that the shell may
 # change the word at even when nothing is filled in, as changes_the_word finds them: a brace list such as {a,b}, a
@@ -246,7 +246,7 @@ TAG_VALUES = ({"--local-user", "--cleanup", "--format", "--sort", "--contains", 
                "--no-merged", "--points-at", "--trailer", "--message", "--file"}, "umF")
 BINARY_PEEK = 8000  # bytes; a NUL byte here marks a binary file, as in git
 # git's own options that take the next word as their value, before its action, as git.c reads them. git read
-# --super-prefix this way up to 2.39. self_protection reads this set too, so both find the same action.
+# --super-prefix this way up to 2.39.
 GIT_VALUE_OPTIONS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--attr-source",
                      "--shallow-file", "--super-prefix"}
 GIST_VALUE_OPTIONS = {"-d", "--desc", "-f", "--filename", "-r", "--remove", "-a", "--add"}
