@@ -26,8 +26,10 @@ While cursor_link does not run, apply writes no Cursor slots and removes the
 old ones, since Cursor support is beta and off by default.
 
 An older hub copy never builds over files that a newer copy built (see
-newest.py). Its run returns one line that says why. Its hooks get the flags
-resolved in memory for its own parts, so they still follow the settings.
+newest.py). Its run returns one line that says why. It also marks
+resolved.json stale, so the newer copy builds the run's changes on its next
+run. Its hooks get the flags resolved in memory for its own parts, so they
+still follow the settings.
 
 After the step's uninstall, apply changes nothing until a new copy of hub is
 installed (see uninstall.is_out), and ensure_fresh raises Uninstalled.
@@ -86,6 +88,7 @@ def run(tree=None):
         return [uninstall.OUT]
     newer = newest.newer_build()
     if newer:
+        mark_stale()
         return [newest.left_alone_line(newer)]
     uninstall.clear_old_mark()
     from . import old_jobs, switched  # only an apply needs them, not every hook that loads this module
@@ -263,6 +266,17 @@ def ensure_fresh(session=None):
                 files.write_json(files.state_path(links.AGENTS_FOLDER_MADE), dict(note, session=session))
             return data
     return own_flags()
+
+
+def mark_stale():
+    """Make is_fresh fail for every copy, so the next copy that may build does build."""
+    path = files.state_path(resolve.RESOLVED)
+    try:
+        data = files.read_json(path)
+    except ValueError:
+        return
+    if isinstance(data, dict):
+        files.write_json(path, dict(data, signature=None))
 
 
 def own_flags():

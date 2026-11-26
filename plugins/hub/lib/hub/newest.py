@@ -12,10 +12,18 @@ record names a newer version, the copy builds nothing (see apply.run and
 apply.ensure_fresh). Versions compare as numbers, so 0.20.10 is newer than
 0.20.9. A newer copy, or one of the same version, builds as before.
 
-Every copy also builds as before in these cases. The record is missing or
-cannot be read. Either version is not plain numbers. Or the newer copy is no
-longer installed, because its folder is gone or Claude Code marked it with
-.orphaned_at after the user went back to an older version.
+Every copy also builds as before when the record is missing or cannot be
+read, or when either version is not plain numbers. The same goes for a record
+from a folder outside Claude Code's plugin cache, such as a --plugin-dir
+checkout or a Cursor copy, so a copy that is not installed never holds the
+files for good. A record whose folder now holds another version does not
+count either. Nor does a newer copy that is no longer installed, because its
+folder is gone or Claude Code marked it with .orphaned_at after the user went
+back to an older version.
+
+An older copy that skips its build may still have changed what the build needs,
+such as a held file or a setting. So it marks resolved.json stale, and the
+newer copy rebuilds on its next run (see apply.run).
 
 Copies from before this check have none, so they still build until their
 chats restart.
@@ -23,7 +31,7 @@ chats restart.
 import os
 import re
 
-from . import files
+from . import files, links
 
 STAMP = "built_by.json"
 # Claude Code leaves this file in a cache folder of a version that is no longer installed.
@@ -53,9 +61,21 @@ def manifest_version(root):
     return manifest.get("version") if isinstance(manifest, dict) else None
 
 
-def is_installed(root):
-    """Whether a copy's folder still holds its manifest and Claude Code has not marked it as taken out."""
-    return (isinstance(root, str) and os.path.isfile(os.path.join(root, ".claude-plugin", "plugin.json"))
+def plugin_cache():
+    """The folder where Claude Code keeps the installed copies of each plugin."""
+    return os.path.join(links.claude_dir(), "plugins", "cache")
+
+
+def is_inside(folder, root):
+    folder, root = os.path.realpath(folder), os.path.realpath(root)
+    return root != folder and os.path.commonpath([folder, root]) == folder
+
+
+def still_installed(record):
+    """Whether the recorded copy sits in the plugin cache, still holds the recorded version and is not taken out."""
+    root = record.get("root")
+    return (isinstance(root, str) and is_inside(plugin_cache(), root)
+            and manifest_version(root) == record.get("version")
             and not os.path.lexists(os.path.join(root, ORPHANED)))
 
 
@@ -63,12 +83,12 @@ def newer_version(record, own, installed):
     """The version in record when it is newer than own and its copy is installed, else None.
 
     record is what built_by.json holds, own is this copy's version, and
-    installed(root) tells whether the recorded copy is still installed.
+    installed(record) tells whether the recorded copy is still installed.
     """
     if not isinstance(record, dict):
         return None
     theirs, mine = version_key(record.get("version")), version_key(own)
-    if theirs is None or mine is None or theirs <= mine or not installed(record.get("root")):
+    if theirs is None or mine is None or theirs <= mine or not installed(record):
         return None
     return record["version"]
 
@@ -82,7 +102,7 @@ def read_record():
 
 def newer_build():
     """The version of the newer copy that built the shared files, or None when this copy may build."""
-    return newer_version(read_record(), manifest_version(files.PLUGIN_ROOT), is_installed)
+    return newer_version(read_record(), manifest_version(files.PLUGIN_ROOT), still_installed)
 
 
 def record_build():
