@@ -3,7 +3,8 @@
     want(key, value, part, lines)   write one key by its dot path, such as env.HUB_NAME
     release(key, lines)             put back the user's earlier value
     pin_changed(lines)       at apply: a key the user changed since turns its part off
-    stand_down(key, value, part, lines)   at apply: a default-on part whose key the user already set to another value goes off
+    stand_down(key, value, part, lines, env_names)   at apply: a default-on part whose key the user
+                             already set to another value, or whose opt-out variable is set, goes off
     restore_all(lines)       at uninstall: put back every earlier value
 
 The key goes into the user's ~/.claude/settings.json. A write keeps the
@@ -15,6 +16,11 @@ one line, and leaves the user's value. hub puts an earlier value back only
 where the file still holds hub's value. When the file does not parse, hub
 leaves it and the key as they are, with one line, and the doctor names the
 file until a later apply can read it (see unreadable).
+
+Before setup writes hub's own settings file, pin_changed and stand_down
+write nothing. They return the keys apply must leave alone. hub.json is how
+the tuner knows setup ran, so creating it early would skip setup. Setup's
+own apply records the pin later.
 """
 import contextlib
 import json
@@ -32,6 +38,15 @@ INDENT = re.compile(r"^\{\s*\n([ \t]+)\S")
 def settings_file():
     base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(files.home(), ".claude")
     return os.path.join(base, "settings.json")
+
+
+def global_config_file():
+    """~/.claude.json, or .claude.json in CLAUDE_CONFIG_DIR. Older Claude Code versions kept some keys there."""
+    return os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or files.home(), ".claude.json")
+
+
+def setup_done():
+    return os.path.exists(files.user_settings_path())
 
 
 def read_record():
@@ -171,7 +186,11 @@ def release(key, lines):
 
 
 def pin_changed(lines):
-    """Turn off, pinned, each part whose key the user set to another value since hub wrote it."""
+    """Turn off, pinned, each part whose key the user set to another value since hub wrote it.
+
+    Returns the keys apply must leave alone this run. Before setup, a changed
+    key keeps its record, and its part waits for setup's own apply.
+    """
     entries, kept, changed = read_record(), [], []
     for entry in entries:
         try:
@@ -185,7 +204,9 @@ def pin_changed(lines):
         else:
             changed.append((entry, current))
     if not changed:
-        return
+        return set()
+    if not setup_done():
+        return {entry["key"] for entry, _current in changed}
     path = files.user_settings_path()
     data = settings.read(path) or settings.empty()
     for entry, current in changed:
@@ -199,36 +220,82 @@ def pin_changed(lines):
                      f"Say \"turn on {part}\" to bring it back.")
     settings.write(path, data)
     write_record(kept)
+    return set()
 
 
-def stand_down(key, value, part, lines):
-    """At apply, before resolving: turn a part off, pinned, when the user's own value at key comes first.
+def is_set(value):
+    """Read an opt-out variable as a standard boolean. Unset, empty, 0, false, no and off all count as not set."""
+    return value is not None and str(value).strip().lower() not in ("", "0", "false", "no", "off")
 
-    This is for a part that is on by default. When hub has not written key
-    yet, no hub setting names the part, and the file already holds a value
-    other than the one the part wants, that value is the user's choice. So
-    the part goes off with one line, and the file stays as it is. A user who
-    then turns the part on by hand gets hub's value, and hub keeps theirs to
-    put back.
+
+def users_value(key):
+    """The user's own value at key. The settings file comes first, then ~/.claude.json, which Claude Code still reads.
+
+    Raises ValueError when the settings file does not parse.
     """
-    if find(read_record(), key) is not None:
-        return
+    current = get(load(settings_file())[0], key)
+    if current is not MISSING:
+        return current
+    try:
+        data = files.read_json(global_config_file(), {})
+    except (ValueError, OSError):
+        return MISSING
+    return get(data, key) if isinstance(data, dict) else MISSING
+
+
+def opt_out_variable(env_names):
+    """The first of env_names set in the environment or in the settings file's env block, else None."""
+    try:
+        block = get(load(settings_file())[0], "env")
+    except ValueError:
+        block = MISSING
+    for name in env_names:
+        if is_set(os.environ.get(name)) or (isinstance(block, dict) and is_set(block.get(name))):
+            return name
+    return None
+
+
+def stand_down(key, value, part, lines, env_names=()):
+    """Turn a part off, pinned, at apply when the user's own choice comes first. Runs before resolving.
+
+    This is for a part that is on by default and that no hub setting names.
+    The user's choice is one of env_names being set, such as DO_NOT_TRACK. Or,
+    while hub has not written key yet, it is a value other than the part's in
+    the settings file or in ~/.claude.json. The part then goes off with one
+    line, and the user's value stays. If the user later turns the part on by
+    hand, hub writes its value and keeps theirs to put back.
+
+    Returns True when apply must leave key alone this run. That is when the
+    choice is there but setup has not run yet, so hub writes nothing until
+    setup's own apply.
+    """
     path = files.user_settings_path()
     data = settings.read(path) or settings.empty()
     if settings.entry(data, part) is not None:
-        return
-    try:
-        current = get(load(settings_file())[0], key)
-    except ValueError:
-        return  # want names the file that does not parse
-    if current is MISSING or current == value:
-        return
-    shown = json.dumps(current, ensure_ascii=False)
+        return False
+    variable = opt_out_variable(env_names)
+    if variable:
+        reason = f"{variable} is set"
+        line = f"{variable} is set, so {part} is now off."
+    else:
+        if find(read_record(), key) is not None:
+            return False
+        try:
+            current = users_value(key)
+        except ValueError:
+            return False  # want names the file that does not parse
+        if current is MISSING or current == value:
+            return False
+        shown = json.dumps(current, ensure_ascii=False)
+        reason = f"{key} was already {shown} in your settings"
+        line = f"Your settings already set {key} to {shown}, so {part} is now off and your value stays."
+    if not setup_done():
+        return True
     settings.put(data, part, "off", "user")
-    history.add(part, "user", "on", "off", "user", "apply", f"{key} was already {shown} in your settings")
-    lines.append(f"Your settings already set {key} to {shown}, so {part} is now off and your value stays. "
-                 f"Say \"turn on {part}\" to bring it back.")
+    history.add(part, "user", "on", "off", "user", "apply", reason)
+    lines.append(f"{line} Say \"turn on {part}\" to bring it back.")
     settings.write(path, data)
+    return False
 
 
 def restore_all(lines):

@@ -764,7 +764,7 @@ export const DAY9: HubScreen = /* json */ {
           "id": "remote_control",
           "name": "remote_control",
           "depth": 0,
-          "does": "Starts every new Claude Code chat with Remote Control on, so you can follow and steer it from claude.ai or the Claude app. It sets remoteControlAtStartup in your Claude Code settings. If you already set that key to false, the part stays off and your value stays. Turning the part off puts back what the key held before.",
+          "does": "Starts every new Claude Code chat with Remote Control on, so you can follow and steer it from claude.ai or the Claude app. It sets remoteControlAtStartup in your Claude Code settings. If you already set that key to false, or set DO_NOT_TRACK, the part stays off and your value stays. Turning the part off puts back what the key held before.",
           "value": "on",
           "effective": "on",
           "runs": true,

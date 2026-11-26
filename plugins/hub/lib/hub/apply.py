@@ -6,7 +6,8 @@
 A run turns off, pinned, each part whose hub link the user deleted or whose
 Claude Code key the user changed (see keys.pin_changed), and
 turns off, pinned, a default-on part whose key the user set to another value
-before hub wrote it (see keys.stand_down), resolves
+before hub wrote it or whose opt-out variable is set (see keys.stand_down).
+Before setup, those two steps leave the key alone and pin nothing (see keys.py). It resolves
 every flag, makes and removes the links and built copies, sets outputStyle
 while hub_style runs and remoteControlAtStartup while remote_control runs
 (see keys.py), writes the slot
@@ -53,6 +54,7 @@ OLD_MARKERS = ("post_tool_use_parts",)
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
 REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
+REMOTE_OPT_OUT = ("DO_NOT_TRACK",)  # a user who opts out of tracking gets no Remote Control from hub
 CURSOR_PART = "cursor_link"
 
 
@@ -64,13 +66,14 @@ def run(tree=None):
     lines = []
     ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
     links.pin_deleted(lines)
-    keys.pin_changed(lines)
-    keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines)
+    held = keys.pin_changed(lines)
+    if keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines, REMOTE_OPT_OUT):
+        held.add(REMOTE_KEY)
     tree = tree or tree_module.load(files.PARTS_DIR)
     data = resolve.apply(tree, write=False)
     listing = links.reconcile(tree, data, lines)
-    set_style(data, lines)
-    set_remote_control(data, lines)
+    set_style(data, lines, held)
+    set_remote_control(data, lines, held)
     cost = {}
     for tool in tree_module.TOOLS:
         flags = data["tools"][tool]["flags"]
@@ -101,16 +104,20 @@ def run(tree=None):
     return lines
 
 
-def set_style(data, lines):
+def set_style(data, lines, held=()):
     """outputStyle names hub's style while hub_style runs in Claude Code, else the user's earlier value."""
+    if STYLE_KEY in held:
+        return
     if data["tools"]["claude_code"]["flags"].get(STYLE_PART, {}).get("runs"):
         keys.want(STYLE_KEY, STYLE_NAME, STYLE_PART, lines)
     else:
         keys.release(STYLE_KEY, lines)
 
 
-def set_remote_control(data, lines):
+def set_remote_control(data, lines, held=()):
     """remoteControlAtStartup is true while remote_control runs in Claude Code, else the user's earlier value."""
+    if REMOTE_KEY in held:
+        return
     if data["tools"]["claude_code"]["flags"].get(REMOTE_PART, {}).get("runs"):
         keys.want(REMOTE_KEY, True, REMOTE_PART, lines)
     else:
