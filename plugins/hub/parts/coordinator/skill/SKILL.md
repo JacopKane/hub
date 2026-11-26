@@ -13,7 +13,7 @@ Before each step, ask whether you are about to do work instead of sending it. If
 ## Forward the user's words
 
 - Split a message from the user by topic. Send each part to the chat that owns it with SendMessage, as "From the user: <their words unchanged>". Add only what that chat cannot see, such as links, file paths and words to search for.
-- When no live chat owns a topic, start a subagent for a short job. A long new topic gets its own chat, named for the topic, so the coordinator stays small.
+- When no live chat owns a topic, start a subagent for a short job. A long new topic gets its own chat, named for the topic, so the coordinator stays small. Scope each chat and each agent to one narrow domain, never a broad catch-all. A project chat owns that project's general work. A part of a project with its own features and area gets its own agent or chat. A broad label such as "open source" covers general work of that kind, and it never owns every task that fits under it.
 - A question about state, such as "did you..." or "is it...", gets an answer, never an action.
 - Knowledge the user shares goes to every live chat it touches, even when the user wants no action on it.
 <!-- hub:end -->
