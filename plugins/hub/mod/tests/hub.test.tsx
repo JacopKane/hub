@@ -160,7 +160,7 @@ test('a change line older than status_band.notices.keep_minutes leaves the band,
   // An offer stays a day, since only the band and /hub take it.
   await clock.advance(24 * HOUR)
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
-  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('9 on · start text 1.2k')
+  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('10 on · start text 1.2k')
   await ui.unmount()
 })
 
@@ -188,7 +188,7 @@ test('with notices off the band shows the offer, and with offers off too, the st
 
   await $.command.run({ command: 'hub', args: 'off status_band.offers', origin: TYPED })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.key)).toEqual(['features'])
-  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('9 on · start text 1.2k')
+  expect((await ui.find({ type: 'Text', text: /start text/ }))?.text).toBe('10 on · start text 1.2k')
   await ui.unmount()
 })
 

@@ -3,10 +3,10 @@
   "id": "coordinator",
   "family": "chats",
   "kind": "skill",
-  "default": "off",
+  "default": "on",
+  "never_offered": true,
   "runs_in": ["claude_code"],
   "reason_not_in": {"cursor": "Cursor has no ListAgents, no SendMessage and no question tool a hook can check."},
-  "offer_when": "profile.chats_running >= 2",
   "handlers": {
     "SessionStart": {"tools": []},
     "UserPromptSubmit": {"tools": []},

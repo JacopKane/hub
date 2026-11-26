@@ -8,7 +8,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 6,
+    "parts_on": 7,
     "parts_total": 32,
     "start_text": 1210
   },
@@ -800,7 +800,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
     },
     {
       "family": "chats",
-      "parts_on": 0,
+      "parts_on": 1,
       "parts_total": 6,
       "parts": [
         {
@@ -860,9 +860,9 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "name": "coordinator",
           "depth": 0,
           "does": "One chat the user talks to, which forwards work to the chat that owns it and relays questions back.",
-          "value": "off",
-          "effective": "off",
-          "runs": false,
+          "value": "on",
+          "effective": "on",
+          "runs": true,
           "by": "default",
           "scope": "shipped",
           "relevant": true,
@@ -887,7 +887,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "does": "The name of the coordinator chat. A chat takes it with /rename or --name.",
               "value": "HUB",
               "effective": "HUB",
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -899,9 +899,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "kind": "option",
               "type": "text",
               "values": [],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             },
             {
               "id": "coordinator.start_nudge",
@@ -910,7 +908,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "does": "The chat with the coordinator's name is told to load hub-coordinator until it does.",
               "value": "on",
               "effective": "on",
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -925,9 +923,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
                 "off",
                 "on"
               ],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             },
             {
               "id": "coordinator.work_guard",
@@ -936,7 +932,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "does": "Refuses topic edits, test runs and commits in the coordinator. Its subagents and other chats pass.",
               "value": "on",
               "effective": "on",
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -951,9 +947,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
                 "off",
                 "on"
               ],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             },
             {
               "id": "coordinator.work_guard.allowed",
@@ -970,7 +964,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
                 "~/.claude/projects/*/memory/*",
                 "{state}/*"
               ],
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -982,9 +976,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "kind": "option",
               "type": "list",
               "values": [],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             },
             {
               "id": "coordinator.instructions",
@@ -993,7 +985,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "does": "The sections of the hub-coordinator skill.",
               "value": "on",
               "effective": "on",
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -1008,9 +1000,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
                 "off",
                 "on"
               ],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             },
             {
               "id": "coordinator.instructions.forward",
@@ -1019,7 +1009,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "does": "Forward the user's words to the chat that owns the topic.",
               "value": "on",
               "effective": "on",
-              "runs": false,
+              "runs": true,
               "by": "default",
               "scope": "shipped",
               "relevant": true,
@@ -1034,9 +1024,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
                 "off",
                 "on"
               ],
-              "waits_for": [
-                "coordinator"
-              ]
+              "waits_for": []
             }
           ]
         },

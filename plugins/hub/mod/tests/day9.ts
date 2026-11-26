@@ -14,7 +14,7 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 9,
+    "parts_on": 10,
     "parts_total": 36,
     "start_text": 1210
   },
@@ -311,7 +311,7 @@ export const DAY9: HubScreen = /* json */ {
     },
     {
       "family": "chats",
-      "parts_on": 0,
+      "parts_on": 1,
       "parts_total": 7,
       "parts": [
         {
@@ -355,9 +355,9 @@ export const DAY9: HubScreen = /* json */ {
           "name": "coordinator",
           "depth": 0,
           "does": "One chat the user talks to, which forwards work to the chat that owns it and relays questions back.",
-          "value": "off",
-          "effective": "off",
-          "runs": false,
+          "value": "on",
+          "effective": "on",
+          "runs": true,
           "by": "default",
           "scope": "shipped",
           "relevant": true,
