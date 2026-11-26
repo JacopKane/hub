@@ -39,19 +39,19 @@ def file_call(home, tool_name, tool_input):
 
 
 @pytest.mark.parametrize("command", [
-    "hubctl off public_text_gate",
-    "hubctl off public_text_gate.private_paths --scope local",
-    "hubctl on public_text_gate.public_repos_only",
+    "hubctl off demo_gate",
+    "hubctl off demo_gate.private_paths --scope local",
+    "hubctl on demo_gate.public_repos_only",
     "hubctl off self_protection",
     "hubctl uninstall",
-    "python3 -I plugins/hub/bin/hubctl off public_text_gate.secrets",
+    "python3 -I plugins/hub/bin/hubctl off demo_gate.secrets",
     "cd /tmp && nohup hubctl off core --json 2>&1",
 ], ids=["gate mode", "privacy check in the local scope", "a loosening option",
         "this part", "uninstall", "by path through python", "behind cd and nohup"])
 def test_a_tool_call_that_runs_hubctl_to_lower_a_protection_is_refused(home, tool, command):
     with given("hub is installed with the gate at block"):
         home.install()
-        home.hubctl("set", "public_text_gate", "block")
+        home.hubctl("set", "demo_gate", "block")
         before = home.settings()
     with when(f"the model runs {command!r} in a tool call"):
         result = home.hook(tool, "PreToolUse", command)
@@ -65,34 +65,34 @@ def test_a_tool_call_that_runs_hubctl_to_lower_a_protection_is_refused(home, too
 def test_a_tool_call_can_not_claim_to_be_the_user(home, tool):
     with given("hub is installed with the gate at block"):
         home.install()
-        home.hubctl("set", "public_text_gate", "block")
+        home.hubctl("set", "demo_gate", "block")
         before = home.settings()
     with when("the model runs hubctl with a --by user option in a tool call, and the hook lets it through or not"):
-        result = home.hook(tool, "PreToolUse", "hubctl set public_text_gate warn --by user")
+        result = home.hook(tool, "PreToolUse", "hubctl set demo_gate warn --by user")
         home.env = dict(home.env, AI_AGENT="claude-code_2-1-319_agent", CLAUDECODE="1")
-        done = home.hubctl("set", "public_text_gate", "warn", "--by", "user", check=False)
+        done = home.hubctl("set", "demo_gate", "warn", "--by", "user", check=False)
     with then("either the hook refuses it, or hubctl rejects the option, and the settings did not change"):
         assert result.refused or done.returncode != 0, done.stdout
         assert home.settings() == before
 
 
 def test_a_pinned_flag_can_not_be_changed_from_a_tool_call_even_in_another_scope(home, tool):
-    with given("the user turned public_text_gate.dashes on and pinned it from their own terminal"):
+    with given("the user turned demo_gate.dashes on and pinned it from their own terminal"):
         home.install()
-        home.hubctl("on", "public_text_gate.dashes")
-        home.hubctl("pin", "public_text_gate.dashes")
+        home.hubctl("on", "demo_gate.dashes")
+        home.hubctl("pin", "demo_gate.dashes")
     with when("the model turns it off in the local scope from a tool call"):
-        result = home.hook(tool, "PreToolUse", "hubctl off public_text_gate.dashes --scope local")
+        result = home.hook(tool, "PreToolUse", "hubctl off demo_gate.dashes --scope local")
     with then("the call is refused, because a pin is the user's"):
         assert refused_by(result, "lowering"), result.reason
 
 
 @pytest.mark.parametrize("command", [
-    "bash -c 'hubctl off public_text_gate'",
+    "bash -c 'hubctl off demo_gate'",
     "echo done $(hubctl uninstall)",
-    "sh <<'EOF'\ncd ~\nhubctl off public_text_gate.secrets\nEOF",
+    "sh <<'EOF'\ncd ~\nhubctl off demo_gate.secrets\nEOF",
     "eval hubctl uninstall",
-    "echo off public_text_gate | xargs hubctl",
+    "echo off demo_gate | xargs hubctl",
     "hubctl off \"$FLAG\"",
 ], ids=["bash -c", "substitution", "heredoc script", "eval", "xargs", "hidden flag"])
 def test_hubctl_inside_a_wrapper_or_a_substitution_is_refused_too(home, tool, command):
@@ -105,10 +105,10 @@ def test_hubctl_inside_a_wrapper_or_a_substitution_is_refused_too(home, tool, co
 
 
 @pytest.mark.parametrize("command", [
-    "hubctl off public_text_gate.dashes",
+    "hubctl off demo_gate.dashes",
     "hubctl show",
     "hubctl doctor --json",
-    "hubctl set public_text_gate block",
+    "hubctl set demo_gate block",
     "hubctl on status_band",
     "which hubctl && cat plugins/hub/bin/hubctl",
 ], ids=["dashes is a style flag", "show", "doctor", "raising the gate", "an unprotected part", "reading the program"])
@@ -158,7 +158,7 @@ def test_reading_the_agent_marker_still_runs(home, tool):
 
 @pytest.mark.parametrize("command", [
     "echo '{}' > ~/.config/hubctl/hub.json",
-    "cat >> \"$XDG_STATE_HOME/hubctl/signals.jsonl\" <<'EOF'\n{\"flag\": \"public_text_gate\"}\nEOF",
+    "cat >> \"$XDG_STATE_HOME/hubctl/signals.jsonl\" <<'EOF'\n{\"flag\": \"demo_gate\"}\nEOF",
     "printf x | tee ~/.local/state/hubctl/tuner/pending.json",
     "sed -i '' 's/block/off/' ~/.config/hubctl/hub.json",
     "cp /tmp/forged.json $HOME/.config/hubctl/hub.json",
@@ -221,16 +221,6 @@ def test_edit_and_write_on_hubs_settings_are_refused(home, tool_name, extra):
 # order, switches and failure
 
 
-def test_self_protection_answers_before_the_public_text_gate(home):
-    with given("hub is installed with the gate on"):
-        home.install()
-    with when("one command both commits a private path and uninstalls hub"):
-        result = home.hook("claude_code", "PreToolUse",
-                           "git commit -q --allow-empty -m 'see /home/sam/plan.md' && hubctl uninstall")
-    with then("the refusal is self_protection's, not the gate's"):
-        assert refused_by(result, "lowering") and result.findings == [], result.reason
-
-
 def test_the_user_can_turn_one_check_off_with_hub_in_claude_code(home):
     with given("hub is installed"):
         home.install()
@@ -255,7 +245,7 @@ def test_a_broken_hub_still_refuses_a_call_that_touches_hub(home, tool):
         with open(home.user_file, "w") as handle:
             handle.write("{ not json")
     with when("the model runs hubctl to turn the gate off"):
-        result = home.hook(tool, "PreToolUse", "hubctl off public_text_gate", errors_expected=True)
+        result = home.hook(tool, "PreToolUse", "hubctl off demo_gate", errors_expected=True)
     with then("the call is refused and asks the model to ask the user"):
         assert result.refused and asks_the_user(result), result.reason
     with and_("an ordinary call still runs"):

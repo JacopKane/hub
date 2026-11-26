@@ -1,1 +1,1 @@
-{"version": 1, "flags": {"public_text_gate.dashes": {"by": "tuner", "value": "off"}, "builder": {"by": "user", "value": "on"}, "tier_rule": {"by": "user", "value": "on"}}}
+{"version": 1, "flags": {"demo_gate.dashes": {"by": "tuner", "value": "off"}, "builder": {"by": "user", "value": "on"}, "tier_rule": {"by": "user", "value": "on"}}}

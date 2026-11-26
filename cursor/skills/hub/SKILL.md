@@ -1,6 +1,6 @@
 ---
 name: hub
-description: Turns hub's parts on or off, lists them, undoes a change or uninstalls hub, when the user asks in plain words, such as "turn off the em dash check", "switch on the researcher agent", "what does hub have on?", "undo that" or "uninstall hub".
+description: Turns hub's parts on or off, lists them, undoes a change or uninstalls hub, when the user asks in plain words, such as "turn off texts first", "switch on the researcher agent", "what does hub have on?", "undo that" or "uninstall hub".
 ---
 
 The user changes hub by asking in plain words. Run hub's step once for each request:
@@ -10,7 +10,7 @@ python3 -I ./plugins/hub/lib/hub_switch.py <words>
 ```
 
 - To see the parts and their flags, use `show`. Use it first when you are not sure which flag the user means.
-- To turn a part or a flag on or off, use `on <flag>` or `off <flag>`, such as `off public_text_gate.dashes` for "turn off the em dash check".
+- To turn a part or a flag on or off, use `on <flag>` or `off <flag>`, such as `off pr.instructions.texts_first` for "turn off texts first".
 - To give a flag a value, use `set <flag> <value>`.
 - For "undo that", use `undo`. To undo an older change, find its id in the output of `screen --json` and use `undo <id>`.
 - To check the setup, use `doctor`.

@@ -1,39 +1,31 @@
-"""The public text gate.
+"""The public steps in a shell command, and the text each one makes public.
 
-Before a shell command makes text public (a commit, a push, an annotated
-tag, a PR, an issue, a review, a release and its text assets, a gist, a
-discussion, a commit comment, a repo or label description, a file written
-through the contents API or any other gh api write),
-it checks that text for private paths, secrets, private words, machine names
-and em dashes. It reads only the text the command publishes: message values,
-message files, heredoc bodies, $(cat file) and the commits a push sends,
-never the paths the command itself names. A command inside $(...) or
-backticks is checked like any other command, in an assignment, an argument,
-a heredoc body or another substitution. Text it can not read, such as a
-$VARIABLE, another command's output, a pipe or a missing file, counts as
-unreadable. So does a command the shell fills in, such as eval "$CMD",
-bash -c "$CMD", a bare $CMD or a program name that a substitution prints,
-and a script that a shell reads from a pipe, a process substitution or
-standard input, as in printf ... | bash. eval "$(ssh-agent -s)" still
-runs, because the substitution is the whole script and its command is a
-known setup tool, such as ssh-agent or brew shellenv. A script that a
-shell reads from a heredoc is checked line by line, like any other command.
-A private or unreadable item is refused on every try, in warn and in block.
-The em dash follows the mode: warn refuses a text once and lets it through
-when it comes again, and block refuses it every time. The answer names each
-finding by its flag and never repeats the text it found.
+public_steps reads a command and lists each step that makes text public (a
+commit, a push, an annotated tag, a PR, an issue, a review, a release and
+its text assets, a gist, a discussion, a commit comment, a repo or label
+description, a file written through the contents API or any other gh api
+write), with the text that step sends: message values, message files,
+heredoc bodies, $(cat file) and the commits a push sends, never the paths
+the command itself names. A command inside $(...) or backticks is read like
+any other command, in an assignment, an argument, a heredoc body or another
+substitution. Text it can not read, such as a $VARIABLE, another command's
+output, a pipe or a missing file, holds the UNREADABLE mark. So does a
+command the shell fills in, such as eval "$CMD", bash -c "$CMD", a bare
+$CMD or a program name that a substitution prints, and a script that a
+shell reads from a pipe, a process substitution or standard input, as in
+printf ... | bash. A script that a shell reads from a heredoc is read line
+by line, like any other command.
 
-Design limits. The gate catches accidental leaks in the commands the model
-writes. It reads inside command substitutions and shell wrappers, and it
-refuses text it can not read. It is not a sandbox, and it does not stop a
-person who sets out to get around it.
+Self-protection and the dispatcher read commands with it.
+
+Design limits. It reads the commands the model writes, inside command
+substitutions and shell wrappers. It is not a sandbox.
 """
 import base64
 import binascii
 import fnmatch
 import functools
 import glob
-import hashlib
 import itertools
 import json
 import os
@@ -47,16 +39,12 @@ import subprocess
 import time
 import urllib.parse
 
-from hub import files
-
-PART = "public_text_gate"
-DASH = chr(0x2014)
 MAX_TEXT = 200_000  # characters read from one body file or one push
-# Reading 5,000 small commits takes git about a tenth of a second, so this many fit well inside the gate's time.
+# Reading 5,000 small commits takes git about a tenth of a second, so this many fit well inside a hook's time.
 # Past about 800 commits even the smallest ones pass MAX_TEXT.
 MAX_COMMITS = 1_000
-# Seconds from when hub's parts start answering until the text gate's git calls must end. The hook may run for 15
-# seconds, and the PR test gate's lookups end 10 seconds after the parts start.
+# Seconds from when hub's parts start answering until the git calls that read a command must end. The hook may run
+# for 15 seconds.
 TEXT_SECONDS = 8.0
 # git push's long options, so a shortened one such as --mirr or --no-dry reads as the option git takes it for
 PUSH_LONG_OPTIONS = ("all", "atomic", "branches", "delete", "dry-run", "exec", "follow-tags", "force",
@@ -78,84 +66,17 @@ BARE_PUSH_SETTINGS = r"^(push\.default|remote\..+\.(push|mirror))$"
 FALSE_WORDS = {"false", "no", "off", "0"}
 # The folders in a repo's git folder where git also reads a remote from a file
 REMOTE_FILE_FOLDERS = ("remotes", "branches")
-# git's own options and variables that point it at another repo, work tree, namespace or settings than the folder
-# it runs in, whose commits the gate reads. The PR test gate reads both sets too. It reads the GIT_CONFIG variables
-# with its own check, so they stand only in REPO_VARIABLE.
+# git's own options that point it at another repo, work tree or namespace than the folder it runs in, whose commits
+# public_steps reads.
 OTHER_REPO_OPTIONS = {"--git-dir", "--work-tree", "--namespace", "--bare"}
-OTHER_REPO_VARIABLES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY",
-                        "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
-REPO_VARIABLE = re.compile(r"\b(?:" + "|".join(sorted(OTHER_REPO_VARIABLES)) + r"|GIT_CONFIG\w*)\b")
-# The steps that stay on the machine, which temp_repos lets through in a temp repo with no remote
-LOCAL_TARGETS = {"commit", "tag"}
-# The words that may point git at another folder, repo or settings than the folder the line starts in
-GIT_MOVERS = {"cd", "pushd", "popd", "chdir", "-C", "-c", "--config-env", "--git-dir", "--work-tree"}
-
-# The checks, in the order the tree lists them. A private item can not be
-# taken back once it is public, so these refuse every time, in warn and in
-# block. The style checks follow the mode: warn refuses a text once.
-CHECKS = ["private_paths", "secrets", "private_words", "machine_names", "unreadable", "dashes"]
-PRIVACY = {"private_paths", "secrets", "private_words", "machine_names", "unreadable"}
-DESCRIBE = {
-    "private_paths": "a home or temp folder path",
-    "secrets": "what looks like a key, a token or a chat session link",
-    "private_words": "a word from the private words list",
-    "machine_names": "a host name from the profile",
-    "unreadable": "text hub can not read before it goes out",
-    "dashes": "an em dash",
-}
-PRIVACY_NOTE = "A private item is refused on every try until it is removed from the text."
-LONG_PUSH_NOTE = ("This push sends more than hub can check before it goes out. hub reads at most "
-                  f"{MAX_COMMITS:,} commits and {MAX_TEXT:,} characters of change in one push. Push fewer commits at "
-                  "a time, as in git push origin main~20:main, then push the rest. If one commit is too large on its "
-                  f"own, only the user can let it through, by saying \"turn off {PART}.unreadable\". Tell the user, "
-                  "and do not change the setting yourself.")
-UNTRACKED_PUSH_NOTE = ("hub can not see which commits this remote already has, because the push goes to a URL, a "
-                       "folder or a remote with no remote-tracking branches. So it counts every commit of the branch "
-                       f"as new, and that is more than the {MAX_COMMITS:,} it reads. Add the remote by name and fetch "
-                       "it first, as in git remote add backup <url> and then git fetch backup. Then push to backup.")
-SLOW_PUSH_NOTE = ("git did not list the commits of this push in time, so hub could not check them. Send the command "
-                  "again. If it is still slow, push fewer commits at a time.")
-GIT_WORD_NOTE = ("A variable or a substitution fills in a word that git may read as its action or as an option, such "
-                 "as \"$FILE\" in git commit -m x \"$FILE\" or \"$TAG\" in git tag \"$TAG\". The shell fills in that "
-                 "word only when the command runs, so hub can not tell what git will publish. It stops the command "
-                 "even when the value is safe. Write the word in full, as in git commit -m x notes.md or git tag "
-                 "v1.2.0, and send the command again.")
-CHANGED_WORD_NOTE = ("The shell may change a word before gh or git gets it, so they may get options or text that hub "
-                     "never read. Outside quotes, the shell splits a variable, turns a brace list such as {a,b} or a "
-                     "pattern such as * or ? into other words, and fills in some words that hold ~ or =. Even in "
-                     "quotes, a variable that fills in a whole word of a gh step may become an option, and zsh fills "
-                     "in \"$~NAME\". A ~ in quotes or after a backslash reaches gh and git as a plain ~, but hub reads "
-                     "it as your home folder. Put the word in quotes, give a variable only as an option's value, as "
-                     "in --title \"$TITLE\", or write the word in full, and send the command again. git reads a "
-                     "quoted pattern such as '*.py' itself.")
-TARGET_NAMES = {"commit": "commit", "push": "push", "tag": "tag", "pr": "PR text", "issue": "issue text",
-                "review_comment": "review comment", "release": "release", "gist": "gist",
-                "discussion": "discussion", "commit_comment": "commit comment", "contents": "file write",
-                "api": "API write", "wrapped": "wrapped command"}
 # When the shell fills in the script of a wrapped shell or eval, the script
-# could run any step. So it is checked while any target is on.
+# could run any step, so public_steps gives it this target.
 WRAPPED = "wrapped"
 
-PRIVATE_PATH = re.compile(
-    r"(?<![\w.-])(?:/(?:Users|home)/[^\s/'\"]+|[A-Za-z]:\\(?:Users)\\[^\s\\'\"]+"
-    r"|/private/(?:var|tmp)/|/var/(?:folders)/|/tmp/[^\s'\"]+)"
-)
-SECRET = re.compile(
-    r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}"
-    r"|\bgh[pousr]_[A-Za-z0-9]{30,}"
-    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
-    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
-    r"|\bAKIA[0-9A-Z]{16}\b"
-    r"|\bAIza[0-9A-Za-z_-]{35}"
-    r"|\bglpat-[A-Za-z0-9_-]{20,}"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
-)
-SESSION_LINK = re.compile(r"claude\.ai/code/session|\bClaude-Session:")
-ESCAPED_DASH = "\\u2014"  # the escape that $'...' in a shell turns into the dash
 SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
 OPERATORS = re.compile(r"[;&|()]+")  # shlex gives operators that touch as one word, such as )|
 PIPE = re.compile(r"(?<![|&])\|(?!\|)")  # a | or |& that feeds the next command, not a ||
-# A heredoc's end word, once its quotes are taken out. The gate reads no other end word, such as one with a $.
+# A heredoc's end word, once its quotes are taken out. The parser reads no other end word, such as one with a $.
 HEREDOC_END_WORD = re.compile(r"\w[\w.-]*", re.A)
 WORD_ENDS = " \t\n;&|()<>"
 CAT_FILE = re.compile(r"\$\((?:cat\s+|<\s*)(['\"]?)([^)'\"]+?)\1\s*\)")
@@ -163,7 +84,7 @@ PLACEHOLDER = "__hub_heredoc_{}__"
 # Put before each spot the shell fills in at run time, so a text that holds
 # one is unreadable. It never appears in a real command.
 UNREADABLE = "\x00"
-# Put before a command substitution whose source the gate can read and that
+# Put before a command substitution whose source the parser can read and that
 # names no public tool, such as $(ssh-agent -s). As text and as a program
 # name it is still unreadable, but as the whole script for eval or a shell it
 # is not hidden.
@@ -172,32 +93,28 @@ SUBSTITUTED = UNREADABLE + "\x01"
 # shell splits its output into words. As a program name it is then unreadable,
 # even before a / that would otherwise name only a folder.
 SPLIT = "\x02"
-# Marks for a push the gate can not read in full. Each holds UNREADABLE, so it is refused like one, with its own note:
-# more commits or more text than the gate reads at once, too many commits for a remote with no remote-tracking
+# Marks for a push public_steps can not read in full. Each holds UNREADABLE, so a reader takes it as unreadable:
+# more commits or more text than it reads at once, too many commits for a remote with no remote-tracking
 # branches to compare with, or git not listing the commits in time.
 LONG_PUSH = UNREADABLE + "\x03"
 UNTRACKED_PUSH = UNREADABLE + "\x04"
 SLOW_PUSH = UNREADABLE + "\x05"
-PUSH_NOTES = {LONG_PUSH: LONG_PUSH_NOTE, UNTRACKED_PUSH: UNTRACKED_PUSH_NOTE, SLOW_PUSH: SLOW_PUSH_NOTE}
 # Put where the shell fills in a word that git may read as its action or as an option, such as "$FILE" in
-# git commit -m x "$FILE". It holds UNREADABLE, so it is refused like one, with its own note.
+# git commit -m x "$FILE". It holds UNREADABLE.
 GIT_WORD = UNREADABLE + "\x06"
 # Put with the text of a git or gh step, or as the text of a step whose program the shell may change, when the shell
 # may change one of its words, as changes_the_word and fills_in_a_gh_word find them. It holds UNREADABLE, so it is
-# refused like one, with its own note.
+# read like one.
 CHANGED_WORD = UNREADABLE + "\x0e"
 # Put as the text of a gh api step when the shell may change one of its words, so a read could become a write. It
-# holds CHANGED_WORD, so its note comes too, followed by the hint on how a read may hold a variable.
+# holds CHANGED_WORD.
 API_READ = CHANGED_WORD + "\x0f"
-API_READ_NOTE = (files.read_text(os.path.join(os.path.dirname(os.path.abspath(__file__)), "text", "api_read_hint.md"))
-                 or "").strip()
-MARK_NOTES = {**PUSH_NOTES, GIT_WORD: GIT_WORD_NOTE, CHANGED_WORD: CHANGED_WORD_NOTE, API_READ: API_READ_NOTE}
 # A variable that zsh changes even in double quotes: a modifier such as $name:h, a subscript such as $name[1], or a
 # ${...} form with more than the name in it, such as ${name:-1}. The parser puts UNREADABLE before its $.
 CHANGED_VARIABLE = re.compile(r"\x00\$(?:[A-Za-z_]\w*(?:\[|:[A-Za-z&])|\{(?![A-Za-z_]\w*\}))")
-# Added only when a reader asks for it, as the PR test gate does. It goes before each spot the shell may fill in
+# Added only when a reader asks for it, as self-protection does. It goes before each spot the shell may fill in
 # with several words or with none: an expansion outside double quotes, which bash splits and both shells drop when
-# it is empty, and "$@", an array or zsh's (f) flag inside them. The text gate's own reading never holds it.
+# it is empty, and "$@", an array or zsh's (f) flag inside them.
 MANY_WORDS = "\x07"
 # Put with MANY_WORDS, and only when a reader asks for it, before each character outside quotes that the shell may
 # change the word at even when nothing is filled in, as changes_the_word finds them: a brace list such as {a,b}, a
@@ -257,7 +174,7 @@ OPEN_HEREDOC_EXPANSION = re.compile(r"(?<!\\)(?:\$[\w(" + re.escape(FILLED_AFTER
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 # Builtins that run a script file in the current shell.
 SOURCES = {"source", "."}
-# Paths that name the command's standard input. Opened in the gate, they would read the hook's own input instead.
+# Paths that name the command's standard input. Opened by the parser, they would read the hook's own input instead.
 STDIN_PATHS = {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
 FEEDERS = {"xargs", "parallel"}
 # Programs that run the next word as a program, with their options that take a value.
@@ -300,8 +217,7 @@ GH_WRITE_ACTIONS = {
 # The values that turn off a gh switch given as --name=value, as gh reads them
 GH_FALSE = {"false", "f", "0"}
 # gh's flags for pr create, pr edit and issue edit, as gh defines them: {long name: (short letter, whether it takes a
-# value)}. Every pr and issue command also has -R or --repo, and --help. The PR test gate reads them from here too.
-GH_PR_SHARED_FLAGS = {"repo": ("R", True), "help": ("h", False)}
+# value)}.
 GH_PR_FLAGS = {
     "create": {"draft": ("d", False), "title": ("t", True), "body": ("b", True), "body-file": ("F", True),
                "base": ("B", True), "head": ("H", True), "editor": ("e", False), "web": ("w", False),
@@ -358,7 +274,7 @@ GH_API_LONG_SWITCHES = {"--include", "--slurp", "--paginate", "--silent", "--ver
 # letters, as in gh. gh's own --version takes no value either, but gh stops with an error when it comes before a
 # command, so reading it as taking a value changes nothing.
 GH_COMMAND_SWITCHES = {"-h", "--help"}
-# The gh commands whose next command word is the action the gate reads.
+# The gh commands whose next command word is the action the parser reads.
 GH_GROUPS_WITH_ACTIONS = {*GH_WRITE_ACTIONS, "gist"}
 
 
@@ -378,7 +294,7 @@ class Command:
         read_step names each git or gh step, as step_target does when it is not given.
         many_words is put where mark_expansions says, to show where the shell may give more words than one.
         outer holds the text of each line around this one, without this one, such as the line whose substitution or
-        heredoc script this command is, so the gate sees what those lines may write.
+        heredoc script this command is, so the parser sees what those lines may write.
         """
         self.cwd = cwd
         self.read_log = parent.read_log if parent else read_log
@@ -387,11 +303,11 @@ class Command:
         self.heredocs = parent.heredocs if parent else []
         self.scripts = parent.scripts if parent else []  # each body as written, for a shell that runs it
         self.sources = []  # the command inside each $(...) and backtick pair, as written
-        self.at = None  # the number of the segment whose step the gate reads, which public_steps sets
+        self.at = None  # the number of the segment whose step the parser reads, which public_steps sets
         self.outer = parent.outer + (parent.whole().replace(line, " ", 1),) if parent else tuple(outer)
 
         found = set_aside_heredocs(line, len(self.heredocs))
-        self.unreadable = found is None  # the gate can not tell where a heredoc starts or ends
+        self.unreadable = found is None  # the parser can not tell where a heredoc starts or ends
         text, bodies, self.read_apart = found or (line, [], False)  # read_apart: bash 3.2 reads the line apart
         for body, quoted in bodies:
             self.scripts.append(body)
@@ -433,7 +349,7 @@ class Command:
     def file_text(self, path, reader=None, written=None, by_the_step=True):
         """A file's text as reader, read_file by default, reads it now, or UNREADABLE when the line may write the
         file first or may change the folder a relative path starts from. written is the path as the line names it,
-        when path is a file the gate found for a pattern. by_the_step is False for a file a substitution reads,
+        when path is a file the parser found for a pattern. by_the_step is False for a file a substitution reads,
         which the shell opens before a wrapper such as env -C moves the step."""
         unknown = path and (self.may_write_first(path) or self.may_move_first(written or path, by_the_step))
         return UNREADABLE if unknown else (reader or read_file)(path, self.cwd)
@@ -441,7 +357,7 @@ class Command:
     def may_move_first(self, path, by_the_step=True):
         """Whether the folder may change before the step at self.at reads a relative path.
 
-        The gate reads such a path from the folder the line starts in, so a
+        The parser reads such a path from the folder the line starts in, so a
         folder change on a step that may run first, or on a line around this
         one, leaves the file unknown. When the step itself opens the file, a
         wrapper that moves it, as env -C and sudo -D do, leaves it unknown too.
@@ -458,14 +374,14 @@ class Command:
 
     def script_changes_folder(self, text):
         """Whether a step in the text changes the folder or moves its program, as env -C bash does for the script it
-        runs, or the gate can not split the text into steps."""
+        runs, or the parser can not split the text into steps."""
         segments = Command(text, self.cwd).segments()
         return segments is None or any(changes_folder(segment) or moved_by_a_wrapper(segment) for segment in segments)
 
     def may_write_first(self, path):
         """Whether the line may write the file before or while the step at self.at reads it.
 
-        The gate reads the file as it is before the line runs. So the file
+        The parser reads the file as it is before the line runs. So the file
         counts as written when the step's own redirects write it, when
         another step that may run first or at the same time names it, when a
         substitution other than a plain $(cat file) names it, or when a line
@@ -492,9 +408,9 @@ class Command:
                 or any(self.script_may_write_unseen(text, around=True) for text in self.outer))
 
     def script_may_write_unseen(self, text, around=False):
-        """Whether a step in the text may write a file the gate does not see it name, or the gate can not split the
+        """Whether a step in the text may write a file the parser does not see it name, or the parser can not split the
         text into steps. With around, the text is a line around this one, so a shell or eval there that gets only
-        options and the script's own blanked word is the one that runs this line's script, which the gate reads on
+        options and the script's own blanked word is the one that runs this line's script, which the parser reads on
         its own."""
         segments = Command(text, self.cwd).segments()
         runs_the_script = runs_this_script if around else lambda segment: False
@@ -511,11 +427,11 @@ class Command:
         return self.with_scripts(self.flat)
 
     def standard_input(self):
-        """The heredoc the step at self.at reads as its standard input, or UNREADABLE when the gate can not tell.
+        """The heredoc the step at self.at reads as its standard input, or UNREADABLE when the parser can not tell.
 
         The step reads the heredoc of its own last standard input redirect. A
         pipe, a file, a here-string or no redirect at all gives it text the
-        gate does not see, and so does a heredoc on another step or on
+        parser does not see, and so does a heredoc on another step or on
         another file descriptor.
         """
         segments = self.segments()
@@ -526,7 +442,7 @@ class Command:
 
     def segments(self):
         """The simple commands in the line, each as a list of words, or None when the line does not parse
-        or the gate can not tell where one of its heredocs starts or ends.
+        or the parser can not tell where one of its heredocs starts or ends.
 
         A segment is fed when a pipe gives it its standard input, or when it
         stands in a ( ) or { } group that a pipe feeds, since every command in
@@ -597,9 +513,9 @@ FILLED_IN_REDIRECT = re.compile(r">>?\|?\s*['\"]?[^\s;&|]*[\x00$`]")
 # The characters that end a file name in a line's text
 NAME_ENDS = re.compile(r"[\s;&|()<>=`'\"\\${}@:,\x00-\x06]+")
 # Programs that write no file, whatever words the shell fills in for them. Any other program may write a file a
-# filled-in word names, so the gate does not list the programs that write.
+# filled-in word names, so the parser does not list the programs that write.
 WRITES_NO_FILE = {"echo", "printf", "test", "[", "true", "false", ":", "export", "cd", "pushd", "popd"}
-# Programs that write no file, or only the files they name, which the gate sees, so a step that runs one does not
+# Programs that write no file, or only the files they name, which the parser sees, so a step that runs one does not
 # write a file the line reads without naming it. Any other program may, as a script, a build or a test run may.
 WRITES_ONLY_NAMED_FILES = {*WRITES_NO_FILE, "[[", "chdir", "unset", "set", "wait", "sleep", "pwd", "date", "which",
                            "type", "cat", "head", "tail", "grep", "wc", "ls", "basename", "dirname", "tee", "touch",
@@ -617,7 +533,7 @@ GH_KEEPS_FILES = {("pr", action) for action in ("create", "edit", "comment", "re
 # The shell's own steps that change its folder, so a relative path after them starts somewhere else. chdir is zsh's
 # other name for cd.
 FOLDER_CHANGERS = {"cd", "pushd", "popd", "chdir"}
-# The options of env and sudo that start the program in another folder or root, or give it words the gate does not
+# The options of env and sudo that start the program in another folder or root, or give it words the parser does not
 # split: env -C and -S, sudo -D and -R
 FOLDER_LETTERS = {"C", "D", "R", "S"}
 FOLDER_LONG_OPTIONS = {"--chdir", "--chroot", "--split-string"}
@@ -678,7 +594,7 @@ def name_tails(text):
 
 def changed_spots(text):
     """The spots where the shell may change a word in the text, as changes_the_word finds them. Every character
-    counts as one outside quotes, so a quote never hides a spot, and the gate's own marks are no spots."""
+    counts as one outside quotes, so a quote never hides a spot, and the parser's own marks are no spots."""
     pieces, spots = [], set()
     for index, char in enumerate(text):
         if char >= " " and changes_the_word(text, index, pieces):
@@ -723,7 +639,7 @@ def gets_a_filled_in_word(words):
 
 
 def may_write_unseen(words):
-    """Whether a step may write a file the gate does not see it name: it gets a word the shell fills in, or its
+    """Whether a step may write a file the parser does not see it name: it gets a word the shell fills in, or its
     program may write files it does not name."""
     return gets_a_filled_in_word(words) or may_write_unnamed(words)
 
@@ -734,10 +650,10 @@ def may_write_unnamed(words):
     Only a program that writes no file, or only the files it names, is
     known not to, and so is a git or gh step that leaves the folder's files
     as they are. A program named by a path is a script. A wrapper option
-    such as env -S counts, since it gives the program words the gate does
+    such as env -S counts, since it gives the program words the parser does
     not see.
     """
-    command = without_redirects(words)  # a redirect's target is a name the gate sees
+    command = without_redirects(words)  # a redirect's target is a name the parser sees
     spot, hidden = program_spot(command)
     if hidden or spot is None:
         return hidden
@@ -749,9 +665,9 @@ def may_write_unnamed(words):
 
 
 def split_redirect_target(segments, spot):
-    """Whether the step at spot is only the file descriptor of a >& or <& redirect that the gate's parser split at
+    """Whether the step at spot is only the file descriptor of a >& or <& redirect that the parser's parser split at
     its &, as the 1 of 2>&1 or the - of >&-. The parser drops quotes, so only a number or - counts, which names no
-    program. Any other word stays a step the gate judges."""
+    program. Any other word stays a step the parser judges."""
     before = segments[spot - 1] if spot else []
     return (bool(before) and before.ends == "&" and bool(re.fullmatch(r"\d*[<>]", before[-1]))
             and len(segments[spot]) == 1 and bool(re.fullmatch(r"\d+|-", segments[spot][0])))
@@ -766,7 +682,7 @@ def git_action(words):
 
 
 def gh_action(words):
-    """(command, action) of a gh step, as gh reads them past its options, or None when the gate can not tell."""
+    """(command, action) of a gh step, as gh reads them past its options, or None when the parser can not tell."""
     ordered = gh_command(words)
     return tuple(ordered[1:3]) if ordered else None
 
@@ -790,7 +706,7 @@ def changes_folder(words):
 
 def moved_by_a_wrapper(words):
     """Whether a wrapper before the program may start it in another folder, as env -C, env --chdir and sudo -D do.
-    env -S counts, since it splits its value into words the gate does not see. A short option counts when any of
+    env -S counts, since it splits its value into words the parser does not see. A short option counts when any of
     its letters is one of these, and a long one when it may be short for one, as --ch is for --chdir."""
     spot, _hidden = program_spot(words)
     return any(moves_the_program(word) for word in words[:spot])
@@ -844,17 +760,17 @@ def mark_expansions(line, sources=None, many_words=""):
     """The line with UNREADABLE before each $VAR, ${...}, $(...) and backtick the shell would fill in.
 
     Single quotes and a backslash keep a $ as it is, and $(cat file) is read
-    by the gate, so those stay unmarked. A substitution that may publish
+    by the parser, so those stay unmarked. A substitution that may publish
     becomes UNREADABLE alone, so its words never mix with the outer command.
     Its inner command goes into sources and is checked on its own, and so
     does the command of a process substitution, <(...), >(...) or zsh's =(...),
-    whose text is a stream the gate can not read. A $((...)) sum runs no
+    whose text is a stream the parser can not read. A $((...)) sum runs no
     command of its own, so only the substitutions inside it go into
     sources, and a << inside it stays a shift. The shell keeps each
-    substitution in one word, so the gate quotes the ones it keeps, and its
+    substitution in one word, so the parser quotes the ones it keeps, and its
     brackets, spaces and quotes never split the command. A $'...' string
     becomes the text the shell makes of it, in plain single quotes, because
-    the gate's lexer does not know its escapes.
+    the parser's lexer does not know its escapes.
     Given many_words, that mark also goes before each spot that may give the
     shell more words than one, or none, as gives_many_words finds them, and
     WORD_CHANGE goes before each character outside quotes that
@@ -928,7 +844,7 @@ def mark_expansions(line, sources=None, many_words=""):
                 sources.append(line[start:end] if end > 0 else line[start:])
             if end > 0 and char == "$" and CAT_START.match(line, index):
                 if end > 0 and not any(mark in line[start:end] for mark in ("$", "`", UNREADABLE)):
-                    out.append(one_word(line[index:end + 1], quote))  # the gate reads $(cat file) itself
+                    out.append(one_word(line[index:end + 1], quote))  # the parser reads $(cat file) itself
                     index = end + 1
                     continue
                 if end > 0:
@@ -1019,7 +935,7 @@ def ansi_c_bytes(piece):
 
 
 def one_word(text, quote):
-    """The text in single quotes, so the gate's lexer keeps it as one word with the same value.
+    """The text in single quotes, so the parser's lexer keeps it as one word with the same value.
 
     Inside double quotes it closes them first and opens them again after.
     """
@@ -1048,12 +964,12 @@ def changes_the_word(line, index, out):
     { counts when it opens a brace list. An = counts at the start of a word
     with text after it, as zsh fills in =ls with a path. A ~ counts after an
     = or a :, where bash fills it in and gh would not, and at the start of a
-    word unless the word is ~ or starts with ~/, which the gate reads as the
+    word unless the word is ~ or starts with ~/, which the parser reads as the
     home folder too. A [ counts unless it is the [ or [[ command, a < only
     when it starts zsh's <1-5>, and a ( when it ends a pattern word, as in
     x(N), as opens_a_pattern_group finds it. A backslash counts when it keeps
     a ~ that starts a path, since gh and git then get the ~ itself, where the
-    gate would read the home folder.
+    parser would read the home folder.
     """
     char, following = line[index], line[index + 1:index + 2]
     if char == "\\":
@@ -1075,16 +991,16 @@ def changes_the_word(line, index, out):
 
 
 def changes_in_quotes(line, index, quote, out):
-    """Whether gh or git may get other text than the gate reads at index, inside quotes. zsh fills in "$~name" and
-    "$^name" where bash and the gate keep the text. A ~ right after the quote mark that starts a path stays a ~, where
-    the gate would read the home folder."""
+    """Whether gh or git may get other text than the parser reads at index, inside quotes. zsh fills in "$~name" and
+    "$^name" where bash and the parser keep the text. A ~ right after the quote mark that starts a path stays a ~, where
+    the parser would read the home folder."""
     if quote == '"' and ZSH_FILL.match(line, index):
         return True
     return line.startswith("~", index) and out[-1:] == [quote] and starts_a_path(out[:-1])
 
 
 def starts_a_path(pieces):
-    """Whether a path the gate reads may start after the text so far. It may at the start of a word and after an =
+    """Whether a path the parser reads may start after the text so far. It may at the start of a word and after an =
     or an @, as in --body-file=notes.md or body=@notes.md."""
     return starts_a_word(pieces) or last_pieces(pieces, 1)[0][-1] in "=@"
 
@@ -1330,7 +1246,7 @@ SHELL_FILLED = re.compile(r"\$[\w{(@*#?$!-]|`")
 def may_run_git_or_gh_read_apart(text):
     """Whether bash 3.2, reading the text apart from zsh (set_aside_heredocs), may run git or gh.
 
-    bash 3.2 runs text as commands that the gate never reads, such as the
+    bash 3.2 runs text as commands that the parser never reads, such as the
     text after a $(...) it ends early or after a # it reads as word text.
     So it may when the text names git or gh, a shell, eval or a
     source command, or holds a word the shell fills in. The $( that bash
@@ -1348,7 +1264,7 @@ def may_run_git_or_gh_read_apart(text):
 def arithmetic_end(line, index):
     """Where the last ) of the $((...)) sum that starts at index is, or -1 when no such sum starts there.
 
-    A << inside a sum is a shift, so the gate must not read it as a command.
+    A << inside a sum is a shift, so the parser must not read it as a command.
     """
     if not line.startswith("$((", index):
         return -1
@@ -1358,7 +1274,7 @@ def arithmetic_end(line, index):
 
 def set_aside_heredocs(line, first=0):
     """(the line with each heredoc body taken out, [(body, quoted)], whether bash 3.2 reads part of the line apart
-    from zsh), or None when the gate can not tell.
+    from zsh), or None when the parser can not tell.
 
     The shell starts a heredoc only at a << outside quotes, comments,
     arithmetic and a <<< here-string. A # opens a comment only where a word
@@ -1370,10 +1286,10 @@ def set_aside_heredocs(line, first=0):
     next line to the line that holds only that word. Outside single quotes
     and $'...', a backslash at a line end goes with the line end, as the
     shell joins the two lines. The answer is None when a << stands where the
-    gate can not tell a heredoc from a shift, its end word is not plain, or
+    parser can not tell a heredoc from a shift, its end word is not plain, or
     its end line is missing. It is None too when a # starts a word inside a
-    $((...)), ((...)) or ${...}, which the shells and the gate's readers
-    read apart. The gate reads a # that starts a word as a comment, and a <<
+    $((...)), ((...)) or ${...}, which the shells and the parser's readers
+    read apart. The parser reads a # that starts a word as a comment, and a <<
     as a heredoc, only after openers it reads in full: quotes, $(...), a
     plain ${name} and a ( that opens a plain subshell (opens_a_plain_subshell). Any other opener
     earlier on the same line (unread_opener), or one still open around it,
@@ -1386,8 +1302,8 @@ def set_aside_heredocs(line, first=0):
     ${...} (bash_3_2_ends_elsewhere).
     """
     out, bodies, pending, stack, index, apart = [], [], [], ["top"], 0, False
-    unread = frozenset()  # the spots on the stack whose ( the gate does not read in full, as in <(...) or echo if (
-    not_read = False  # whether an opener the gate does not read in full came earlier on this line
+    unread = frozenset()  # the spots on the stack whose ( the parser does not read in full, as in <(...) or echo if (
+    not_read = False  # whether an opener the parser does not read in full came earlier on this line
     while index < len(line):
         char, context = line[index], stack[-1]
         unread = frozenset(spot for spot in unread if spot < len(stack))
@@ -1417,7 +1333,7 @@ def set_aside_heredocs(line, first=0):
         region = skipped_region(line, index, context)
         if region is not None:
             if region == "" or SUM_COMMENT.search(region):
-                return None  # the shell reads the # as part of the sum or value, the gate's readers as a comment
+                return None  # the shell reads the # as part of the sum or value, the parser's readers as a comment
             not_read = not_read or not PLAIN_NAME_VALUE.fullmatch(region)  # a plain ${name} reads like a quote
             out.append(WordPart(region) if region.startswith("$") else region)
             apart = apart or bash_3_2_ends_one_elsewhere(region)
@@ -1425,7 +1341,7 @@ def set_aside_heredocs(line, first=0):
             continue
         if context == '"':
             if char == "[" and bracket_left_open(line, index, quoted=True):
-                return None  # the shell may read the [ to a ] on a later line, the gate to this line end
+                return None  # the shell may read the [ to a ] on a later line, the parser to this line end
             not_read = not_read or char == "`" or line.startswith("$[", index)
             stack = stack[:-1] if char == '"' else stack + ["`"] if char == "`" else stack
             if line.startswith("$(", index):
@@ -1436,7 +1352,7 @@ def set_aside_heredocs(line, first=0):
             continue
         step = case_step(line, index, stack)
         if step:
-            stack, length, not_read = step[0], step[1], True  # the gate does not read a case command in full
+            stack, length, not_read = step[0], step[1], True  # the parser does not read a case command in full
             out.append(line[index:index + length])
             index += length
             continue
@@ -1479,7 +1395,7 @@ def set_aside_heredocs(line, first=0):
         elif char == ")" and context in ("(", "$(", ARRAY, WORD_GROUP):
             stack, char = stack[:-1], WordPart(char) if context == "$(" else char
         elif char == "[" and bracket_left_open(line, index, quoted=False):
-            return None  # the shell may read the [ to a ] on a later line, the gate to this line end
+            return None  # the shell may read the [ to a ] on a later line, the parser to this line end
         elif unread_opener(line, index, out):
             not_read = True
         out.append(char)
@@ -1542,12 +1458,12 @@ REDIRECT_BEFORE_PAREN = (">|", "<&", ">&")  # redirects that end in a mark a pla
 
 def only_plain_levels(stack, unread):
     """Whether a line end here ends the line for set_aside_heredocs: only the top level and plain subshells are
-    open, so no quote, $(...), backtick, array, group, case part or ( the gate does not read stays open."""
+    open, so no quote, $(...), backtick, array, group, case part or ( the parser does not read stays open."""
     return all(context in ("top", "(") and spot not in unread for spot, context in enumerate(stack))
 
 
 def bracket_left_open(line, index, quoted):
-    """Whether the [ at index may run over a line end for the shell while the gate can not see its ] on this line.
+    """Whether the [ at index may run over a line end for the shell while the parser can not see its ] on this line.
 
     The shells read the [ of a $[...] sum and of a subscript glued to a name,
     as in a[1]=x or $a[1], up to its ], over line ends too. zsh also reads a
@@ -1556,10 +1472,10 @@ def bracket_left_open(line, index, quoted):
     $, as in $a[1]. The shells join a backslash and line end before the [
     to the text in front, as in a backslash and a line end before [1, so the look back
     takes out every such pair. That only ever glues more text to the [, so a
-    pair the shell keeps leads to a refusal, never to a pass. The gate reads
+    pair the shell keeps leads to a refusal, never to a pass. The parser reads
     such a [ only when its ] follows on the same line with nothing but plain
     text between: no quote, backslash, backtick, $( or ${, which the shells
-    may read apart from the gate.
+    may read apart from the parser.
     """
     before = line[:index].replace("\\\n", "")
     start = len(before)
@@ -1580,7 +1496,7 @@ def bracket_left_open(line, index, quoted):
 
 
 def unread_opener(line, index, out):
-    """Whether the character at index, outside quotes, opens a part the gate does not read in full: a { group or
+    """Whether the character at index, outside quotes, opens a part the parser does not read in full: a { group or
     brace list, or a [ that is not the [ command, such as [[, a subscript as in a[1]=x, or the [ of $[...]."""
     char = line[index]
     lone_bracket = char == "[" and starts_a_word(out) and line[index + 1:index + 2] in (" ", "\t")
@@ -1589,7 +1505,7 @@ def unread_opener(line, index, out):
 
 def opens_a_plain_subshell(line, index):
     """Whether the ( at index stands where a command surely starts: at the start, or past blanks right after ;, &,
-    |, ( or a line end that no backslash takes and that ends no redirect such as >| or <&. The gate does not read
+    |, ( or a line end that no backslash takes and that ends no redirect such as >| or <&. The parser does not read
     any other ( in full, since the shell may read it as a pattern or word group, as after a keyword given as an
     argument or after an escaped ;."""
     before = line[:index].rstrip(" \t")
@@ -1705,7 +1621,7 @@ def heredoc_substitutions(body):
 
 
 def quiet_source(source):
-    """Whether a command substitution runs a source the gate can read that names no public tool."""
+    """Whether a command substitution runs a source the parser can read that names no public tool."""
     if any(mark in source for mark in ("$", "`", UNREADABLE, "\\", "__hub_heredoc_")):
         return False
     return not publishes(source)
@@ -1718,7 +1634,7 @@ def publishes(source):
 
 
 def hidden(text):
-    """Whether the shell fills in part of the text from a variable or from a source the gate can not trust."""
+    """Whether the shell fills in part of the text from a variable or from a source the parser can not trust."""
     return UNREADABLE in text.replace(SUBSTITUTED, "")
 
 
@@ -1792,12 +1708,12 @@ def ends_in_a_pipe_or_list(pieces):
 
 
 def read_file(path, cwd):
-    """A file's text, or UNREADABLE when the gate can not read it before the command runs.
+    """A file's text, or UNREADABLE when the parser can not read it before the command runs.
 
     That covers a name the shell fills in at run time, and anything that is
     not a regular file. A pipe, a device or a folder has no text before the
     command runs, and reading a pipe would wait for a writer. A file longer
-    than MAX_TEXT counts too, since the gate would never check its end.
+    than MAX_TEXT counts too, since the parser would never check its end.
     """
     if not path or path == "-":
         return ""
@@ -1807,7 +1723,7 @@ def read_file(path, cwd):
 
 def read_bytes(path, cwd):
     """The first MAX_TEXT bytes of a regular file and one more, so a caller can tell a longer file, or None when the
-    gate can not read it before the command runs."""
+    parser can not read it before the command runs."""
     if UNREADABLE in path or names_standard_input(path):
         return None
     full = os.path.join(cwd, os.path.expanduser(path))
@@ -1917,7 +1833,7 @@ def takes_next_word(word, value_options):
 
 def option_filled_in(rest, value_options):
     """Whether the shell fills in a word before -- that git commit or git tag may read as an option, such as -m or
-    -F, which would bring a message the gate does not read. An option's value is skipped."""
+    -F, which would bring a message the parser does not read. An option's value is skipped."""
     value_letters = value_options[1] + "".join(VALUE_LETTERS)
     index = 0
     while index < len(rest) and rest[index] != "--":
@@ -2075,7 +1991,7 @@ def push_refspecs(words, deletes):
 
 
 class TooSlow(Exception):
-    """git did not end before the text gate's deadline."""
+    """git did not end before the parser's deadline."""
 
 
 def pushed_commits(rest, cwd, one_command_settings, deadline):
@@ -2087,8 +2003,8 @@ def pushed_commits(rest, cwd, one_command_settings, deadline):
     searches commit messages or holds a pattern, an option matches more than
     one of git's, the push sends every branch or every branch that matches
     on the remote, a push with no branch named may send more than HEAD, or
-    git fails, the gate can not tell which commits it sends, so the push
-    counts as unreadable. A push of more commits or more text than the gate
+    git fails, the parser can not tell which commits it sends, so the push
+    counts as unreadable. A push of more commits or more text than the parser
     reads at once is LONG_PUSH, or UNTRACKED_PUSH when the remote has no
     remote-tracking branches, and one that git does not list by the deadline
     is SLOW_PUSH.
@@ -2225,53 +2141,10 @@ def has_remote_file(git_folder, remote):
     return any(os.path.isfile(os.path.join(folder, remote)) for folder in folders)
 
 
-def pushes_read_in_place(steps, line):
-    """The steps, with each push unreadable when the line names a variable that points git at another repo, work
-    tree, namespace or settings, since the gate reads the commits of the folder git runs in. That holds wherever
-    the variable stands, as in an export earlier on the line."""
-    if not REPO_VARIABLE.search(line):
-        return steps
-    return [(target, UNREADABLE if target == "push" else text) for target, text in steps]
-
-
-def without_temp_repo_commits(steps, line, cwd, deadline):
-    """The steps without their commits and tags when those stay in a temp repo that git knows no remote for. A push
-    of those commits, and every other step, is still checked."""
-    if not any(target in LOCAL_TARGETS for target, _text in steps) or moves_git(line):
-        return steps
-    if not is_temp_repo(cwd, deadline):
-        return steps
-    return [(target, text) for target, text in steps if target not in LOCAL_TARGETS]
-
-
-def moves_git(line):
-    """Whether the line may point git at another folder, repo or settings than the folder it starts in: a cd, an
-    option such as -C or -c, or any GIT_ variable, wherever it stands on the line."""
-    words = [re.sub(r"[\"'\\]", "", word) for word in re.findall(r"[^\s;&|()<>`]+", line)]
-    return "GIT_" in line or any(word.split("=", 1)[0] in GIT_MOVERS for word in words)
-
-
-def is_temp_repo(cwd, deadline):
-    """Whether the repo the folder sits in, and its common git folder, are temp folders, and git knows no remote for
-    it. git reads every config file to list remotes, includes too. An error or a time-out counts as a remote."""
-    root = repo_root(cwd)
-    if root is None or not files.in_temp_folder(root):
-        return False
-    try:
-        common = git_run(["rev-parse", "--git-common-dir"], cwd, deadline)
-        remotes = git_run(["remote"], cwd, deadline)
-    except TooSlow:
-        return False
-    if common is None or remotes is None or common[0] != 0 or remotes[0] != 0 or remotes[1].strip():
-        return False
-    git_folder = os.path.realpath(os.path.join(cwd, common[1].strip()))
-    return files.in_temp_folder(git_folder) and not has_remote_file(git_folder, None)
-
-
 def graphql_target(text, source):
     """What a GraphQL call writes to, or None for a read. It is a read only when each query it may send stands
-    in the command itself and no text it sends names a mutation. A query from a file, or one the gate can not
-    read, counts as a write. A mutation the gate can not name, as in a fragment on Mutation, writes to "api"."""
+    in the command itself and no text it sends names a mutation. A query from a file, or one the parser can not
+    read, counts as a write. A mutation the parser can not name, as in a fragment on Mutation, writes to "api"."""
     if source == "written" and not re.search(r"\bmutation\b", text, re.I):
         return None
     mutation = re.search(r"\bmutation\b[^{]*\{\s*(\w+)", text)
@@ -2286,7 +2159,7 @@ def graphql_target(text, source):
 def graphql_endpoint(word):
     """Whether a gh api endpoint names a GraphQL path, in any spelling or case: graphql, /graphql, graphql/,
     api/graphql or a full URL to one. GitHub may answer each as GraphQL, whatever method gh sends. A URL the
-    gate can not split counts as one, so its fields get read."""
+    parser can not split counts as one, so its fields get read."""
     try:
         path = urllib.parse.urlsplit(word).path if "://" in word else re.split(r"[?#]", word, maxsplit=1)[0]
     except ValueError:
@@ -2296,8 +2169,8 @@ def graphql_endpoint(word):
 
 def graphql_query_source(items, command):
     """Where the queries of a gh api graphql call come from. "written" means each one stands in the command
-    itself. "file" means one comes from a file, a heredoc or $(cat file), which the gate reads now but which may
-    change before gh reads it. None means the gate can not read one in full. A field name the shell fills in may
+    itself. "file" means one comes from a file, a heredoc or $(cat file), which the parser reads now but which may
+    change before gh reads it. None means the parser can not read one in full. A field name the shell fills in may
     be the query, and standard input counts only when it is the step's own heredoc, as from_file reads it."""
     sent = [(name, *field.partition("=")[::2]) for name, field in items if name in ("--field", "--raw-field")]
     if any(UNREADABLE in key for _name, key, _value in sent):
@@ -2309,7 +2182,7 @@ def graphql_query_source(items, command):
     written = [(value, command.expand(value)) for from_file, value in queries if not from_file]
     texts = [command.from_file(path) for path in paths] + [expanded for _value, expanded in written]
     if any(UNREADABLE in text or len(text.encode("utf-8")) >= MAX_TEXT for text in texts):
-        return None  # a text at MAX_TEXT may be cut short, since the gate reads no more of a file
+        return None  # a text at MAX_TEXT may be cut short, since the parser reads no more of a file
     return "file" if paths or any(value != expanded for value, expanded in written) else "written"
 
 
@@ -2358,7 +2231,7 @@ def gh_api_target(items, texts, graphql_source):
     """What a gh api command writes to, or None for a read.
 
     gh sends POST when the command has a field or --input and no --method. An option gh does not
-    have counts as a write, since the gate can not tell what it does. graphql_source is where a
+    have counts as a write, since the parser can not tell what it does. graphql_source is where a
     GraphQL call's queries come from, as graphql_query_source says. A GraphQL path is judged as GraphQL
     whatever the method, and a spelling other than the bare word graphql is judged as a plain call too.
     """
@@ -2584,16 +2457,16 @@ def shell_script(options, command, files=False):
         elif word.startswith(("-", "+")):
             reads_input = reads_input or (not word.startswith("--") and "s" in word[1:])
         elif not reads_input:
-            return ("file", word) if files else None  # a script file, which the gate does not read
+            return ("file", word) if files else None  # a script file, which the parser does not read
     return ("input", script) if script is not None or reads_input else None
 
 
 def reads_hidden_script(words, spot, command):
-    """Whether the shell or source at spot reads its script from a place the gate can not read.
+    """Whether the shell or source at spot reads its script from a place the parser can not read.
 
     That is its standard input when a pipe or a < redirect feeds it or -s
     tells it to read it, a path such as /dev/stdin, or words that xargs fills
-    in. The gate sees none of these, since the shell gets them only at run time.
+    in. The parser sees none of these, since the shell gets them only at run time.
     """
     program = os.path.basename(words[spot]).casefold()  # macOS runs BASH as bash
     following = words[spot + 1] if spot + 1 < len(words) else ""
@@ -2654,7 +2527,7 @@ def wrapped_steps(words, index, command, depth, first=False):
 
     The text of a step inside bash -c or eval is unreadable, since the shell
     fills it in. A script from a heredoc is read line by line and its steps
-    are checked like any other command. When a variable, a file the gate can
+    are checked like any other command. When a variable, a file the parser can
     not read or the output of a public tool fills in part of the script, the
     script could run any step.
     """
@@ -2726,7 +2599,7 @@ def substituted_steps(command, depth):
     """The steps inside the command's substitutions, each checked like any other command.
 
     Past the nesting limit, every substitution counts as unreadable, since the
-    gate does not read what it runs.
+    parser does not read what it runs.
     """
     steps = []
     for source in command.sources:
@@ -2781,7 +2654,7 @@ def program_spot(words):
                 index += 1
                 continue
             if name == "env" and splits_into_words(option):
-                return index, True  # env makes the program and its words from a string the gate does not split
+                return index, True  # env makes the program and its words from a string the parser does not split
             index += wrapper_option(option, options)
     return None, False
 
@@ -2833,11 +2706,11 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
     command = Command(line, cwd, parent, read_log=log, deadline=deadline, read_step=read_step, outer=outer)
     segments = command.segments()
     if segments is None:
-        # The shell may run any line when the gate can not tell where a heredoc ends. bash also runs the lines before
+        # The shell may run any line when the parser can not tell where a heredoc ends. bash also runs the lines before
         # a quote that never closes and drops a backslash at the very end, so a line that may run git or gh counts.
         unreadable = [(WRAPPED, UNREADABLE)] if command.unreadable or may_run_git_or_gh(command.flat) else []
         return rough_steps(command) + substituted_steps(command, depth) + unreadable
-    # bash 3.2 may run commands that the gate, reading the line as zsh does, never sees, even in a heredoc body.
+    # bash 3.2 may run commands that the parser, reading the line as zsh does, never sees, even in a heredoc body.
     # The line as written holds its heredoc bodies, and its flat form marks every substitution, so read the line.
     apart = command.read_apart and may_run_git_or_gh_read_apart(line)
     steps = [(WRAPPED, UNREADABLE)] if apart else []
@@ -2852,7 +2725,7 @@ def public_steps(line, cwd, depth=0, script=False, parent=None, opens_the_call=F
             steps.append((WRAPPED, CHANGED_WORD))  # the shell may make another program of these words
             continue
         if spot is not None and reads_hidden_script(words, spot, command):
-            steps.append((WRAPPED, UNREADABLE))  # the shell reads a script the gate can not see
+            steps.append((WRAPPED, UNREADABLE))  # the shell reads a script the parser can not see
         # a wrapper such as timeout or sudo can stand before git or gh, so look at every word in the segment
         for index, word in enumerate(words):
             program = os.path.basename(word).casefold()  # macOS runs BASH as bash and GIT as git
@@ -2890,10 +2763,10 @@ def holds_a_change(words):
 
 def with_changed_words(program, words, marked, found):
     """The (target, text) of a git or gh step, as found, or found itself when the shell gives git or gh the words the
-    gate read. marked holds the same words as the parser marks them.
+    parser read. marked holds the same words as the parser marks them.
 
     When the shell may change the program's command or action, the step
-    could be any step. A text the gate can not read is refused already, so
+    could be any step. A text the parser can not read is already marked unreadable, so
     it stays as it is. A gh api call becomes a wrapped step when the shell
     may change any of its words, or zsh may change a variable in one even in
     quotes, as in $number:h, since a read could then become a write. A
@@ -2915,14 +2788,14 @@ def with_changed_words(program, words, marked, found):
 
 
 def git_step(program, words):
-    """(action, "") for a git commit, tag or push, which the gate judges even when it finds no text in it, or None."""
+    """(action, "") for a git commit, tag or push, which the parser returns even when it finds no text in it, or None."""
     action = words[git_action_at(words):][:1]
     return (action[0], "") if program == "git" and action in (["commit"], ["tag"], ["push"]) else None
 
 
 def command_length(program, words):
     """How many words of a git or gh step name its command and action, with the options before them, or every word
-    when the gate can not find the action."""
+    when the parser can not find the action."""
     return git_action_at(words) + 1 if program == "git" else gh_head_length(words)
 
 
@@ -2951,7 +2824,7 @@ def gh_head_length(words):
 def fills_in_a_gh_word(words):
     """Whether the shell fills in a whole word of a gh step that gh may read as an option, even in double quotes, as
     "$X" in gh issue comment 4 --body ok "$X". A word that is an option's value, as in --title "$TITLE", is not, nor
-    is a word after --. An option the gate does not know takes no value, so the word after it counts."""
+    is a word after --. An option the parser does not know takes no value, so the word after it counts."""
     ordered = gh_command(words)
     if not ordered or len(ordered) < 2:
         return ordered is None
@@ -2968,7 +2841,7 @@ def fills_in_a_gh_word(words):
 
 
 def gh_value_options(group, action):
-    """The options of a gh command that take a value, as the gate knows them: gh api's, the ones in GH_PR_FLAGS for
+    """The options of a gh command that take a value, as the parser knows them: gh api's, the ones in GH_PR_FLAGS for
     pr create, pr edit and issue edit, the release and gist ones, and otherwise the text and file options of the
     action, with -R and --repo for all but gh api."""
     if group == "api":
@@ -2990,160 +2863,3 @@ def gh_takes_next_word(word, takes_value):
         return False
     first = next((spot for spot, letter in enumerate(word[1:], 1) if "-" + letter in takes_value), None)
     return first == len(word) - 1
-
-
-# The checks
-
-
-def word_list(flags):
-    words = list(flags.value("core.private_words") or [])
-    for path in flags.value("core.private_words_files") or []:
-        try:
-            with open(os.path.expanduser(path), encoding="utf-8") as handle:
-                words += [line.strip() for line in handle if line.strip() and not line.startswith("#")]
-        except OSError:
-            continue  # a file that is missing on this machine is skipped
-    return [word for word in words if isinstance(word, str) and word]
-
-
-def host_names(profile):
-    names = []
-    machines = profile.get("machines") if isinstance(profile, dict) else None
-    for machine in (machines or {}).values():
-        host = machine.get("host") if isinstance(machine, dict) else None
-        if isinstance(host, str) and host:
-            names += [host, host.split(".")[0]]
-    return names
-
-
-def any_word(words, text, edge=r"\w"):
-    for word in words:
-        if re.search(rf"(?<!{edge}){re.escape(word)}(?!{edge})", text, re.IGNORECASE):
-            return True
-    return False
-
-
-def findings(text, flags):
-    checks = {
-        "private_paths": lambda: bool(PRIVATE_PATH.search(text)),
-        "secrets": lambda: bool(SECRET.search(text) or SESSION_LINK.search(text)),
-        "private_words": lambda: any_word(word_list(flags), text),
-        "machine_names": lambda: any_word(host_names(flags.profile), text, edge=r"[\w-]"),
-        "unreadable": lambda: UNREADABLE in text,
-        "dashes": lambda: DASH in text or ESCAPED_DASH in text,
-    }
-    return [name for name in CHECKS if flags.runs(f"{PART}.{name}") and checks[name]()]
-
-
-# Repos and the warn-once memory
-
-
-def repo_root(cwd):
-    folder = os.path.realpath(cwd)
-    while True:
-        if os.path.exists(os.path.join(folder, ".git")):
-            return folder
-        parent = os.path.dirname(folder)
-        if parent == folder:
-            return None
-        folder = parent
-
-
-def repo_is_public(cwd, profile):
-    root = repo_root(cwd)
-    repos = profile.get("repos") if isinstance(profile, dict) else None
-    if root is None or not isinstance(repos, dict):
-        return False
-    for path, repo in repos.items():
-        if isinstance(repo, dict) and os.path.realpath(os.path.expanduser(path)) == root:
-            return bool(repo.get("public"))
-    return False
-
-
-def seen_path(flags, session):
-    name = hashlib.sha256(str(session).encode()).hexdigest()[:16]
-    return os.path.join(flags.state_dir, "gate", name + ".json")
-
-
-def seen_before(flags, session, digest):
-    """Whether this warning came before in the session. Calls at the same time wait for each other."""
-    path = seen_path(flags, session)
-    with files.locked(os.path.relpath(path, flags.state_dir) + ".lock"):
-        seen = files.read_json(path, {"seen": []})
-        if digest in seen["seen"]:
-            return True
-        seen["seen"] = (seen["seen"] + [digest])[-200:]
-        files.write_json(path, seen)
-    return False
-
-
-# The handler
-
-
-def reason_text(targets, found, text, flags, warned_once):
-    names = sorted({TARGET_NAMES[target] for target in targets}, key=list(TARGET_NAMES.values()).index)
-    lines = [f"hub's public text gate stopped this {' and '.join(names)}, because it contains:"]
-    lines += [f"- {DESCRIBE[name]} ({PART}.{name})" for name in found]
-    if "unreadable" in found:
-        lines += [note for mark, note in MARK_NOTES.items() if mark in text]
-    if "unreadable" in found and UNREADABLE in without_noted_marks(text):
-        lines.append(flags.text(f"{PART}.unreadable.hint"))
-    if "dashes" in found:
-        lines.append(flags.text(f"{PART}.dashes.hint"))
-    if PRIVACY & set(found):
-        lines.append(PRIVACY_NOTE)
-    if warned_once:
-        lines.append(flags.text(f"{PART}.instructions.after_warning"))
-    return "\n".join(line for line in lines if line)
-
-
-def without_noted_marks(text):
-    """The text with each mark that has its own note taken out, such as a push the gate could not read in full."""
-    return functools.reduce(lambda rest, mark: rest.replace(mark, ""), MARK_NOTES, text)
-
-
-def target_runs(flags, target):
-    if target == WRAPPED:
-        return any(flags.runs(f"{PART}.targets.{name}") for name in TARGET_NAMES if name != WRAPPED)
-    return flags.runs(f"{PART}.targets.{target}")
-
-
-def handle(event, hook_input, flags, answer):
-    if event != "PreToolUse" or hook_input.get("tool_name") != "Bash":
-        return
-    command = (hook_input.get("tool_input") or {}).get("command") or ""
-    cwd = hook_input.get("cwd") or os.getcwd()
-    deadline = answer.started + TEXT_SECONDS
-    steps = [(target, text) for target, text in pushes_read_in_place(public_steps(command, cwd, deadline=deadline),
-                                                                     command)
-             if target_runs(flags, target)]
-    if flags.runs(f"{PART}.temp_repos"):
-        steps = without_temp_repo_commits(steps, command, cwd, deadline)
-    if not steps:
-        return
-    if flags.runs(f"{PART}.public_repos_only") and not repo_is_public(cwd, flags.profile):
-        return
-    text = "\n".join(text for _target, text in steps)
-    found = findings(text, flags)
-    if not found:
-        return
-    stopping = [name for name in found if name in PRIVACY or flags.value(f"{PART}.{name}") == "block"]
-    warning = [name for name in found if name not in stopping]
-    new_warnings = []
-    if warning:
-        digest = hashlib.sha256("\0".join(["Bash", text, *warning]).encode()).hexdigest()
-        if not seen_before(flags, hook_input.get("session_id", ""), digest):
-            new_warnings = warning
-        elif not stopping:
-            for name in warning:
-                answer.signal(f"{PART}.{name}", "went_ahead")
-            return
-    shown = [name for name in found if name in stopping or name in new_warnings]
-    if not shown:
-        return
-    for name in stopping:
-        answer.signal(f"{PART}.{name}", "blocked")
-    for name in new_warnings:
-        answer.signal(f"{PART}.{name}", "warned")
-    answer.refuse(reason_text([target for target, _text in steps], shown, text, flags,
-                              warned_once=bool(new_warnings)))

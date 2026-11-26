@@ -56,7 +56,7 @@ def test_cursor_is_asked_to_fail_closed_when_the_adapter_itself_crashes():
         assert entries and all(entry.get("failClosed") is True for entry in entries)
 
 
-def plant(home, change, name=os.path.join("parts", "public_text_gate", "handler.py")):
+def plant(home, change, name=os.path.join("parts", "self_protection", "handler.py")):
     """Change one file in the plugin copy the dispatcher runs. Returns the code it had before."""
     path = os.path.join(home.plugin, name)
     with open(path) as handle:
@@ -69,7 +69,7 @@ def plant(home, change, name=os.path.join("parts", "public_text_gate", "handler.
 
 
 def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool):
-    with given("hub is installed and the gate's handler raises an error as soon as it runs"):
+    with given("hub is installed and self-protection's handler raises an error as soon as it runs"):
         home.install()
         plant(home, lambda code: code.replace(
             "def handle(event, hook_input, flags, answer):\n",
@@ -81,8 +81,8 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
         assert public.refused and "planted failure" in public.reason
         assert status.ran and status.output == {}
         assert "planted failure" in home.errors()
-    with when("the handler file no longer loads at all"):
-        plant(home, lambda code: code + "\nthis is not python\n")
+    with when("hub's shell parser, which self-protection loads, no longer loads at all"):
+        plant(home, lambda code: code + "\nthis is not python\n", os.path.join("lib", "hub", "command_steps.py"))
         public = home.hook(tool, "PreToolUse", commit("Fix the save button"), errors_expected=True)
         listing = home.hook(tool, "PreToolUse", "ls -la", errors_expected=True)
     with then("any git or gh call counts as public and is refused, and other calls run"):
@@ -93,7 +93,7 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
 
 def test_after_a_part_crashes_hub_names_a_push_as_public_without_reading_its_commits(home, tool):
     with given("hub is installed, the repo has a local bare remote and a new commit, the "
-               "gate's handler raises as soon as it runs, and a git first on PATH logs each call"):
+               "self-protection's handler raises as soon as it runs, and a git first on PATH logs each call"):
         home.install()
         bare = os.path.join(home.root, "remote.git")
         home.git("init", "-q", "--bare", bare)
@@ -146,14 +146,14 @@ def test_hook_input_that_is_not_json_or_an_unknown_event_never_lets_a_public_ste
 def test_hubctl_explains_each_mistake_and_changes_nothing(home):
     with given("hub is installed with one value set"):
         home.install()
-        home.hubctl("off", "public_text_gate.dashes")
+        home.hubctl("off", "demo_gate.dashes")
         before = home.settings()
         changes = len(home.history())
     with when("the user makes each common mistake"):
         mistakes = {
-            "no flag named": ["off", "public_text_gate.colons"],
-            "takes one of": ["set", "public_text_gate", "loud"],
-            "takes one value": ["set", "public_text_gate", "warn", "block"],
+            "no flag named": ["off", "demo_gate.colons"],
+            "takes one of": ["set", "demo_gate", "loud"],
+            "takes one value": ["set", "demo_gate", "warn", "block"],
             "set it with a value": ["on", "core.private_words"],
         }
         results = {message: home.hubctl(*args, check=False) for message, args in mistakes.items()}

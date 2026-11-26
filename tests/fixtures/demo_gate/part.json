@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../../schema/part.schema.json",
+  "id": "demo_gate",
+  "family": "gates",
+  "kind": "hook",
+  "type": "mode",
+  "values": ["off", "warn", "block"],
+  "default": "warn",
+  "privacy": "guard",
+  "runs_in": ["claude_code", "cursor"],
+  "relevant_if": "repos_with_remote != 0",
+  "does": "A made-up guard for the tests, with a mode, children, options and signals. It has no handler, so it checks nothing.",
+  "children": [
+    {
+      "id": "targets",
+      "kind": "group",
+      "does": "The steps it would check.",
+      "children": [
+        {"id": "commit", "default": "on", "does": "Would check commit messages."},
+        {"id": "push", "default": "on", "does": "Would check the commits a push sends."},
+        {"id": "pr", "default": "on", "does": "Would check PR titles, bodies and comments."}
+      ]
+    },
+    {"id": "private_paths", "default": "on", "signals": ["blocked"],
+     "does": "Would stop a path into a home or temp folder."},
+    {"id": "secrets", "default": "on", "signals": ["blocked"],
+     "does": "Would stop keys and tokens."},
+    {"id": "private_words", "default": "on", "signals": ["blocked"],
+     "needs_any": ["core.private_words", "core.private_words_files"],
+     "does": "Would stop a word from the private words list."},
+    {"id": "unreadable", "default": "on", "signals": ["blocked"],
+     "does": "Would stop a command whose text it can not read."},
+    {"id": "dashes", "default": "off", "privacy": "none", "signals": ["warned", "went_ahead", "blocked"],
+     "does": "Would stop an em dash."},
+    {"id": "public_repos_only", "kind": "option", "default": "off", "privacy": "loosens",
+     "does": "Would check only repos the profile marks public."}
+  ]
+}

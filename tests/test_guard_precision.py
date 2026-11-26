@@ -1,4 +1,4 @@
-"""How hub reads quoted settings, help reads, git -C, sed files and gh api reads, and the moved-home refusal.
+"""How hub reads quoted settings, help reads, git -C and sed files, and the moved-home refusal.
 
 Under env, timeout, nice and the other runners that keep the caller's
 environment, a word hub can not read passes in one place only: the value of a
@@ -14,7 +14,6 @@ container, because the step's background jobs belong to the whole account.
 The plugin is copied into the temp home by hand. hub's own step never runs
 here, since every scenario only asks the hook about a line.
 """
-import json
 import os
 import shutil
 
@@ -25,9 +24,7 @@ PART = "self_protection"
 QUOTE_HINT = "Write the program's path and any hub command in full"
 SED_HINT = "Put -- before the file names"
 CONTAINER_HINT = "use a Docker or Podman container with no mounts"
-API_HINT = "A gh api read may hold a variable in its endpoint"
 ASK_THE_USER = "only the user can lower hub's protections"
-PRIVATE = "/ho" + "me/sam/notes"  # written in two parts, so the repo's own scan does not flag this file
 
 
 def plugin_copied(home):
@@ -227,49 +224,3 @@ def test_hubs_switch_step_on_a_line_that_moves_the_home_folder_is_refused_with_t
     with then("the moved line gets the container hint, and the plain line is refused for the pin as before"):
         assert moved_pinned.refused and CONTAINER_HINT in moved_pinned.reason, moved_pinned.reason
         assert alone_pinned.refused and CONTAINER_HINT not in alone_pinned.reason, alone_pinned.reason
-
-
-LOOP = "for number in 1 2; do {}; done"
-
-
-def test_gh_api_reads_in_a_loop_run_with_a_quoted_endpoint_while_a_possible_write_stays_checked(home, tool):
-    """As a user, when I let Claude read PR files with gh api in a loop, I expect the reads to run while a possible
-    write stays checked."""
-    with given("hub's plugin is in the temp home with the public text gate at its default"):
-        plugin_copied(home)
-        body_file = os.path.join(home.work, "comment.json")
-        with open(body_file, "w") as handle:
-            json.dump({"body": PRIVATE}, handle)
-    with when("Claude reads each PR's files with the endpoint in double quotes"):
-        read = home.hook(tool, "PreToolUse", LOOP.format(
-            "gh api \"repos/example/demo/pulls/$number/files\" --jq '.[].filename'"))
-    with then("the reads run"):
-        assert read.ran, read.reason
-    with when("the endpoint is not quoted, or a zsh modifier changes the quoted variable"):
-        changed = answers(home, tool, [
-            LOOP.format("gh api repos/example/demo/pulls/$number/files --jq '.[].filename'"),
-            LOOP.format('gh api "repos/example/demo/pulls/$number:h/files"'),
-            LOOP.format('gh api "repos/example/demo/pulls/${number:-1}/files"'),
-            LOOP.format('gh api "repos/example/demo/pulls/$number[1]/files"'),
-        ])
-    with then("each one counts as a possible write, with the gh api hint"):
-        assert not ran_lines(changed), ran_lines(changed)
-        assert all("(public_text_gate.unreadable)" in result.reason for result in changed.values())
-        assert not without_hint(changed, API_HINT), without_hint(changed, API_HINT)
-    with when("the same quoted endpoint sends a field or another method"):
-        writes = answers(home, tool, [
-            LOOP.format(f'gh api "repos/example/demo/issues/$number/comments" -f body={PRIVATE}'),
-            LOOP.format(f'gh api "repos/example/demo/issues/$number" -X PATCH -f body={PRIVATE}'),
-        ])
-    with then("each one is checked as a write, and its private path is refused"):
-        assert not ran_lines(writes), ran_lines(writes)
-        assert all("private_paths" in result.findings for result in writes.values()), {
-            line: result.reason for line, result in writes.items()}
-    with when("the quoted endpoint sends a file, on its own and in the loop"):
-        send_file = 'gh api "repos/example/demo/issues/$number/comments" --input comment.json'
-        alone = home.hook(tool, "PreToolUse", send_file)
-        looped = home.hook(tool, "PreToolUse", LOOP.format(send_file))
-    with then("on its own the file is read and its private path refused, and in the loop the file counts as unreadable"):
-        # The loop's for step is a step that may write files it does not name, so the gate never reads the file there.
-        assert alone.refused and alone.findings == ["private_paths"], alone.reason
-        assert looped.refused and looped.findings == ["unreadable"], looped.reason

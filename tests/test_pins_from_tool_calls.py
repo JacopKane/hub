@@ -20,13 +20,13 @@ def as_caller(home, extra):
 
 @pytest.mark.parametrize("caller", [TOOL_CALL, CURSOR_TOOL_CALL], ids=["claude_code", "cursor"])
 def test_a_pinned_flag_does_not_change_from_a_command_the_model_runs(home, caller):
-    with given("the user pinned public_text_gate.dashes off from their own terminal"):
+    with given("the user pinned demo_gate.dashes off from their own terminal"):
         home.install()
-        home.hubctl("off", "public_text_gate.dashes")
+        home.hubctl("off", "demo_gate.dashes")
         before = home.settings()
     with when("the model runs hubctl on for it inside a tool call"):
         as_caller(home, caller)
-        done = home.hubctl("on", "public_text_gate.dashes", check=False)
+        done = home.hubctl("on", "demo_gate.dashes", check=False)
     with then("hubctl refuses and says it changes only when the user asks in their own words"):
         assert done.returncode == 1
         assert "only when the user asks for it in their own words" in done.stderr
@@ -34,32 +34,32 @@ def test_a_pinned_flag_does_not_change_from_a_command_the_model_runs(home, calle
     and_("the settings file is unchanged")
     assert home.settings() == before
     with when("the model tries set, undo and pin"):
-        set_done = home.hubctl("set", "public_text_gate.dashes", "on", check=False)
+        set_done = home.hubctl("set", "demo_gate.dashes", "on", check=False)
         undo_done = home.hubctl("undo", check=False)
-        pin_done = home.hubctl("pin", "public_text_gate.private_paths", check=False)
+        pin_done = home.hubctl("pin", "demo_gate.private_paths", check=False)
     with then("each is refused and nothing changed"):
         assert [set_done.returncode, undo_done.returncode, pin_done.returncode] == [1, 1, 1]
         assert home.settings() == before
 
 
 def test_a_flag_nobody_pinned_still_changes_from_a_tool_call_so_the_cursor_skill_works(home):
-    with given("hub is installed and public_text_gate.dashes holds its default"):
+    with given("hub is installed and demo_gate.dashes holds its default"):
         home.install()
     with when("the model runs hubctl on for it inside a tool call"):
         as_caller(home, TOOL_CALL)
-        done = home.hubctl("on", "public_text_gate.dashes", check=False)
+        done = home.hubctl("on", "demo_gate.dashes", check=False)
     with then("the change lands"):
         assert done.returncode == 0, done.stderr
-        assert home.settings()["flags"]["public_text_gate.dashes"]["value"] == "on"
+        assert home.settings()["flags"]["demo_gate.dashes"]["value"] == "on"
 
 
 def test_a_hook_process_is_not_a_tool_call(home):
-    with given("the user pinned public_text_gate.dashes off"):
+    with given("the user pinned demo_gate.dashes off"):
         home.install()
-        home.hubctl("off", "public_text_gate.dashes")
+        home.hubctl("off", "demo_gate.dashes")
     with when("hubctl runs with a hook's environment"):
         as_caller(home, HOOK)
-        done = home.hubctl("on", "public_text_gate.dashes", check=False)
+        done = home.hubctl("on", "demo_gate.dashes", check=False)
     with then("the change lands"):
         assert done.returncode == 0, done.stderr
 
@@ -69,7 +69,7 @@ def test_the_clock_reads_hub_test_now(home):
         home.install()
         home.env["HUB_TEST_NOW"] = "2026-03-04T05:06:07Z"
     with when("a change is made"):
-        home.hubctl("off", "public_text_gate.dashes")
+        home.hubctl("off", "demo_gate.dashes")
     with then("its history line carries that time"):
         line = home.history()[-1]
-        assert (line["flag"], line["time"]) == ("public_text_gate.dashes", "2026-03-04T05:06:07Z")
+        assert (line["flag"], line["time"]) == ("demo_gate.dashes", "2026-03-04T05:06:07Z")

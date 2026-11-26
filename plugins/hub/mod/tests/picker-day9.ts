@@ -42,7 +42,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
       "kind": "change",
       "mark": "-",
       "time": "2026-11-09T09:00:00Z",
-      "text": "tuner turned public_text_gate.dashes off",
+      "text": "tuner turned demo_gate.dashes off",
       "reason": "you went ahead after 4 of 5 dash warnings this week",
       "buttons": [
         {
@@ -1286,10 +1286,10 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "children": []
         },
         {
-          "id": "public_text_gate",
-          "name": "public_text_gate",
+          "id": "demo_gate",
+          "name": "demo_gate",
           "depth": 0,
-          "does": "Checks text before it goes public in commits, pushes, tags, PRs, issues, reviews, releases, gists, discussions and other GitHub writes.",
+          "does": "A made-up guard for the tests, with a mode, children, options and signals. It has no handler, so it checks nothing.",
           "value": "warn",
           "effective": "warn",
           "runs": true,
@@ -1312,10 +1312,10 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
           "new": false,
           "children": [
             {
-              "id": "public_text_gate.targets",
+              "id": "demo_gate.targets",
               "name": "targets",
               "depth": 1,
-              "does": "The public steps the gate checks.",
+              "does": "The steps it would check.",
               "value": "on",
               "effective": "warn",
               "runs": true,
@@ -1338,10 +1338,10 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "waits_for": []
             },
             {
-              "id": "public_text_gate.targets.commit",
+              "id": "demo_gate.targets.commit",
               "name": "targets.commit",
               "depth": 2,
-              "does": "Checks commit messages.",
+              "does": "Would check commit messages.",
               "value": "on",
               "effective": "warn",
               "runs": true,
@@ -1364,10 +1364,10 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "waits_for": []
             },
             {
-              "id": "public_text_gate.secrets",
+              "id": "demo_gate.secrets",
               "name": "secrets",
               "depth": 1,
-              "does": "Stops keys, tokens and chat session links, found by their shape.",
+              "does": "Would stop keys and tokens.",
               "value": "on",
               "effective": "warn",
               "runs": true,
@@ -1390,10 +1390,10 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "waits_for": []
             },
             {
-              "id": "public_text_gate.private_words",
+              "id": "demo_gate.private_words",
               "name": "private_words",
               "depth": 1,
-              "does": "Stops a word from the private words list.",
+              "does": "Would stop a word from the private words list.",
               "value": "on",
               "effective": "warn",
               "runs": false,

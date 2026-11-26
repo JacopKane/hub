@@ -7,7 +7,7 @@ Self-protection stops Claude from lowering hub's own protections, which live in 
 A protection is lowered only when you ask for it in your own words in the chat, or with /hub where Claude Code loads plugin mods.
 
 - Your order is the newest message you typed. It ends when you type again, or when a message from an agent or another chat arrives after it.
-- hub reads a request loosely. "Try to turn off the public text gate" counts as an order to turn it off.
+- hub reads a request loosely. "Try to turn off self-protection" counts as an order to turn it off.
 - Your words lower a protection only while the lowering check is on. While it is off, an order in words, such as "uninstall hub", changes nothing, and /hub still works.
 
 ## What it does not watch

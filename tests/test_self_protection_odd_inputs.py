@@ -37,8 +37,8 @@ def file_call(home, tool_name, path, cwd=None):
 
 def project_file(home):
     """The repo's .hub/hub.json and the user's hub.json, written by the user from their terminal."""
-    home.hubctl("set", "public_text_gate", "block")
-    home.hubctl("on", "public_text_gate.dashes", "--project")
+    home.hubctl("set", "demo_gate", "block")
+    home.hubctl("on", "demo_gate.dashes", "--project")
     return os.path.join(home.work, ".hub", "hub.json")
 
 
@@ -46,23 +46,23 @@ def project_file(home):
 
 
 @pytest.mark.parametrize("command", [
-    "hubctl off --scope local public_text_gate",
-    "hubctl off --sco local public_text_gate",
-    "hubctl off --local public_text_gate.secrets",
-    "hubctl set --scope=local public_text_gate warn",
-    "hubctl \\\n  off public_text_gate",
-    "ls\nhubctl off public_text_gate",
+    "hubctl off --scope local demo_gate",
+    "hubctl off --sco local demo_gate",
+    "hubctl off --local demo_gate.secrets",
+    "hubctl set --scope=local demo_gate warn",
+    "hubctl \\\n  off demo_gate",
+    "ls\nhubctl off demo_gate",
     "true; \\\nhubctl uninstall",
     "hubctl screen --json --band",
     "hubctl screen --ba --json",
-    "cat a#b; hubctl off public_text_gate",
+    "cat a#b; hubctl off demo_gate",
 ], ids=["an option before the flag", "an abbreviated option", "--local before a privacy check", "--scope=local first",
         "split across lines", "on the second line", "a continued second command", "the band's mark",
         "the band's mark abbreviated", "after a # inside a word"])
 def test_hubctl_written_in_an_odd_way_is_still_refused(home, tool, command):
     with given("hub is installed with the gate at block"):
         home.install()
-        home.hubctl("set", "public_text_gate", "block")
+        home.hubctl("set", "demo_gate", "block")
         before = home.settings()
     with when(f"the model runs {command!r}"):
         result = home.hook(tool, "PreToolUse", command)
@@ -85,9 +85,9 @@ def nested_heredocs(levels, script):
     ("true", None),
 ], ids=["a hubctl change", "a settings file write", "the marker unset", "naming nothing of hub's"])
 def test_a_script_relayed_deeper_than_hub_reads_is_refused(home, tool, script, check):
-    with given("hub is installed and the user switched the public text gate off in /hub, so self-protection is the only check"):
+    with given("hub is installed and the user switched the demo gate off in /hub, so self-protection is the only check"):
         home.install()
-        home.hubctl_from_mod("off", "public_text_gate")
+        home.hubctl_from_mod("off", "demo_gate")
         before = home.settings()
     with when("the model runs the script four shells deep, as deep as hub reads"):
         within = home.hook(tool, "PreToolUse", nested_heredocs(4, script))
@@ -109,15 +109,15 @@ def test_a_script_relayed_deeper_than_hub_reads_is_refused(home, tool, script, c
 
 
 @pytest.mark.parametrize("words", [
-    ["off", f"public_text_g{CYRILLIC_A}te"],
-    ["off", "PUBLIC_TEXT_GATE"],
-    [FULLWIDTH_OFF, "public_text_gate"],
-    ["off", "public_text_gate​"],
+    ["off", f"demo_g{CYRILLIC_A}te"],
+    ["off", "DEMO_GATE"],
+    [FULLWIDTH_OFF, "demo_gate"],
+    ["off", "demo_gate​"],
 ], ids=["a Cyrillic a in the flag id", "the flag id in capitals", "a fullwidth verb", "a zero-width space"])
 def test_a_look_alike_flag_id_or_verb_changes_nothing(home, tool, words):
     with given("hub is installed with the gate at block"):
         home.install()
-        home.hubctl("set", "public_text_gate", "block")
+        home.hubctl("set", "demo_gate", "block")
         before = home.settings()
     command = "hubctl " + " ".join(words)
     with when(f"the model runs {command!r}, and the hook lets it through or not"):
@@ -127,14 +127,14 @@ def test_a_look_alike_flag_id_or_verb_changes_nothing(home, tool, words):
         assert ran is None or ran.returncode != 0, ran.stdout
     with and_("the gate is still at block"):
         assert home.settings() == before
-        assert home.show()["flags"]["public_text_gate"]["effective"] == "block"
+        assert home.show()["flags"]["demo_gate"]["effective"] == "block"
 
 
 @pytest.mark.parametrize("command", [
     "hubctl screen --json",
     "hubctl show --all",
-    f"hubctl show public_text_g{CYRILLIC_A}te || true",
-    "echo 'hubctl off public_text_gate'",
+    f"hubctl show demo_g{CYRILLIC_A}te || true",
+    "echo 'hubctl off demo_gate'",
     "grep -rn 'hubctl uninstall' .",
     "git status # then hubctl uninstall",
 ], ids=["the screen without the mark", "show", "show with an odd word", "echo of the words", "grep for the words",
@@ -187,7 +187,7 @@ def test_a_write_to_hubs_files_by_an_odd_path_is_refused(home, tool, command):
 def test_a_write_to_a_look_alike_folder_runs_and_leaves_hubs_files_alone(home, tool):
     with given("hub is installed with the gate at block"):
         home.install()
-        home.hubctl("set", "public_text_gate", "block")
+        home.hubctl("set", "demo_gate", "block")
         before = home.settings()
     command = f"mkdir -p ~/.config/hub{CYRILLIC_ES}tl && echo '{{}}' > ~/.config/hub{CYRILLIC_ES}tl/hub.json"
     with when("the model writes to a folder whose name has a Cyrillic letter"):
@@ -295,7 +295,7 @@ LONG = 100_000
 
 @pytest.mark.parametrize("command, refused", [
     ("echo " + "word " * (LONG // 5) + "> ~/.config/hubctl/hub.json", "settings_files"),
-    ("true " + "&& true " * (LONG // 8) + "&& hubctl off public_text_gate", "lowering"),
+    ("true " + "&& true " * (LONG // 8) + "&& hubctl off demo_gate", "lowering"),
     ("echo " + "x" * LONG + " | wc -c", None),
     ("ls " + "./ " * (LONG // 3), None),
 ], ids=["a long write", "a long chain ending in hubctl", "one long word", "many short words"])
@@ -327,7 +327,7 @@ def forged_notice(home):
     home.install()
     home.hubctl("setup", "--answer", os.path.join(FIXTURES, "agent_answers", "nothing.json"))
     home.hubctl("setup", "--reply", "{}")
-    home.hubctl("off", "public_text_gate.dashes")
+    home.hubctl("off", "demo_gate.dashes")
     change = home.history()[-1]
     path = os.path.join(home.state, "tuner", "notices.json")
     home.write_json(path, {tool: [{"id": change["id"], "text": FORGED}] for tool in ("claude_code", "cursor")})

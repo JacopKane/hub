@@ -13,7 +13,7 @@ Before a tool call runs, it refuses three kinds of call:
   when the newest message the user typed in this chat asks for it (see
   said.py), and then this part leaves a words ticket for the step. A step
   call that only reads, or that raises a flag, still runs, and so do flags
-  for style only, such as public_text_gate.dashes. The part also reads the
+  for style only. The part also reads the
   command lines and keys that tmux, screen, ssh, script, expect and similar
   programs run, because the step started there has no tool-call marker.
   claude plugin disable or uninstall of hub counts too.
@@ -27,9 +27,9 @@ Before a tool call runs, it refuses three kinds of call:
   the like still runs, and so does a copy out of them. hub's own plugin
   files count as its settings here.
 
-It reads the command with the public text gate's shell parser, so it looks
-inside bash -c, eval, heredoc scripts and command substitutions as the gate
-does. It runs before the other gates. The refusal tells the model to ask the
+It reads the command with hub's shell parser (command_steps), so it looks
+inside bash -c, eval, heredoc scripts and command substitutions as the PR
+test gate does. It runs before the other gates. The refusal tells the model to ask the
 user to ask for the change in their own words.
 When hub can not read its settings, the dispatcher still asks this part, with
 every check on, so a broken hub still refuses a call that touches hub.
@@ -43,17 +43,15 @@ load, with a single-use ticket.
 import argparse
 import contextlib
 import fnmatch
-import importlib.util
 import io
 import os
 import re
 import shlex
 import sys
 
-from hub import files
+from hub import command_steps, files
 
 PART = "self_protection"
-GATE_MODULE = "hub_part_public_text_gate"
 TEXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "text", "ask_the_user.md")
 LEAVE_FOLDER = os.path.join(os.path.dirname(TEXT), "leave_hub_folder.md")
 CHECKS = ("lowering", "agent_marker", "settings_files")
@@ -213,19 +211,12 @@ class Stop(Exception):
         self.detail = detail
 
 
-# The gate's parser
+# The shell parser
 
 
 def gate():
-    """The public text gate's handler module, loaded once per process."""
-    module = sys.modules.get(GATE_MODULE)
-    if module is None:
-        path = os.path.join(files.PARTS_DIR, "public_text_gate", "handler.py")
-        spec = importlib.util.spec_from_file_location(GATE_MODULE, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        sys.modules[GATE_MODULE] = module
-    return module
+    """hub's reader of shell commands, which lists each step that makes text public."""
+    return command_steps
 
 
 def plain(word):
@@ -1250,7 +1241,7 @@ def option_value(words, spot, long_name, short):
 def git_option_words(option):
     """How many words one of git's own options takes up: two when it takes the next word as its value.
 
-    The set of those options is the text gate's, so both find the same
+    The set of those options is the shell parser's, so both find the same
     action. A bare --exec-path makes git print a path and stop. It still
     takes up two words here, as it did before the set was shared.
     """

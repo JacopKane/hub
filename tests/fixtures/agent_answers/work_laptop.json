@@ -3,8 +3,8 @@
   "questions": [
     {"id": "gate_mode", "text": "When a push or PR holds a private path or an em dash, should hub warn you or stop it?",
      "options": [
-       {"label": "warn", "does": "Says what it found once, then lets you go ahead.", "flags": {"public_text_gate": "warn"}},
-       {"label": "block", "does": "Stops it until the text is fixed.", "flags": {"public_text_gate": "block"}}
+       {"label": "warn", "does": "Says what it found once, then lets you go ahead.", "flags": {"demo_gate": "warn"}},
+       {"label": "block", "does": "Stops it until the text is fixed.", "flags": {"demo_gate": "block"}}
      ]},
     {"id": "use", "text": "Is this machine for work, for home, or both?",
      "options": [

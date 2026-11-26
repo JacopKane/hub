@@ -64,7 +64,7 @@ def test_the_search_goes_to_scout_eval_is_laid_out_the_way_the_eval_runner_reads
 
 
 WITHOUT_MODS = os.path.join(REPO, "evals", "hub_skill_without_mods")
-DASHES = "public_text_gate.dashes"
+TEXTS_FIRST = "pr.instructions.texts_first"
 
 
 def read_case(*parts):
@@ -87,7 +87,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         assert set(settings) <= PROMPT_KEYS
         assert settings["plugins"] == '["no-mods/hub"]'
         assert "Skill" in settings["allowed_tools"] and "Bash" in settings["allowed_tools"]
-        assert prompt.split("---\n", 2)[2].strip() == "turn off the em dash check"
+        assert prompt.split("---\n", 2)[2].strip() == "turn off texts first"
         assert 'schema_version: "1.1"' in case and "name: hub_skill_without_mods" in case
         assert "evals/*/no-mods/" in read_case("..", "..", ".gitignore").splitlines()
     with when("make-copy.sh copies the plugin into a copy of the eval folder"):
@@ -108,7 +108,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         environment = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(tmp_path), "TERM": "dumb"}
         script = re.search(r"scaffold_script: (\S+)", case).group(1)
         subprocess.run(["bash", str(folder / script)], cwd=workspace, env=environment, check=True)
-        done = subprocess.run(["python3", "-I", str(copy / "lib" / "hub_switch.py"), "off", DASHES], cwd=workspace,
+        done = subprocess.run(["python3", "-I", str(copy / "lib" / "hub_switch.py"), "off", TEXTS_FIRST], cwd=workspace,
                               env=environment, capture_output=True, text=True, check=True)
     with then("every grader has a known type, and the file and reply graders match what hubctl did"):
         graders = {name[:-3]: frontmatter(read_case("graders", name))

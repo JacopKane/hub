@@ -311,14 +311,14 @@ test('a select runs set with the picked mode', async ($, on) => {
   const { ui, fake } = await open($, on)
 
   await ui.press({ key: 'family:gates' })
-  const gate = await ui.find({ type: 'Select', key: 'row:public_text_gate' })
-  expect(gate?.props.label).toBe('[x] public_text_gate')
+  const gate = await ui.find({ type: 'Select', key: 'row:demo_gate' })
+  expect(gate?.props.label).toBe('[x] demo_gate')
   expect(gate?.props.value).toBe('warn')
   expect((gate?.props.options as { value: string }[]).map(option => option.value)).toEqual(['off', 'warn', 'block'])
 
-  await ui.select({ key: 'row:public_text_gate', value: 'block' })
-  expect(changes(fake)).toEqual(['set public_text_gate block'])
-  expect(fake.calls.find(call => call.args === 'set public_text_gate block')?.stdin).toMatch(/^[0-9a-f]{64}\n$/)
+  await ui.select({ key: 'row:demo_gate', value: 'block' })
+  expect(changes(fake)).toEqual(['set demo_gate block'])
+  expect(fake.calls.find(call => call.args === 'set demo_gate block')?.stdin).toMatch(/^[0-9a-f]{64}\n$/)
   await ui.unmount()
 })
 

@@ -15,10 +15,10 @@ its id or the plain words of its name. A flag under a part is named by its
 full id, or by the part's name and its own name close together, so "the
 guard" alone names no flag. Only small words such as "the" may stand between
 the order and the name. To lower a protection, the order must turn it off or
-pause it, as in "turn off the public text gate", "turn the public text gate
-off", "disable the public text gate" or "pause the public text gate".
+pause it, as in "turn off self-protection", "turn self-protection
+off", "disable self-protection" or "pause self-protection".
 Uninstalling needs "uninstall hub". A sentence that only mentions the flag,
-such as "remove what the public text gate flagged", orders nothing. A
+such as "remove what self-protection flagged", orders nothing. A
 question, a negation, a refusal, a condition or a request for later asks for
 nothing.
 
@@ -279,11 +279,11 @@ def aimed(words, start, end, lowering, wanted):
         return order in wanted
     particles = {"off"} if lowering else {"off", "on"}
     if order in particles and before > 0 and words[before - 1] in TURN_ORDERS:
-        return True  # turn off the public text gate
+        return True  # turn off self-protection
     if order in TURN_ORDERS and after[:1] and after[0] in particles:
-        return True  # turn the public text gate off
+        return True  # turn self-protection off
     if not order and len(after) == 1 and after[0] in particles:
-        return True  # public text gate off
+        return True  # self-protection off
     return order in (OFF_ORDERS if lowering else CHANGE_ORDERS)
 
 

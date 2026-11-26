@@ -25,7 +25,7 @@ const SURFACES = ['terminal', 'desktop'] as const
 
 const SHOWN = 'hub on laptop. 5 of 7 parts on, start text 1,210 characters\n\nChanges\n'
 
-const ROW = '  public_text_gate.dashes        off      stopped, set by user (user)\n'
+const ROW = '  demo_gate.dashes        off      stopped, set by user (user)\n'
 
 type Answer = { exitCode: number; stdout: string; stderr: string }
 
@@ -44,7 +44,7 @@ function afterUndo(): HubScreen {
     kind: 'undo' as const,
     mark: '~' as const,
     time: '2026-11-09T12:00:00Z',
-    text: 'undone, so public_text_gate.dashes is on again',
+    text: 'undone, so demo_gate.dashes is on again',
     reason: '',
     buttons: [],
   }
@@ -101,16 +101,16 @@ for (const surface of SURFACES) {
     const calls = await start($, on, args => {
       if (args[0] === 'undo') {
         screen = afterUndo()
-        return ok('restored public_text_gate.dashes to "on"\n')
+        return ok('restored demo_gate.dashes to "on"\n')
       }
       return json(screen)
     })
 
     const ui = await $.ui.mount({ ...BAND, surface })
 
-    const notice = await ui.find({ type: 'Text', text: /tuner turned public_text_gate\.dashes off/ })
+    const notice = await ui.find({ type: 'Text', text: /tuner turned demo_gate\.dashes off/ })
     expect(notice?.text).toBe(
-      '- tuner turned public_text_gate.dashes off · you went ahead after 4 of 5 dash warnings this week',
+      '- tuner turned demo_gate.dashes off · you went ahead after 4 of 5 dash warnings this week',
     )
     expect((await ui.find({ type: 'Text', text: /hub/ }))?.text).toBe('1 hub')
     const undo = await ui.find({ type: 'Button', key: 'd9dash000001:undo' })
@@ -232,10 +232,10 @@ test('/hub off changes the flag through hubctl, prints the row and redraws the b
   })
   const calls = await start($, on, args => (args[0] === 'off' ? ok(ROW) : json(DAY9)))
 
-  const result = await $.command.run({ command: 'hub', args: 'off public_text_gate.dashes', origin: TYPED })
+  const result = await $.command.run({ command: 'hub', args: 'off demo_gate.dashes', origin: TYPED })
 
   expect(result.text).toBe(ROW.trimEnd())
-  expect(hubctlArgs(calls)).toEqual(['screen --json --band', 'off public_text_gate.dashes', 'screen --json --band'])
+  expect(hubctlArgs(calls)).toEqual(['screen --json --band', 'off demo_gate.dashes', 'screen --json --band'])
   expect(engineRan).toBe(0)
 })
 
@@ -256,13 +256,13 @@ test('a change the user types or clicks carries a fresh ticket the doors folder 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
-  await $.command.run({ command: 'hub', args: 'off public_text_gate', origin: TYPED })
+  await $.command.run({ command: 'hub', args: 'off demo_gate', origin: TYPED })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'd9dash000001:undo' })
   await ui.unmount()
 
   const changes = sent.filter(([args]) => !args.startsWith('screen --json'))
-  expect(changes.map(([args]) => args)).toEqual(['off public_text_gate', 'undo d9dash000001'])
+  expect(changes.map(([args]) => args)).toEqual(['off demo_gate', 'undo d9dash000001'])
   const tickets = changes.map(([, stdin]) => stdin ?? '')
   expect(tickets.every(line => /^[0-9a-f]{64}\n$/.test(line))).toBe(true)
   expect(tickets[0]).not.toBe(tickets[1])
@@ -391,7 +391,7 @@ for (const origin of NOT_TYPED) {
     const calls = await start($, on, args => (args[0] === 'show' ? ok(SHOWN) : json(DAY9)))
 
     for (const [command, args] of [
-      ['hub', 'off public_text_gate.dashes'],
+      ['hub', 'off demo_gate.dashes'],
       ['hub', 'undo d9dash000001'],
       ['hub', 'set status_band.first_digit 4'],
       ['hub', 'relay'],
@@ -460,10 +460,10 @@ test('/hub-flags refuses a change that did not come from the user too', async ($
 test('a change the user sends through the Remote Control bridge goes through', async ($, on) => {
   const calls = await start($, on, args => (args[0] === 'off' ? ok(ROW) : json(DAY9)))
 
-  const result = await $.command.run({ command: 'hub', args: 'off public_text_gate.dashes', origin: { kind: 'bridge' } })
+  const result = await $.command.run({ command: 'hub', args: 'off demo_gate.dashes', origin: { kind: 'bridge' } })
 
   expect(result.text).toBe(ROW.trimEnd())
-  expect(hubctlArgs(calls)).toContain('off public_text_gate.dashes')
+  expect(hubctlArgs(calls)).toContain('off demo_gate.dashes')
 })
 
 const TURN = { answer: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as const
@@ -558,7 +558,7 @@ const ZONE = {
   question: { chat: 'API', session: API_SESSION, line: '! API asks  which retry limit?', cells: 30 },
 }
 const CARD = '! API  needs you\n  asks which retry limit?\n'
-const TUNER_LINE = '- tuner turned public_text_gate.dashes off · you went ahead after 4 of 5 dash warnings this week'
+const TUNER_LINE = '- tuner turned demo_gate.dashes off · you went ahead after 4 of 5 dash warnings this week'
 
 // Five idle chats, as the design shows them.
 const FIVE_NAMES = ['INSTAGRAM', 'OPEN-SOURCE', 'MUSIC', 'EXPENSES', 'CAREER']
@@ -679,7 +679,7 @@ test('the failed checks show as ✗ and their count just before features, and no
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
   expect(await row(ui, 'top')).toBe(`1 hub ── ${ZONE.full}${ruleOf(68)}✗2 [ features ]`)
 
-  await $.command.run({ command: 'hub', args: 'off public_text_gate.dashes', origin: TYPED })
+  await $.command.run({ command: 'hub', args: 'off demo_gate.dashes', origin: TYPED })
   expect((await texts(ui)).some(text => text.startsWith('✗'))).toBe(false)
   await ui.unmount()
 })
@@ -746,7 +746,7 @@ const FIVE_AT = [
     chats: FIVE.full,
     rule: 55,
     event: `${TUNER_LINE}  [ undo ]`,
-    notice: { direction: 'row', width: 96, wrap: 'truncate-end', maxLines: 1 },
+    notice: { direction: 'row', width: 89, wrap: 'truncate-end', maxLines: 1 },
   },
   {
     columns: 75,
@@ -1417,11 +1417,11 @@ const SINCE = '2026-11-09T10:00:00Z'
 const REQUEST = {
   model: 'haiku',
   system: 'Answer {"pick": [flag ids]}. Each change is one line with an undo.',
-  prompt: "hub's rules found these changes:\n- public_text_gate.dashes off: you went past it 9 times",
-  candidates: [{ flag: 'public_text_gate.dashes', value: 'off', reason: 'you went past it 9 times' }],
+  prompt: "hub's rules found these changes:\n- demo_gate.dashes off: you went past it 9 times",
+  candidates: [{ flag: 'demo_gate.dashes', value: 'off', reason: 'you went past it 9 times' }],
 }
 
-const PICK = '{"pick": ["public_text_gate.dashes"]}'
+const PICK = '{"pick": ["demo_gate.dashes"]}'
 
 const USAGE = { input_tokens: 120, output_tokens: 12, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
@@ -1457,7 +1457,7 @@ async function startTuner(
     calls.push({ args: args.join(' '), stdin: e.init?.stdin, timeoutMs: e.init?.timeoutMs })
     if (args[0] === 'tuner' && args[1] === 'ask') return { value: ok(JSON.stringify(options.request ?? REQUEST)) }
     if (args[0] === 'tuner' && args[1] === 'decide') {
-      const result = options.decide ?? ok('tuner turned public_text_gate.dashes off\n')
+      const result = options.decide ?? ok('tuner turned demo_gate.dashes off\n')
       decided = result.exitCode === 0
       return { value: result }
     }
@@ -1489,7 +1489,7 @@ test("the mod asks the model beside the chat, pipes only the pick to hubctl tune
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /tuner turned/ }))?.text).toBe(
-    '- tuner turned public_text_gate.dashes off · you went ahead after 4 of 5 dash warnings this week',
+    '- tuner turned demo_gate.dashes off · you went ahead after 4 of 5 dash warnings this week',
   )
   expect((await ui.find({ type: 'Button', key: 'd9dash000001:undo' }))?.props.hotkey).toBe('2')
   await ui.unmount()

@@ -19,7 +19,7 @@ You set hub up on a new machine. The brief holds hub's scan, the user's own rule
 }
 ```
 
-An option changes the profile of this machine with `machine`, or flags with `flags`, such as `{"public_text_gate": "block"}`. hub adds a Skip option to every question, and drops ids it does not have.
+An option changes the profile of this machine with `machine`, or flags with `flags`, such as `{"researcher": "on"}`. hub adds a Skip option to every question, and drops ids it does not have.
 
 <!-- hub:section tuner.setup.instructions.ask_only_unknowns -->
 - Ask only what the scan can not tell, such as whether this machine is for work or home. Never ask about a tool, a repo or a sign-in the scan already shows.
@@ -37,7 +37,7 @@ An option changes the profile of this machine with `machine`, or flags with `fla
 
 ## Tuning
 
-Sometimes the brief holds a list of changes hub's rules found, one per line, such as `- public_text_gate.dashes off: you went past it 9 times`. Then reply with only `{"pick": ["public_text_gate.dashes"]}`, naming the changes to make. hub makes only changes from the list, and it never changes a flag the user set by hand.
+Sometimes the brief holds a list of changes hub's rules found, one per line, such as `- link_check off: you went past it 9 times`. Then reply with only `{"pick": ["link_check"]}`, naming the changes to make. hub makes only changes from the list, and it never changes a flag the user set by hand.
 
 - Pick a change when its reason shows the user does not want the flag. Leave out a change you are unsure of. The rules list it again if the signals go on.
 <!-- hub:section tuner.tune.instructions.one_line -->

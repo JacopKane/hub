@@ -1,11 +1,4 @@
-"""The gates see a call as it will run, and remember warnings under load.
-
-A part that rewrites a call (its tool input) must never slip text past a
-gate, so the gates run after every other part. The warn-once memory is read
-and written under a lock, so two calls at the same time both count. The
-hooks files start the dispatcher only for the tools a part handles, and the
-group for every other tool starts Python only when a part may need it.
-"""
+"""Which hooks start the dispatcher, and when the group for every other tool starts Python."""
 import json
 import os
 import re
@@ -16,85 +9,15 @@ import time
 
 import pytest
 
-from conftest import DASH, PLUGIN, REPO, HookResult, commit, load_fixture
+from conftest import PLUGIN, REPO, HookResult, load_fixture
 from steps import and_, given, then, when
 from test_other_tiers import agent_transcript, agent_transcript_path, main_transcript
 
-GATE = "public_text_gate"
 EVERY_TOOL_PARTS = "every_tool_parts"
 POST_TOOL_PARTS = "post_tool_parts"
 EVENT_MARKERS = {"PostToolUse": os.path.join(POST_TOOL_PARTS, "Read"), "Stop": "stop_parts"}
 USER_PROMPT_PARTS = "user_prompt_parts"
 TOOL_PARTS, MARKERS_DONE = "tool_parts", "markers_done"
-REWRITER = {
-    "$schema": "../../../../schema/part.schema.json",
-    "id": "zz_rewriter",
-    "family": "rules",
-    "kind": "hook",
-    "default": "on",
-    "privacy": "none",
-    "runs_in": ["claude_code", "cursor"],
-    "handlers": {"PreToolUse": {"tools": ["Bash"]}},
-    "does": "A test part that rewrites the word CLEAN in a shell command.",
-}
-REWRITER_CODE = '''
-def handle(event, hook_input, flags, answer):
-    tool_input = dict(hook_input.get("tool_input") or {})
-    command = tool_input.get("command") or ""
-    if "CLEAN" in command:
-        tool_input["command"] = command.replace("CLEAN", "/home/sam/plan.md")
-        answer.rewrite(tool_input)
-'''
-
-
-def test_a_part_that_rewrites_a_call_after_the_gate_can_not_slip_text_past_it(home, tool, tmp_path):
-    source = os.path.join(str(tmp_path), "plugin-with-rewriter")
-    with given("a plugin with one more part, in a family after the gates, that writes a home path into commands"):
-        shutil.copytree(PLUGIN, source, ignore=shutil.ignore_patterns("__pycache__"))
-        part = os.path.join(source, "parts", REWRITER["id"])
-        os.makedirs(part)
-        with open(os.path.join(part, "part.json"), "w") as handle:
-            json.dump(REWRITER, handle)
-        with open(os.path.join(part, "handler.py"), "w") as handle:
-            handle.write(REWRITER_CODE)
-        home.install(source)
-    with when("Claude commits a message that is clean until that part rewrites it"):
-        result = home.hook(tool, "PreToolUse", commit("CLEAN"))
-    with then("the gate checks the rewritten command and refuses it for the home path"):
-        assert result.refused and result.findings == ["private_paths"]
-    with and_("a command the part leaves alone still runs"):
-        assert home.hook(tool, "PreToolUse", commit("Fix the save button")).ran
-
-
-def test_warnings_that_arrive_at_the_same_time_are_all_remembered(home):
-    count = 16
-    session = "session-parallel"
-    with given("hub is installed with the gate at warn and the em dash check on"):
-        home.install()
-        home.hubctl("on", "public_text_gate.dashes")
-    with when(f"{count} commits, each with its own dash text, reach the gate at the same moment in one session"):
-        processes = []
-        for number in range(count):
-            data = home.hook_input("claude_code", "PreToolUse", commit(f"Change {number} {DASH} done"), session=session)
-            process = subprocess.Popen(
-                [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub", "dispatch.py"), "PreToolUse"],
-                cwd=home.work, env=home.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-            processes.append((process, json.dumps(data)))
-        for process, data in processes:
-            process.stdin.write(data)
-            process.stdin.close()
-        first = [json.loads(process.stdout.read() or "{}") for process, _data in processes]
-        for process, _data in processes:
-            process.wait(timeout=60)
-    with then("each is warned once"):
-        assert all(answer.get("hookSpecificOutput", {}).get("permissionDecision") == "deny" for answer in first)
-    with when("each text comes again"):
-        again = [home.hook("claude_code", "PreToolUse", commit(f"Change {number} {DASH} done"), session=session)
-                 for number in range(count)]
-    with then("every one goes through, because no warning was lost to another write"):
-        assert [result.ran for result in again] == [True] * count
-
-
 def test_the_hooks_files_start_the_dispatcher_only_for_the_tools_parts_handle():
     sys.path.insert(0, os.path.join(PLUGIN, "lib"))
     from hub import tree
@@ -513,17 +436,16 @@ def test_without_a_done_mark_the_other_groups_start_the_dispatcher_too(home, eve
 
 
 def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(home):
-    with given("hub is installed as it ships, where self_protection and the text gate name Bash"):
+    with given("hub is installed as it ships, where self_protection names Bash"):
         home.install()
         group = EveryToolGroup(home, "PreToolUse", 0)
         listing = home.hook_input("claude_code", "PreToolUse", "ls")
         listing.update(cwd=home.work)
-    with then("apply marks Bash for both, and a command starts the dispatcher"):
-        assert tool_marker(home, "Bash") == ["self_protection", GATE]
+    with then("apply marks Bash for it, and a command starts the dispatcher"):
+        assert tool_marker(home, "Bash") == ["self_protection"]
         group.send(listing)
         assert group.python_starts() == 1
-    with when("the user switches the text gate and self_protection off in /hub"):
-        home.hubctl_from_mod("off", GATE)
+    with when("the user switches self_protection off in /hub"):
         home.hubctl_from_mod("off", "self_protection")
         result, _seconds = group.send(listing)
     with then("the Bash marker is gone, and the command starts only the shell and cat"):
@@ -562,7 +484,7 @@ def stored_answers(home):
 
 
 def test_a_bash_call_the_guards_let_through_loads_only_the_code_they_need(home):
-    with given("hub is installed as it ships, where self_protection and the public text gate check every command"):
+    with given("hub is installed as it ships, where self_protection checks every command"):
         home.install()
     with when("the main chat runs git status"):
         result, names = dispatch_loading(home, "git status")
@@ -575,11 +497,7 @@ def test_a_bash_call_the_guards_let_through_loads_only_the_code_they_need(home):
         result, _names = dispatch_loading(home, "hubctl off self_protection")
     with then("self_protection still refuses it"):
         assert result.refused and "(self_protection.lowering)" in result.reason
-    with when("the main chat commits a message that holds a home path"):
-        result, _names = dispatch_loading(home, commit("Keep the plan in /home/sam/plan.md"))
-    with then("the gate still refuses it"):
-        assert result.refused and result.findings == ["private_paths"]
-        assert len(stored_answers(home)) == 3
+        assert len(stored_answers(home)) == 2
 
 
 def test_a_marker_that_can_not_be_read_or_is_empty_still_starts_the_dispatcher(home):
@@ -659,23 +577,3 @@ def test_the_post_tool_use_group_for_every_other_tool_starts_python_only_while_a
         every.send(bash_input)
     with then("the marker is gone, and Python does not start again"):
         assert marker(home, every_marker) is None and every.python_starts() == 1
-
-
-def test_a_push_with_a_private_path_is_still_refused_while_the_context_budget_runs(home):
-    with given("a repo with a bare remote, a commit message that holds a home path, "
-               "the context budget on, and an agent at 135k context"):
-        home.install()
-        home.hubctl("on", "context_budget")
-        bare = os.path.join(home.root, "budget-remote.git")
-        home.git("init", "-q", "--bare", bare)
-        home.git("remote", "add", "origin", bare)
-        home.git("push", "-q", "-u", "origin", "main")
-        home.git("commit", "-q", "--allow-empty", "-m", "Keep the plan in /home/sam/plan.md")
-        agent_at(home, "a0000000000000031", 135000)
-    with when("that agent sends git push"):
-        data = home.hook_input("claude_code", "PreToolUse", "git push origin main")
-        data.update(transcript_path=main_transcript(home), agent_id="a0000000000000031",
-                    agent_transcript_path=agent_transcript_path(home, "a0000000000000031"))
-        result = home.send("claude_code", "PreToolUse", data)
-    with then("the gate still refuses it for the private path"):
-        assert result.refused and result.findings == ["private_paths"]
