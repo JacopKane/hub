@@ -37,15 +37,15 @@ def test_the_full_model_gives_each_row_its_kind_type_values_and_what_it_waits_fo
     with then("a part row carries its part kind, and a switch takes off and on"):
         assert {key: found["builder"][key] for key in PICKER_KEYS} == {
             "kind": "agent", "type": "switch", "values": ["off", "on"], "waits_for": []}
-        assert found["public_text_gate"]["kind"] == "hook" and found["public_text_gate"]["type"] == "mode"
-        assert found["public_text_gate"]["values"] == ["off", "warn", "block"]
+        assert found["demo_gate"]["kind"] == "hook" and found["demo_gate"]["type"] == "mode"
+        assert found["demo_gate"]["values"] == ["off", "warn", "block"]
     with then("a child carries its own kind, and a switch under a mode takes the mode's values"):
         assert found["builder.model"]["kind"] == "option" and found["builder.model"]["type"] == "choice"
         assert found["builder.model"]["values"] == ["haiku", "sonnet", "opus"]
         assert found["builder.instructions"]["kind"] == "group"
         assert found["builder.instructions.read_first"]["kind"] == "instruction"
         assert found["coordinator.name"]["type"] == "text"
-        assert found["public_text_gate.targets.commit"]["values"] == ["off", "on", "warn", "block"]
+        assert found["demo_gate.targets.commit"]["values"] == ["off", "on", "warn", "block"]
     with then("the children of an off part are listed, and each one that is on waits for that part"):
         assert found["coordinator"]["runs"] is False and found["coordinator"]["waits_for"] == []
         assert found["coordinator.start_nudge"]["waits_for"] == ["coordinator"]

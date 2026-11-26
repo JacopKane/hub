@@ -28,11 +28,11 @@ import time
 
 import pytest
 
-from conftest import DASH, GIT_OPTION_VALUES
+from conftest import GIT_OPTION_VALUES
 from steps import and_, given, then, when
 
 PART = "self_protection"
-GATE = "public_text_gate"
+GATE = "demo_gate"
 TOOL_CALL = {"AI_AGENT": "claude-code_2-1-319_agent", "CLAUDECODE": "1"}
 
 
@@ -168,10 +168,10 @@ def test_a_tool_call_that_names_the_door_variable_is_refused(home, command):
 
 
 @pytest.mark.parametrize("steps", [
-    ["tmux -S {socket} new -d -s fix '~/.local/bin/hubctl off public_text_gate; sleep 20'",
-     "tmux -S {socket} send-keys -t fix public_text_gatex BSpace Enter"],
-    ["tmux -S {socket} new -d -s fix 'cd; HUB_DOOR=mod ~/.local/bin/hub\"\"ctl off public_text_gate; sleep 20'"],
-    ["tmux -S {socket} new -d -s fix 'cd; ~/.local/bin/hub\"\"ctl off public_text_gate; sleep 20'"],
+    ["tmux -S {socket} new -d -s fix '~/.local/bin/hubctl off demo_gate; sleep 20'",
+     "tmux -S {socket} send-keys -t fix demo_gatex BSpace Enter"],
+    ["tmux -S {socket} new -d -s fix 'cd; HUB_DOOR=mod ~/.local/bin/hub\"\"ctl off demo_gate; sleep 20'"],
+    ["tmux -S {socket} new -d -s fix 'cd; ~/.local/bin/hub\"\"ctl off demo_gate; sleep 20'"],
 ], ids=["a path to hubctl, then the id typed with a backspace", "a door claim in a split name",
         "a split name alone"])
 def test_hubctl_started_in_a_tmux_pane_never_lowers_the_gate(home, steps):
@@ -201,24 +201,24 @@ def test_hubctl_started_in_a_tmux_pane_never_lowers_the_gate(home, steps):
 
 @pytest.mark.parametrize("command", [
     "git -c alias.x='!claude plugin disable hub@hub' x",
-    "git -c alias.x='!hubctl off public_text_gate' x",
+    "git -c alias.x='!hubctl off demo_gate' x",
     "git -c core.pager='hubctl uninstall' log",
     "git config alias.x '!claude plugin disable hub@hub'",
     "find . -maxdepth 0 -exec claude plugin disable hub@hub \\;",
-    "find . -maxdepth 0 -execdir hubctl off public_text_gate {} +",
+    "find . -maxdepth 0 -execdir hubctl off demo_gate {} +",
     "find . -ok ~/.local/bin/hubctl uninstall \\;",
-    "git rebase -x 'hubctl off public_text_gate' HEAD~1",
+    "git rebase -x 'hubctl off demo_gate' HEAD~1",
     "git rebase --exec='claude plugin uninstall hub@hub' main",
-    "git bisect run hubctl off public_text_gate",
+    "git bisect run hubctl off demo_gate",
     "git submodule foreach 'hubctl uninstall'",
-    "sed -n '1e hubctl off public_text_gate' /dev/null",
+    "sed -n '1e hubctl off demo_gate' /dev/null",
     "echo x | sed 's/x/hubctl uninstall/e'",
     "echo disable | xargs claude plugin",
-    "ssh localhost 'cd; ~/.local/bin/hubctl off public_text_gate'",
-    "tmux new -d 'cd; unset AI_AGENT; hub\"\"ctl off public_text_gate'",
+    "ssh localhost 'cd; ~/.local/bin/hubctl off demo_gate'",
+    "tmux new -d 'cd; unset AI_AGENT; hub\"\"ctl off demo_gate'",
     "tmux new -d 'hubctl profile set machines {}'",
     "tmux new -d 'echo x > ~/.config/hub\"\"ctl/hub.json'",
-    "find . -exec \"$RUN\" off public_text_gate \\;",
+    "find . -exec \"$RUN\" off demo_gate \\;",
 ], ids=["git alias to claude", "git alias to hubctl", "git pager", "git config alias", "find -exec",
         "find -execdir", "find -ok with a path", "git rebase -x", "git rebase --exec=", "git bisect run",
         "git submodule foreach", "sed e command", "sed s///e", "xargs fills the plugin verb", "ssh with a path",
@@ -283,32 +283,23 @@ def test_git_s_action_is_read_past_the_value_of_each_git_option_that_takes_one(h
             assert result.ran, (line, result.reason)
 
 
-def test_both_guards_read_git_s_options_from_the_one_list_in_the_gate(home):
-    with given("hub is installed with the em dash check on, a pushed repo with a new commit whose message has a "
-               "dash, and a made-up option added to the gate's list of git options that take a value"):
+def test_self_protection_reads_git_s_options_from_the_one_list_in_the_shared_parser(home):
+    with given("hub is installed, and a made-up option is added to the shared parser's list of git options that "
+               "take a value"):
         home.install()
-        home.hubctl("on", f"{GATE}.dashes")
-        bare = os.path.join(home.root, "remote.git")
-        home.git("init", "-q", "--bare", bare)
-        home.git("remote", "add", "origin", bare)
-        home.git("push", "-q", "-u", "origin", "main")
-        home.git("commit", "-q", "--allow-empty", "-m", f"Late {DASH} change")
-        path = os.path.join(home.plugin, "parts", GATE, "handler.py")
+        path = os.path.join(home.plugin, "lib", "hub", "command_steps.py")
         with open(path) as handle:
             code = handle.read()
         assert code.count("\nGIT_VALUE_OPTIONS = {") == 1
         with open(path, "w") as handle:
             handle.write(code.replace("\nGIT_VALUE_OPTIONS = {", '\nGIT_VALUE_OPTIONS = {"--made-up", '))
-    with when("the model runs a rebase with a hubctl script, a checkout of hub's project file and a push, "
-              "each after the made-up option and its value"):
+    with when("the model runs a rebase with a hubctl script and a checkout of hub's project file, each after the "
+              "made-up option and its value"):
         rebase = home.hook("claude_code", "PreToolUse", f"git --made-up HEAD rebase -x 'hubctl off {GATE}' HEAD~1")
         checkout = home.hook("claude_code", "PreToolUse", "git --made-up log checkout -- .hub/hub.json")
-        push = home.hook("claude_code", "PreToolUse", "git --made-up HEAD push origin main")
-    with then("self-protection refuses the rebase and the checkout, and the gate refuses the push for the dash, "
-              "so both read past the value with the gate's list"):
+    with then("self-protection refuses both, so it reads past the value with the parser's list"):
         assert rebase.refused and f"({PART}." in (rebase.reason or ""), rebase.reason
         assert refused_by(checkout, "settings_files"), checkout.reason
-        assert push.refused and push.findings == ["dashes"], push.reason
 
 
 # Keys that tmux types
@@ -343,12 +334,12 @@ def test_keys_tmux_types_are_read_after_line_editing(home, command):
 
 
 @pytest.mark.parametrize("command", [
-    "tmux send-keys -t claude '/hub off public_text_gate' Enter",
-    "screen -X stuff '/hub off public_text_gate\\n'",
-    "osascript -e 'tell application \"System Events\" to keystroke \"/hub off public_text_gate\"'",
-    "tmux send-keys -t claude '  /HUB:HUBCTL off public_text_gate' Enter",
+    "tmux send-keys -t claude '/hub off demo_gate' Enter",
+    "screen -X stuff '/hub off demo_gate\\n'",
+    "osascript -e 'tell application \"System Events\" to keystroke \"/hub off demo_gate\"'",
+    "tmux send-keys -t claude '  /HUB:HUBCTL off demo_gate' Enter",
     "tmux send -t claude -l '/Hub-Flags'",
-    "tmux set-buffer '/hubctl off public_text_gate'",
+    "tmux set-buffer '/hubctl off demo_gate'",
 ], ids=["tmux send-keys", "screen stuff", "osascript keystroke", "/hub:hubctl in capitals with spaces before", "/hub-flags",
         "a tmux buffer to paste"])
 def test_a_tool_call_that_types_a_hub_command_into_a_prompt_is_refused(home, command):
@@ -363,10 +354,10 @@ def test_a_tool_call_that_types_a_hub_command_into_a_prompt_is_refused(home, com
 @pytest.mark.parametrize("command", [
     "tmux send-keys -t fix 'make test' Enter",
     "tmux send-keys -t fix C-c",
-    "tmux send-keys -t fix public_text_gate Enter",
+    "tmux send-keys -t fix demo_gate Enter",
     "tmux send-keys -t fix 'make tesx' BSpace t Enter",
-    "screen -S fix -X stuff 'public_text_gate\\n'",
-    "tmux send -t fix -l public_text_gate",
+    "screen -S fix -X stuff 'demo_gate\\n'",
+    "tmux send -t fix -l demo_gate",
     "tmux send-keys -t fix 'ls /hub' Enter",
     "tmux send-keys -t fix '/hubble x' Enter",
     "osascript -e 'tell application \"System Events\" to keystroke \"make test\"'",

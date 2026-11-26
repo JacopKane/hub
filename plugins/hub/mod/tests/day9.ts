@@ -46,7 +46,7 @@ export const DAY9: HubScreen = /* json */ {
       "kind": "change",
       "mark": "-",
       "time": "2026-11-09T09:00:00Z",
-      "text": "tuner turned public_text_gate.dashes off",
+      "text": "tuner turned demo_gate.dashes off",
       "reason": "you went ahead after 4 of 5 dash warnings this week",
       "buttons": [
         {
@@ -524,10 +524,10 @@ export const DAY9: HubScreen = /* json */ {
           "children": []
         },
         {
-          "id": "public_text_gate",
-          "name": "public_text_gate",
+          "id": "demo_gate",
+          "name": "demo_gate",
           "depth": 0,
-          "does": "Checks text before it goes public in commits, pushes, tags, PRs, issues, reviews, releases, gists, discussions and other GitHub writes.",
+          "does": "A made-up guard for the tests, with a mode, children, options and signals. It has no handler, so it checks nothing.",
           "value": "warn",
           "effective": "warn",
           "runs": true,
@@ -541,10 +541,10 @@ export const DAY9: HubScreen = /* json */ {
           "stage": null,
           "children": [
             {
-              "id": "public_text_gate.dashes",
+              "id": "demo_gate.dashes",
               "name": "dashes",
               "depth": 1,
-              "does": "Stops an em dash. In warn mode it stops a text only once.",
+              "does": "Would stop an em dash.",
               "value": "off",
               "effective": "off",
               "runs": false,
@@ -800,7 +800,7 @@ export const DAY9: HubScreen = /* json */ {
       "label": "Beta, untested"
     }
   ],
-  "hidden": 1,
+  "hidden": 0,
   "everything": false,
   "command_clash": null,
   "tuner": {

@@ -7,7 +7,6 @@ import contextlib
 import fcntl
 import json
 import os
-import pwd
 import tempfile
 import time
 import unicodedata
@@ -225,69 +224,3 @@ def stamp(path):
     except FileNotFoundError:
         return None
     return [info.st_mtime_ns, info.st_size]
-
-
-# Temp folders
-
-
-def account_home():
-    """The account's home from the password database, which no variable of the process changes."""
-    return pwd.getpwuid(os.getuid()).pw_dir
-
-
-def temp_roots():
-    """The temp folders of this process, as real paths: /tmp and the one Python picks, such as $TMPDIR."""
-    return sorted({os.path.realpath("/tmp"), os.path.realpath(tempfile.gettempdir())})
-
-
-def kept_folders():
-    """The folders a temp folder must stay away from, as real paths: both homes, and hub's settings, state and code
-    folders and the Claude Code and Cursor folders, from this process's variables and from the account's home."""
-    homes = [home(), account_home()]
-    from_variables = [os.path.join(config_base(), CONFIG_NAME), old_config_dir(), state_dir(), PLUGIN_ROOT,
-                      os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home(), ".claude")]
-    from_homes = [os.path.join(folder, *path) for folder in homes
-                  for path in ((".config", CONFIG_NAME), (".config", OLD_CONFIG_NAME),
-                               (".local", "state", "hubctl"), (".claude",), (".cursor",))]
-    return sorted({os.path.realpath(folder) for folder in homes + from_variables + from_homes})
-
-
-def folded(path):
-    """A path compared the way a case-insensitive volume compares it."""
-    return unicodedata.normalize("NFC", path).casefold().rstrip(os.sep) or os.sep
-
-
-def is_inside(path, folder):
-    """Whether path sits below folder, not at it. Both are folded real paths."""
-    return path.startswith(folder.rstrip(os.sep) + os.sep)
-
-
-def is_temp_folder(path, roots, kept):
-    """Whether a real path sits below a temp root and is not equal to, below or above any kept folder."""
-    path = folded(path)
-    kept = [folded(folder) for folder in kept]
-    below_a_root = any(is_inside(path, folded(root)) for root in roots)
-    near_a_kept_folder = any(path == folder or is_inside(path, folder) or is_inside(folder, path) for folder in kept)
-    return below_a_root and not near_a_kept_folder
-
-
-def ancestors(path):
-    """The path and every folder above it."""
-    parent = os.path.dirname(path)
-    return [path] if parent == path else [path, *ancestors(parent)]
-
-
-def same_folder(one, other):
-    try:
-        return os.path.samefile(one, other)
-    except OSError:
-        return False
-
-
-def in_temp_folder(path):
-    """Whether a folder is a temp folder, read from the real filesystem: is_temp_folder on its real path, and no
-    folder at or above it is the same folder as a kept one under another spelling."""
-    real = os.path.realpath(path)
-    kept = kept_folders()
-    return is_temp_folder(real, temp_roots(), kept) and not any(
-        same_folder(above, folder) for above in ancestors(real) for folder in kept if os.path.exists(folder))

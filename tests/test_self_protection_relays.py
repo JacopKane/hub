@@ -43,32 +43,32 @@ def flag(home, flag_id):
 
 
 @pytest.mark.parametrize("command", [
-    "tmux new -d -s fix 'hubctl off public_text_gate'",
-    "tmux new-session -d \"sh -c 'hubctl off public_text_gate'\"",
-    "tmux send-keys -t fix 'hubctl off public_text_gate' Enter",
-    "tmux send-keys -t fix hubctl Space off Space public_text_gate Enter",
-    "tmux send-keys -t fix h u b c t l Space off Space public_text_gate Enter",
+    "tmux new -d -s fix 'hubctl off demo_gate'",
+    "tmux new-session -d \"sh -c 'hubctl off demo_gate'\"",
+    "tmux send-keys -t fix 'hubctl off demo_gate' Enter",
+    "tmux send-keys -t fix hubctl Space off Space demo_gate Enter",
+    "tmux send-keys -t fix h u b c t l Space off Space demo_gate Enter",
     "tmux set-buffer 'hubctl uninstall' && tmux paste-buffer -t fix",
-    "ssh -tt localhost 'hubctl off public_text_gate' <<< public_text_gate",
+    "ssh -tt localhost 'hubctl off demo_gate' <<< demo_gate",
     "ssh localhost -- hubctl uninstall",
-    "timeout 5 ssh -t localhost 'cd ~ && hubctl off public_text_gate'",
-    "echo 'hubctl off public_text_gate' | ssh localhost",
-    "echo 'hubctl off public_text_gate' | sh",
+    "timeout 5 ssh -t localhost 'cd ~ && hubctl off demo_gate'",
+    "echo 'hubctl off demo_gate' | ssh localhost",
+    "echo 'hubctl off demo_gate' | sh",
     "printf 'hubctl uninstall\\n' | bash -s",
-    "bash <<< 'hubctl off public_text_gate'",
-    "ssh localhost <<'EOF'\nhubctl off public_text_gate\nEOF",
+    "bash <<< 'hubctl off demo_gate'",
+    "ssh localhost <<'EOF'\nhubctl off demo_gate\nEOF",
     "echo '* * * * * hubctl uninstall' | crontab -",
-    "screen -dmS fix hubctl off public_text_gate",
-    "screen -S fix -X stuff 'hubctl off public_text_gate\\n'",
-    "script -q /dev/null hubctl off public_text_gate",
-    "script -qc 'hubctl off public_text_gate' /dev/null",
-    "expect -c 'spawn hubctl off public_text_gate; send \"public_text_gate\\r\"'",
-    "osascript -e 'tell app \"Terminal\" to do script \"hubctl off public_text_gate\"'",
-    "python3 -c 'import pty; pty.spawn([\"hubctl\", \"off\", \"public_text_gate\"])'",
-    "unbuffer hubctl off public_text_gate",
-    "tmux new -d \"$PROGRAM off public_text_gate\"",
-    "ssh localhost \"$(printf hub)ctl off public_text_gate\"",
-    "ssh localhost \"$(printf hub)ctl\" --scope local off public_text_gate",
+    "screen -dmS fix hubctl off demo_gate",
+    "screen -S fix -X stuff 'hubctl off demo_gate\\n'",
+    "script -q /dev/null hubctl off demo_gate",
+    "script -qc 'hubctl off demo_gate' /dev/null",
+    "expect -c 'spawn hubctl off demo_gate; send \"demo_gate\\r\"'",
+    "osascript -e 'tell app \"Terminal\" to do script \"hubctl off demo_gate\"'",
+    "python3 -c 'import pty; pty.spawn([\"hubctl\", \"off\", \"demo_gate\"])'",
+    "unbuffer hubctl off demo_gate",
+    "tmux new -d \"$PROGRAM off demo_gate\"",
+    "ssh localhost \"$(printf hub)ctl off demo_gate\"",
+    "ssh localhost \"$(printf hub)ctl\" --scope local off demo_gate",
     "tmux new -d \"`printf hub`ctl uninstall\"",
 ], ids=["tmux new", "tmux new with sh -c", "tmux keys as one word", "tmux keys with Space",
         "tmux keys letter by letter", "tmux buffer", "ssh with the id on stdin", "ssh words", "ssh behind timeout", "echo into ssh", "echo into sh",
@@ -79,7 +79,7 @@ def flag(home, flag_id):
 def test_hubctl_started_through_another_program_is_refused(home, command):
     with given("hub is installed and the user raised the gate to block in their own terminal"):
         home.install()
-        home.hubctl_as_user("set", "public_text_gate", "block", typed="public_text_gate")
+        home.hubctl_as_user("set", "demo_gate", "block", typed="demo_gate")
         before = home.settings()
     with when(f"the model runs {command!r}"):
         result = home.hook("claude_code", "PreToolUse", command)
@@ -89,20 +89,20 @@ def test_hubctl_started_through_another_program_is_refused(home, command):
 
 
 @pytest.mark.parametrize("command, check", [
-    ("HUBCTL off public_text_gate", "lowering"),
-    ("./HubCtl off public_text_gate", "lowering"),
-    ("/usr/local/bin/HUBCTL off public_text_gate", "lowering"),
-    ("Hubctl off --scope user public_text_gate", "lowering"),
-    ("BASH -c 'HUBCTL off public_text_gate'", "lowering"),
-    ("tmux new -d 'HubCtl off public_text_gate'", "lowering"),
-    ("PYTHON3 -c 'import subprocess; subprocess.run([\"HUBCTL\", \"off\", \"public_text_gate\"])'", "lowering"),
+    ("HUBCTL off demo_gate", "lowering"),
+    ("./HubCtl off demo_gate", "lowering"),
+    ("/usr/local/bin/HUBCTL off demo_gate", "lowering"),
+    ("Hubctl off --scope user demo_gate", "lowering"),
+    ("BASH -c 'HUBCTL off demo_gate'", "lowering"),
+    ("tmux new -d 'HubCtl off demo_gate'", "lowering"),
+    ("PYTHON3 -c 'import subprocess; subprocess.run([\"HUBCTL\", \"off\", \"demo_gate\"])'", "lowering"),
     ("ENV -u AI_AGENT hubctl show", "agent_marker"),
 ], ids=["all capitals", "a relative path", "a full path", "a capital first letter", "inside a shell in capitals",
         "inside tmux", "interpreter code", "env in capitals"])
 def test_a_command_name_in_other_letters_is_read_as_the_same_program(home, command, check):
     with given("hub is installed and the user raised the gate to block in their own terminal"):
         home.install()
-        home.hubctl_as_user("set", "public_text_gate", "block", typed="public_text_gate")
+        home.hubctl_as_user("set", "demo_gate", "block", typed="demo_gate")
         before = home.settings()
     with when(f"the model runs {command!r}, which a case-insensitive file system such as macOS runs as hubctl"):
         result = home.hook("claude_code", "PreToolUse", command)
@@ -112,15 +112,15 @@ def test_a_command_name_in_other_letters_is_read_as_the_same_program(home, comma
 
 
 @pytest.mark.parametrize("command, check", [
-    ("true &!# don't\nhubctl off public_text_gate\n# it's", "lowering"),
+    ("true &!# don't\nhubctl off demo_gate\n# it's", "lowering"),
     ("true &!# don't\nenv -u AI_AGENT make test\n# it's", "agent_marker"),
     ("true &|# don't\necho x > ~/.config/hubctl/hub.json\n# it's", "settings_files"),
-    ("echo foo \\\n# don't\nhubctl off public_text_gate\n# it's", "lowering"),
+    ("echo foo \\\n# don't\nhubctl off demo_gate\n# it's", "lowering"),
 ], ids=["hubctl after &!", "the marker after &!", "a settings write after &|", "after a joined comment line"])
 def test_a_line_after_a_zsh_comment_is_still_checked(home, command, check):
     with given("hub is installed and the user raised the gate to block in their own terminal"):
         home.install()
-        home.hubctl_as_user("set", "public_text_gate", "block", typed="public_text_gate")
+        home.hubctl_as_user("set", "demo_gate", "block", typed="demo_gate")
         before = home.settings()
     with when("the model runs a script whose middle line zsh runs, because &! ends a command there and the # "
               "after it starts a comment, while the apostrophes would join the lines into one quoted word"):
@@ -131,20 +131,20 @@ def test_a_line_after_a_zsh_comment_is_still_checked(home, command, check):
 
 
 @pytest.mark.parametrize("command, check", [
-    ("sleep $((1+1)); printf 'hubctl off public_text_gate' | bash", "lowering"),
-    ("(true)|cat; printf 'hubctl off public_text_gate' | bash", "lowering"),
-    ("true &&(true); printf 'hubctl off public_text_gate' | bash", "lowering"),
-    ("for ((i=0;i<1;i++)); do :; done; printf 'hubctl off public_text_gate' | bash", "lowering"),
-    ("sleep $((1)); printf 'hubctl off public_text_gate' | ssh localhost", "lowering"),
+    ("sleep $((1+1)); printf 'hubctl off demo_gate' | bash", "lowering"),
+    ("(true)|cat; printf 'hubctl off demo_gate' | bash", "lowering"),
+    ("true &&(true); printf 'hubctl off demo_gate' | bash", "lowering"),
+    ("for ((i=0;i<1;i++)); do :; done; printf 'hubctl off demo_gate' | bash", "lowering"),
+    ("sleep $((1)); printf 'hubctl off demo_gate' | ssh localhost", "lowering"),
     ("sleep $((1)); printf %s \"echo '{}' > ~/.config/hubctl/hub.json\" | bash", "settings_files"),
-    ("printf 'hubctl off public_text_gate' | (bash)", "lowering"),
-    ("printf 'hubctl off public_text_gate' | { cd .; bash; }", "lowering"),
+    ("printf 'hubctl off demo_gate' | (bash)", "lowering"),
+    ("printf 'hubctl off demo_gate' | { cd .; bash; }", "lowering"),
 ], ids=["after arithmetic", "after a piped subshell", "after a subshell joined to &&", "after a for loop",
         "into ssh after arithmetic", "a settings write after arithmetic", "into a subshell", "into a group"])
 def test_a_script_piped_to_a_shell_is_read_wherever_it_stands_in_the_line(home, command, check):
     with given("hub is installed and the user raised the gate to block in their own terminal"):
         home.install()
-        home.hubctl_as_user("set", "public_text_gate", "block", typed="public_text_gate")
+        home.hubctl_as_user("set", "demo_gate", "block", typed="demo_gate")
         before = home.settings()
     with when(f"the model runs {command!r}, where other commands, brackets or a group come before the shell"):
         result = home.hook("claude_code", "PreToolUse", command)
@@ -168,7 +168,7 @@ def test_a_script_that_the_line_prints_for_eval_or_a_shell_is_read(home, command
     with given(f"hub is installed with the {setup} setup"):
         home.install()
         if setup == "gate off":
-            home.hubctl_from_mod("off", "public_text_gate")
+            home.hubctl_from_mod("off", "demo_gate")
         before = home.show("--all")["flags"]  # the default setup has no settings file yet
     with when(f"the model runs {command!r}, where a function or printf prints a hubctl line"):
         result = home.hook("claude_code", "PreToolUse", command)
@@ -181,7 +181,7 @@ def test_cursor_refuses_hubctl_in_tmux_too(home):
     with given("hub is installed"):
         home.install()
     with when("the model in Cursor starts hubctl in a tmux session"):
-        result = home.hook("cursor", "PreToolUse", "tmux new -d 'hubctl off public_text_gate'")
+        result = home.hook("cursor", "PreToolUse", "tmux new -d 'hubctl off demo_gate'")
     with then("the hubctl check refuses it"):
         assert refused_by(result, "lowering"), result.reason
 
@@ -190,11 +190,11 @@ def test_cursor_refuses_hubctl_in_tmux_too(home):
     "tmux new -d -s fix 'hubctl show'",
     "ssh localhost 'hubctl doctor --json'",
     "tmux send-keys -t fix 'make test' Enter",
-    "tmux send-keys -t fix 'hubctl set public_text_gate block' Enter",
+    "tmux send-keys -t fix 'hubctl set demo_gate block' Enter",
     "screen -ls",
-    "git commit -m 'Refuse hubctl off public_text_gate from a tool call' && make test",
-    "echo 'hubctl off public_text_gate' | grep off",
-    "ssh localhost 'ls ~/public_text_gate_notes'",
+    "git commit -m 'Refuse hubctl off demo_gate from a tool call' && make test",
+    "echo 'hubctl off demo_gate' | grep off",
+    "ssh localhost 'ls ~/demo_gate_notes'",
     "tmux send-keys -t fix 'echo core is fine' Enter",
 ], ids=["tmux with a read", "ssh with a read", "tmux keys without hubctl", "tmux raising the gate",
         "screen list", "a commit message that names a command", "echo into grep", "a word that holds a flag id",

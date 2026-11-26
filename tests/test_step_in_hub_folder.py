@@ -105,10 +105,10 @@ def test_reading_hubs_switches_from_inside_hubs_folder_runs_and_a_change_is_judg
         shown = [run_step_from(home, folder, "show", "--json") for folder in (home.plugin, home.config)]
     with then("it prints the switches and changes nothing"):
         assert all(process.returncode == 0 for process in shown), [process.stderr for process in shown]
-        assert all("public_text_gate" in json.loads(process.stdout)["flags"] for process in shown)
+        assert all("demo_gate" in json.loads(process.stdout)["flags"] for process in shown)
         assert home.settings() == before
-    with when("Claude lowers the public text gate from the plugin folder, with no typed order"):
-        lowered = step_hook(home, tool, "off public_text_gate", home.plugin, lines=[typed("fix the tests")])
+    with when("Claude lowers the demo gate from the plugin folder, with no typed order"):
+        lowered = step_hook(home, tool, "off demo_gate", home.plugin, lines=[typed("fix the tests")])
         band = step_hook(home, tool, "screen --json --band", home.plugin)
     with then("the lowering check refuses it as it would anywhere, and the gate stays as it was"):
         assert refused_by(lowered, "lowering"), lowered.reason
@@ -117,17 +117,17 @@ def test_reading_hubs_switches_from_inside_hubs_folder_runs_and_a_change_is_judg
 
 
 def test_the_users_typed_order_lowers_a_protection_from_inside_hubs_folder(home):
-    with given("hub is installed with the public text gate at warn"):
+    with given("hub is installed with the demo gate at warn"):
         home.install()
-        assert home.show()["flags"]["public_text_gate"]["effective"] == "warn"
+        assert home.show()["flags"]["demo_gate"]["effective"] == "warn"
     with when("the user types the order and Claude runs the step from the plugin folder"):
-        hook = step_hook(home, "claude_code", "off public_text_gate", home.plugin,
-                         lines=[typed("turn off the public text gate")])
-        changed = run_step_from(home, home.plugin, "off", "public_text_gate")
+        hook = step_hook(home, "claude_code", "off demo_gate", home.plugin,
+                         lines=[typed("turn off the demo gate")])
+        changed = run_step_from(home, home.plugin, "off", "demo_gate")
     with then("the hook lets it through and the step records the change as the user's"):
         assert hook.ran, hook.reason
         assert changed.returncode == 0, changed.stderr
-        assert home.show()["flags"]["public_text_gate"]["effective"] == "off"
+        assert home.show()["flags"]["demo_gate"]["effective"] == "off"
         assert home.history()[-1]["by"] == "user"
 
 

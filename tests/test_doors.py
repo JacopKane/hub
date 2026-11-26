@@ -17,7 +17,7 @@ from steps import and_, given, then, when
 from test_start_text_and_links import use_cursor_beta
 
 DAY9 = os.path.join(FIXTURES, "day9")
-DASHES = "public_text_gate.dashes"
+DASHES = "demo_gate.dashes"
 DASH_LINE = "d9dash000001"
 OLD_LINE = "d9old0000001"
 
@@ -121,7 +121,7 @@ def test_an_undo_from_the_strip_restores_the_old_value_and_pins_it(home):
         home.hubctl("set", "scout.model", "sonnet")
     with when("the user runs hubctl undo with the dash line's id"):
         result = home.hubctl("undo", DASH_LINE)
-    with then("public_text_gate.dashes is on by user, and scout keeps the later change"):
+    with then("demo_gate.dashes is on by user, and scout keeps the later change"):
         flags = home.settings()["flags"]
         assert flags[DASHES] == {"by": "user", "value": "on"}
         assert flags["scout.model"]["value"] == "sonnet"
@@ -205,7 +205,7 @@ def test_status_band_first_digit_takes_1_to_7(home):
 
 
 def test_an_older_line_keeps_its_undo_only_while_its_flag_holds_the_value_it_set(home):
-    with given("the day 9 fixture, where the tuner turned public_text_gate.dashes off"):
+    with given("the day 9 fixture, where the tuner turned demo_gate.dashes off"):
         day9(home)
     with and_("the dash line offers undo while dashes is still off"):
         assert buttons(strip_line(screen(home), DASH_LINE)) == {"Undo": ["undo", DASH_LINE]}
@@ -378,7 +378,7 @@ def test_an_update_lists_new_behaviors_with_an_undo_and_new_parts_as_offers(home
         home.install()
         calls = home.record_claude()
     with when("a second copy with a new part and a new gate behavior is installed and hubctl update runs"):
-        home.edit_manifest("public_text_gate", lambda data: data["children"].append(
+        home.edit_manifest("demo_gate", lambda data: data["children"].append(
             {"id": "shouting", "default": "on", "privacy": "none", "does": "Stops a title in capitals."}))
         hello_part(home, "greeter")
         result = home.hubctl("update")
@@ -388,17 +388,17 @@ def test_an_update_lists_new_behaviors_with_an_undo_and_new_parts_as_offers(home
         assert result.returncode == 0
     with and_("hubctl show prints one update line with the new behavior and its undo"):
         shown = home.hubctl("show").stdout
-        assert shown.count("public_text_gate.shouting") >= 1
-        assert 'say "turn off public_text_gate.shouting"' in shown
+        assert shown.count("demo_gate.shouting") >= 1
+        assert 'say "turn off demo_gate.shouting"' in shown
     with and_("the strip lists the new part as an offer"):
         model = screen(home)
-        update = strip_line(model, "update:public_text_gate.shouting")
-        assert buttons(update) == {"Turn off": ["off", "public_text_gate.shouting"]}
+        update = strip_line(model, "update:demo_gate.shouting")
+        assert buttons(update) == {"Turn off": ["off", "demo_gate.shouting"]}
         assert buttons(strip_line(model, "offer:greeter")) == {"Turn on": ["on", "greeter"], "No": ["no", "greeter"]}
     with when("the user turns the new behavior off"):
-        home.hubctl("off", "public_text_gate.shouting")
+        home.hubctl("off", "demo_gate.shouting")
     with then("its update line is gone"):
-        assert "update:public_text_gate.shouting" not in [line["id"] for line in screen(home)["strip"]]
+        assert "update:demo_gate.shouting" not in [line["id"] for line in screen(home)["strip"]]
 
 
 def test_the_core_verbs_and_the_part_commands_are_listed_in_help(home):
@@ -543,12 +543,12 @@ def test_the_command_each_hub_skill_names_changes_a_flag_and_prints_the_row(home
             claude_text = handle.read().replace("${CLAUDE_PLUGIN_ROOT}", home.plugin)
         with open(cursor_skill) as handle:
             cursor_text = handle.read()
-    with when('Claude Code runs its skill\'s command with the words "off public_text_gate.dashes"'):
+    with when('Claude Code runs its skill\'s command with the words "off demo_gate.dashes"'):
         done = run_skill_command(home, claude_text, ["off", DASHES])
     with then("hub.json holds the change, and hub's step printed the changed row"):
         assert home.settings()["flags"][DASHES] == {"by": "user", "value": "off"}
         assert DASHES in done.stdout and "off" in done.stdout.split(DASHES, 1)[1]
-    with when('Cursor runs its copy\'s command with the words "on public_text_gate.dashes"'):
+    with when('Cursor runs its copy\'s command with the words "on demo_gate.dashes"'):
         done = run_skill_command(home, cursor_text, ["on", DASHES])
     with then("the same hub.json changes back, because both skills start the installed step"):
         assert home.settings()["flags"][DASHES]["value"] == "on"

@@ -21,7 +21,6 @@ import json
 import os
 import pty
 import pwd
-import re
 import secrets
 import shlex
 import shutil
@@ -45,7 +44,6 @@ GIT_OPTION_VALUES = {"-C": ".", "-c": "color.ui=always", "--config-env": "color.
 
 CURSOR_EVENTS = {"PreToolUse": "preToolUse", "PostToolUse": "postToolUse", "SessionStart": "sessionStart",
                  "UserPromptSubmit": "beforeSubmitPrompt", "Stop": "stop"}
-FINDING = re.compile(r"\(public_text_gate\.([a-z_]+)\)")
 TOOL_CALL_MARKERS = ("AI_AGENT", "CURSOR_AGENT")
 XDG_FOLDERS = {"XDG_CONFIG_HOME": ".config", "XDG_STATE_HOME": os.path.join(".local", "state"),
                "XDG_DATA_HOME": os.path.join(".local", "share"), "XDG_CACHE_HOME": ".cache"}
@@ -128,7 +126,6 @@ class HookResult:
             self.refused = self.output.get("permission") == "deny"
             self.reason = self.output.get("agent_message", "") if self.refused else ""
             self.context = "" if self.refused else self.output.get("agent_message", "")
-        self.findings = FINDING.findall(self.reason)
 
     @property
     def ran(self):
@@ -203,7 +200,15 @@ class Home:
             return [json.loads(line) for line in handle]
 
     def install(self, source=PLUGIN):
+        """Copy the plugin, plus demo_gate: a made-up guard part with a mode, children, options and signals.
+
+        No real part has that shape, and the scenarios for modes, scopes, guards and the tuner need one.
+        It has no handler, so it never checks or stops a command.
+        """
         shutil.copytree(source, self.plugin, ignore=shutil.ignore_patterns("__pycache__"))
+        demo_gate = os.path.join(self.plugin, "parts", "demo_gate")
+        if not os.path.exists(demo_gate):
+            shutil.copytree(os.path.join(FIXTURES, "demo_gate"), demo_gate)
         self.hubctl("apply")
 
     def hubctl(self, *args, cwd=None, check=True):

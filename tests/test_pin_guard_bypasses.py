@@ -21,9 +21,9 @@ from steps import and_, given, then, when
 
 TOOL_CALL = {"AI_AGENT": "claude-code_2-1-319_agent", "CLAUDECODE": "1"}
 CURSOR_TOOL_CALL = {"CURSOR_AGENT": "1"}
-GATE = "public_text_gate"
-SECRETS = "public_text_gate.secrets"
-DASHES = "public_text_gate.dashes"
+GATE = "demo_gate"
+SECRETS = "demo_gate.secrets"
+DASHES = "demo_gate.dashes"
 
 
 def as_model(home, caller=TOOL_CALL):
@@ -451,22 +451,22 @@ def test_a_raise_that_lands_while_the_users_change_waits_asks_the_user_to_run_it
 
 # Each one looks like a protected flag's id to a person, and none of them is one.
 LOOK_ALIKE_IDS = [
-    "\u0440ublic_text_gate",  # a Cyrillic r
-    "public_text_gat\u0435",  # a Cyrillic e
-    "\uff50ublic_text_gate",  # a full-width p
-    "public_text\u200b_gate",  # a zero-width space
-    "public_text_gate\u00a0",  # a no-break space
-    "Public_Text_Gate",
-    "PUBLIC_TEXT_GATE",
-    " public_text_gate",
-    "public_text_gate ",
-    "public_text_gate\t",
-    "public_text_gate\n",
-    '"public_text_gate"',
-    "'public_text_gate'",
-    "public_text_gate\\",
-    "public_text_gate.Secrets",
-    "public_text_gate..secrets",
+    "d\u0435mo_gate",  # a Cyrillic e
+    "dem\u043e_gate",  # a Cyrillic o
+    "\uff44emo_gate",  # a full-width d
+    "demo\u200b_gate",  # a zero-width space
+    "demo_gate\u00a0",  # a no-break space
+    "Demo_Gate",
+    "DEMO_GATE",
+    " demo_gate",
+    "demo_gate ",
+    "demo_gate\t",
+    "demo_gate\n",
+    '"demo_gate"',
+    "'demo_gate'",
+    "demo_gate\\",
+    "demo_gate.Secrets",
+    "demo_gate..secrets",
 ]
 
 # Each one looks like "off" or "block", and none of them is a value the gate takes.
@@ -615,7 +615,7 @@ def test_a_half_written_settings_file_is_refused_and_never_overwritten(home):
         still_runs(home, GATE, "block")
     with when("the model switches builder off, and a half-written local file lands before the write"):
         def half_a_local_file(_data):
-            return '{"version": 1, "flags": {"public_text_gate": {"value": "of'
+            return '{"version": 1, "flags": {"demo_gate": {"value": "of'
 
         done = write_while_hubctl_waits_at_the_lock(home, ["off", "builder"], half_a_local_file,
                                                     path=os.path.join(home.work, ".hub", "hub.local.json"))

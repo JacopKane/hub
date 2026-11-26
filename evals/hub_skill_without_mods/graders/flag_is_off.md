@@ -1,5 +1,5 @@
 ---
 type: regex
 target: { source: file, path: hub-home/config/hub.json }
-pattern: '"public_text_gate\.dashes"\s*:\s*\{[^}]*"value"\s*:\s*"off"'
+pattern: '"pr\.instructions\.texts_first"\s*:\s*\{[^}]*"value"\s*:\s*"off"'
 ---

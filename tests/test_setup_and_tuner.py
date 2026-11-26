@@ -17,7 +17,7 @@ from conftest import FIXTURES, PLUGIN, load_fixture
 from steps import and_, given, then, when
 
 ANSWERS = os.path.join(FIXTURES, "agent_answers")
-STARTING_SET = {"core", "tuner", "scout", "public_text_gate", "self_protection", "status_band", "pr", "pr_gif"}
+STARTING_SET = {"core", "tuner", "scout", "demo_gate", "self_protection", "status_band", "pr", "pr_gif"}
 # Parts a new user turns on by hand. Setup never turns them on.
 OPT_IN = {"builder", "tier_rule"}
 
@@ -226,7 +226,6 @@ def test_a_profile_fact_the_user_types_is_pinned_and_a_scan_or_a_tool_call_leave
 
 # The tuner
 
-DASH = chr(0x2014)
 SIGNAL_KEYS = {"flag", "event", "signal", "time"}
 
 
@@ -243,7 +242,7 @@ def set_up(home):
 
 def dash_check_on_by_setup(home):
     """The dash check, off for a new user, turned on by setup. That is no pin, so the tuner may offer it."""
-    home.set_by("setup", "public_text_gate.dashes", "on")
+    home.set_by("setup", "demo_gate.dashes", "on")
 
 
 def use_cursor_beta_in_project(home):
@@ -252,7 +251,7 @@ def use_cursor_beta_in_project(home):
 
 
 def seed_signals(home, flag, warned=10, went_ahead=9):
-    """Made-up lines in the signal log, as the gate writes them."""
+    """Made-up lines in the signal log, in the shape a guard writes them."""
     with open(os.path.join(home.state, "signals.jsonl"), "a") as handle:
         for name, count in (("warned", warned), ("went_ahead", went_ahead)):
             for _ in range(count):
@@ -270,45 +269,41 @@ def decide(home, answer):
 
 
 def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo_and_never_touches_a_pinned_flag(home):
-    messages = [f"Fix the parser {DASH} step {number}" for number in range(10)]
     with given("a set-up machine on a fixed clock, where setup turned the dash check on, which is no pin, and the "
                "user pinned private_paths on"):
         on_day(home, 1)
         set_up(home)
         dash_check_on_by_setup(home)
-        home.hubctl("pin", "public_text_gate.private_paths")
-    with when("over nine days ten commit messages with a dash are warned, and nine are sent again unchanged"):
-        for number, message in enumerate(messages):
+        home.hubctl("pin", "demo_gate.private_paths")
+    with when("over nine days the dash check warns ten times, and nine times Claude goes ahead unchanged"):
+        for number in range(10):
             on_day(home, 1 + number * 9 // 10)
-            command = f'git commit -q --allow-empty -m "{message}"'
-            assert home.hook("claude_code", "PreToolUse", command, session=f"day-{number}").refused
-            if number < 9:
-                assert home.hook("claude_code", "PreToolUse", command, session=f"day-{number}").ran
+            seed_signals(home, "demo_gate.dashes", warned=1, went_ahead=1 if number < 9 else 0)
     and_("the log also holds as many went-past lines for private_paths, which the user pinned")
-    seed_signals(home, "public_text_gate.private_paths")
+    seed_signals(home, "demo_gate.private_paths")
     with then("the log holds ten warned and nine went_ahead lines for the dash check"):
-        dashes = [line["signal"] for line in home.signals() if line["flag"] == "public_text_gate.dashes"]
+        dashes = [line["signal"] for line in home.signals() if line["flag"] == "demo_gate.dashes"]
         assert dashes.count("warned") == 10 and dashes.count("went_ahead") == 9
     with when("the next day's first session starts"):
         on_day(home, 10)
         context = context_of(session_start(home, "claude_code"))
     with then("the chat gets the one candidate and the command that decides it"):
-        assert pending(home) == [{"flag": "public_text_gate.dashes", "value": "off",
+        assert pending(home) == [{"flag": "demo_gate.dashes", "value": "off",
                                   "reason": "you went past it 9 times"}]
-        assert "tuner decide" in context and "public_text_gate.dashes" in context
+        assert "tuner decide" in context and "demo_gate.dashes" in context
         assert "private_paths" not in context
     with when("the recorded model answer picks the candidate, the pinned flag and scout"):
         decide(home, "tuner_picks_more.json")
     with then("only the dash check is off, by the tuner, back at its shipped default, and the reason is in the "
                "history"):
         flags = home.settings()["flags"]
-        assert "public_text_gate.dashes" not in flags
-        assert not home.show("--all")["flags"]["public_text_gate.dashes"]["runs"]
-        assert flags["public_text_gate.private_paths"] == {"value": "on", "by": "user"}
+        assert "demo_gate.dashes" not in flags
+        assert not home.show("--all")["flags"]["demo_gate.dashes"]["runs"]
+        assert flags["demo_gate.private_paths"] == {"value": "on", "by": "user"}
         assert "scout" not in flags and home.show()["flags"]["scout"]["runs"]
         line = [line for line in home.history() if line.get("by") == "tuner"]
         assert len(line) == 1 and line[0]["reason"] == "you went past it 9 times"
-        assert (line[0]["flag"], line[0]["old"], line[0]["new"]) == ("public_text_gate.dashes", "on", "off")
+        assert (line[0]["flag"], line[0]["old"], line[0]["new"]) == ("demo_gate.dashes", "on", "off")
     and_("the band holds one line for it, with the reason and an undo")
     strip = json.loads(home.hubctl("screen", "--json").stdout)["strip"]
     tuned = [entry for entry in strip if entry["id"] == line[0]["id"]]
@@ -317,13 +312,10 @@ def test_on_day_9_the_tuner_turns_off_the_dash_warning_with_one_line_and_an_undo
     with when("the user takes the undo"):
         home.hubctl("undo", line[0]["id"])
     with then("the dash check is back on, pinned"):
-        assert home.settings()["flags"]["public_text_gate.dashes"] == {"value": "on", "by": "user"}
-    and_("every line of the signal log holds only the allowed keys, and no word of a commit message")
-    raw = open(os.path.join(home.state, "signals.jsonl")).read()
+        assert home.settings()["flags"]["demo_gate.dashes"] == {"value": "on", "by": "user"}
+    and_("every line of the signal log holds only the allowed keys")
     for signal in home.signals():
         assert set(signal) == SIGNAL_KEYS
-    for word in ("parser", "step", "Fix"):
-        assert word not in raw
 
 
 def test_the_tuner_runs_at_most_once_a_day_and_only_with_new_signals(home):
@@ -331,10 +323,10 @@ def test_the_tuner_runs_at_most_once_a_day_and_only_with_new_signals(home):
         on_day(home, 1, hour=9)
         set_up(home)
         dash_check_on_by_setup(home)
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
     with when("two sessions start on one day, with a new signal between them"):
         first = context_of(session_start(home, "claude_code"))
-        seed_signals(home, "public_text_gate.dashes", warned=1, went_ahead=1)
+        seed_signals(home, "demo_gate.dashes", warned=1, went_ahead=1)
         on_day(home, 1, hour=20)
         second = context_of(session_start(home, "claude_code"))
     with then("the tuner ran once"):
@@ -351,7 +343,7 @@ def test_the_tuner_runs_at_most_once_a_day_and_only_with_new_signals(home):
     with then("it does not run"):
         assert "tuner decide" not in quiet
     with when("a new signal comes, and a session starts"):
-        seed_signals(home, "public_text_gate.dashes", warned=1, went_ahead=0)
+        seed_signals(home, "demo_gate.dashes", warned=1, went_ahead=0)
         on_day(home, 3, hour=12)
     with then("it runs"):
         assert "tuner decide" in context_of(session_start(home, "claude_code"))
@@ -361,10 +353,10 @@ def test_the_tuner_never_picks_a_flag_a_project_file_sets(home):
     with given("the project file sets the dash check on, and the signals would pick it"):
         on_day(home, 1)
         set_up(home)
-        home.hubctl("on", "public_text_gate.dashes", "--project")
+        home.hubctl("on", "demo_gate.dashes", "--project")
         project = os.path.join(home.work, ".hub", "hub.json")
         before = open(project).read()
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
     with when("the tuner runs at a session start"):
         context = context_of(session_start(home, "claude_code"))
     with then("dashes was not a candidate, and the project file is unchanged"):
@@ -382,7 +374,7 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
         home.hubctl("off", "status_band")
         home.hubctl("on", "cursor_link")
         home.hubctl("on", "cursor_link.tuner_chat_line")
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
         session_start(home, "claude_code")
         decide(home, "tuner_picks_more.json")
         change = [line for line in home.history() if line.get("by") == "tuner"][0]
@@ -392,7 +384,7 @@ def test_the_tuners_line_shows_once_as_a_system_message_or_as_cursors_first_line
         cursor = context_of(session_start(home, "cursor"))
     with then("Claude Code shows one line with the undo, and Cursor's context starts with it"):
         line = claude.output["systemMessage"]
-        assert "public_text_gate.dashes" in line and f'Say "undo {change["id"]}"' in line
+        assert "demo_gate.dashes" in line and f'Say "undo {change["id"]}"' in line
         assert "\n" not in line
         assert cursor.startswith(line)
     with and_("Claude Code's start text holds no second copy of the line"):
@@ -420,7 +412,7 @@ def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_on
     with and_("Cursor's chat line is off, since it is in beta and off by default"):
         chat_line = home.show("--all", "--tool", "cursor")["flags"]["cursor_link.tuner_chat_line"]
         assert chat_line["runs"] is False
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
         session_start(home, "claude_code")
         decide(home, "tuner_picks_more.json")
         change = [line for line in home.history() if line.get("by") == "tuner"][0]
@@ -431,7 +423,7 @@ def test_where_no_engine_line_shows_the_tuners_change_the_start_text_holds_it_on
     with then("Claude Code shows no system message, and both start texts hold the line with its undo"):
         assert "systemMessage" not in claude.output
         for context in (context_of(claude), cursor):
-            assert "public_text_gate.dashes" in context and f'Say "undo {change["id"]}"' in context
+            assert "demo_gate.dashes" in context and f'Say "undo {change["id"]}"' in context
             assert "first reply" in context
     with when("one more session starts in each tool"):
         again = context_of(session_start(home, "claude_code"))
@@ -463,7 +455,7 @@ def tuner_change(home):
     on_day(home, 1)
     set_up(home)
     dash_check_on_by_setup(home)
-    seed_signals(home, "public_text_gate.dashes")
+    seed_signals(home, "demo_gate.dashes")
     session_start(home, "claude_code")
     decide(home, "tuner_picks_more.json")
     return [line for line in home.history() if line.get("by") == "tuner"][0]
@@ -586,7 +578,7 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
         set_up(home)
         dash_check_on_by_setup(home)
         assert tuner_ask(home)["candidates"] == []
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
     with when("the next day's first session starts"):
         on_day(home, 2)
         context = context_of(session_start(home, "claude_code"))
@@ -599,21 +591,21 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
     with then("it names tuner.tune.model, the tuner's instructions and the candidate"):
         assert request["model"] == "haiku"
         assert '{"pick"' in request["system"] and "one line with an undo" in request["system"]
-        assert "- public_text_gate.dashes off: you went past it 9 times" in request["prompt"]
+        assert "- demo_gate.dashes off: you went past it 9 times" in request["prompt"]
     with when("the model's answer goes to hubctl tuner decide on stdin"):
         decided = home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "tuner", "decide",
-                            "--answer", "-"], stdin='{"pick": ["public_text_gate.dashes"]}')
+                            "--answer", "-"], stdin='{"pick": ["demo_gate.dashes"]}')
     with then("the dash check is off by the tuner, back at its shipped default, and nothing waits"):
-        assert "public_text_gate.dashes" in decided.stdout
-        assert "public_text_gate.dashes" not in home.settings()["flags"]
-        assert not home.show("--all")["flags"]["public_text_gate.dashes"]["runs"]
+        assert "demo_gate.dashes" in decided.stdout
+        assert "demo_gate.dashes" not in home.settings()["flags"]
+        assert not home.show("--all")["flags"]["demo_gate.dashes"]["runs"]
         last = home.history()[-1]
-        assert (last["flag"], last["by"], last["old"], last["new"]) == ("public_text_gate.dashes", "tuner", "on", "off")
+        assert (last["flag"], last["by"], last["old"], last["new"]) == ("demo_gate.dashes", "tuner", "on", "off")
         assert screen_tuner(home)["pending"] == 0
     with when("the mod has not asked for two weeks, and new signals come"):
         on_day(home, 17)
-        home.set_by("setup", "public_text_gate.dashes", "on")
-        seed_signals(home, "public_text_gate.dashes")
+        home.set_by("setup", "demo_gate.dashes", "on")
+        seed_signals(home, "demo_gate.dashes")
         late = context_of(session_start(home, "claude_code"))
     with then("the chat gets the list again, since the mod may not run"):
         assert "tuner decide" in late
@@ -621,7 +613,7 @@ def test_where_the_mod_runs_the_candidates_go_to_its_side_call_and_the_chat_stay
         tuner_ask(home)
         home.hubctl("off", "tuner.tune.side_call")
         on_day(home, 18)
-        seed_signals(home, "public_text_gate.dashes", warned=10, went_ahead=10)
+        seed_signals(home, "demo_gate.dashes", warned=10, went_ahead=10)
         off = context_of(session_start(home, "claude_code"))
     with then("the chat gets the list, and the screen says the side call is off"):
         assert "tuner decide" in off
@@ -635,7 +627,7 @@ def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mo
         set_up(home)
         dash_check_on_by_setup(home)
         tuner_ask(home)
-        seed_signals(home, "public_text_gate.dashes")
+        seed_signals(home, "demo_gate.dashes")
         on_day(home, 2)
         assert "tuner decide" not in context_of(session_start(home, "claude_code"))
         since = screen_tuner(home)["since"]
@@ -652,9 +644,9 @@ def test_when_the_side_call_gives_up_the_next_chat_gets_the_list_once_and_the_mo
         first = context_of(session_start(home, "claude_code"))
         second = context_of(session_start(home, "claude_code"))
     with then("the first chat gets the list, the second does not, and the candidate still waits for a decision"):
-        assert "tuner decide" in first and "- public_text_gate.dashes off: you went past it 9 times" in first
+        assert "tuner decide" in first and "- demo_gate.dashes off: you went past it 9 times" in first
         assert "tuner decide" not in second
-        assert [candidate["flag"] for candidate in pending(home)] == ["public_text_gate.dashes"]
+        assert [candidate["flag"] for candidate in pending(home)] == ["demo_gate.dashes"]
         assert screen_tuner(home)["pending"] == 0
 
 

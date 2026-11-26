@@ -2,17 +2,15 @@
 
 [![CI](https://github.com/JacopKane/hub/actions/workflows/ci.yml/badge.svg)](https://github.com/JacopKane/hub/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Every part of your Claude Code setup gets its own switch. A gate stops private text before it goes public.
+Every part of your Claude Code setup gets its own switch.
 
-hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include the public text gate, agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
+hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
 
-![The public text gate stops a commit message that holds a home path. Claude rewrites it and commits. Then Claude tries to switch the gate off, and hub refuses. Only you can lower a protection.](docs/media/gate-stops-a-leak.gif)
-
-hub is at version 0.16.0. It is early software, so expect changes that break things.
+hub is at version 0.17.0. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
-- Working today are the settings file and its switches, a first-run setup, self-protection, the public text gate, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
+- Working today are the settings file and its switches, a first-run setup, self-protection, the status band, agent tiers, writing rules, and the coordinator chat with a chat board.
 - Cursor support is in beta and untested. It works only from a checkout of this repo, not from the plugin install.
 - Still planned is a sandbox command.
 
@@ -45,17 +43,16 @@ Tell Claude what to change in plain words. For example:
 "turn on humanize"            switch a part on
 "turn off the status band"    switch a part off
 "undo that"                   take back the last change
-"turn on the em dash check"   switch a smaller check inside a part
+"turn off texts first"        switch a smaller rule inside a part
 "check the hub setup"         check the setup
 ```
 
-Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in its own folder under `~/.local/state/`. A protection, such as the public text gate, is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
+Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in its own folder under `~/.local/state/`. A protection is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
 
 Known limits:
 
 - `/hub` and the status band are optional extras. They work where Claude Code loads plugin mods. Without the mod, plain words still switch parts, lower a protection and uninstall hub. Only pinning a value and taking or declining an offer need `/hub`.
 - In Cursor, a protection cannot be lowered by words. Lower it from Claude Code instead.
-- The gate refuses a home or temp folder path on every try. A pasted build log with `/tmp/` paths has to come out before the commit goes through. In a repo inside a temp folder with no remote, the gate checks the commits when they are pushed.
 - Restarting chats from hub works only in iTerm2 or tmux.
 - Self-protection reads the chat and the commands Claude writes. It is not a sandbox. [Self-protection limits](docs/self-protection-limits.md) names where its checks end.
 
@@ -161,9 +158,6 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | away_guard | Tells a chat when you are away, so it keeps working while a question waits. It never holds a question | off | Claude Code | "turn on the away guard" |
 | knowledge_only | Reminds the chat to explain shared material and change nothing | off | Claude Code | "turn on knowledge only" |
 | question_check | Opens a question dialog only when it carries enough context to answer | off | Claude Code | "turn on the question check" |
-| public_text_gate | Checks text before it goes public in commits, pushes, PRs, issues and other GitHub writes | warn | Claude Code, Cursor | "set the public text gate to block" |
-| em dash check (in public_text_gate) | Stops an em dash in public text | off | Claude Code, Cursor | "turn on the em dash check" |
-| temp repos (in public_text_gate) | Skips the checks on commits in a repo inside a temp folder with no remote. A push of those commits is still checked | on | Claude Code, Cursor | "turn off temp repos" |
 | self_protection | Stops a tool call that would lower hub's protections | on | Claude Code, Cursor | Only your own newest message can lower it |
 | containers (in self_protection) | Lets hub's switch step run in a container that can not reach your home folder, where it changes only the container's copy of hub's settings | on | Claude Code, Cursor | "turn off containers" |
 | chrome_lock | Lets one chat at a time drive Chrome | off | Claude Code | "turn on the Chrome lock" |

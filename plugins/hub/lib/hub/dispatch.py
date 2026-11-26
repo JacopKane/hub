@@ -43,11 +43,10 @@ from hub import chat_notices, files, resolve, signals, uninstall  # noqa: E402
 CALLS = "calls"
 CALL_AGE = 24 * 3600  # stored answers older than this are removed
 CALL_LOCK_WAIT = 5  # seconds, so a lock that stays held ends in an error well inside the 15 s hook time
-GATE = "public_text_gate"
 SELF_PROTECTION = "self_protection"
 # Used only when self_protection itself can not load: a call that names the switch step, a marker or a hub file.
 ROUGH_HUB = re.compile(r"hubctl|hub_switch|AI_AGENT|CURSOR_AGENT|HUB_DOOR|\.hub/hub")
-# Used only when the gate's own parser can not load: any git or gh call counts as public.
+# Used only when the shell parser can not load: any git or gh call counts as public.
 ROUGH_PUBLIC = re.compile(r"\b(?:git|gh)\b")
 BROKEN = ("hub could not read its settings or parts, so it stopped this public step. "
           "Fix the error below, then send the command again.")
@@ -320,7 +319,8 @@ def is_public_step(hook_input, raw):
         return False
     command = (hook_input.get("tool_input") or {}).get("command") or ""
     try:  # without the log, so naming a push runs no git after the parts have used up their time
-        return bool(load_handler(GATE).public_steps(command, hook_input.get("cwd") or os.getcwd(), log=False))
+        from hub import command_steps
+        return bool(command_steps.public_steps(command, hook_input.get("cwd") or os.getcwd(), log=False))
     except Exception:
         return bool(ROUGH_PUBLIC.search(command))
 
