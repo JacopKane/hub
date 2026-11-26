@@ -728,32 +728,11 @@ def home_tree(home):
     return found
 
 
-def outside_reports(tree, home, repo):
-    """The HOME tree without the repo's PR test reports folder, the one place pr-tested writes.
-
-    The repo's git index keeps only its size, because the git status that
-    pr-tested runs refreshes the index's file times in place.
-    """
-    reports = os.path.relpath(os.path.join(repo, ".git", "pr-test-reports"), home.root)
-    index = os.path.relpath(os.path.join(repo, ".git", "index"), home.root)
-    return {path: value[0] if path == index else value for path, value in tree.items()
-            if path != reports and not path.startswith(reports + os.sep)}
-
-
-def recorded_reports(repo):
-    return sorted(os.listdir(os.path.join(repo, ".git", "pr-test-reports")))
-
-
-TESTED_RUN = ["run", "--scenario", "test -f src/upload/retry.py", "--no-smoke", "the shop has no app to start",
-              "--not-tested", "a real upload, since the shop has no server"]
-
-
-def test_the_body_check_the_night_hold_and_pr_tested_read_settings_and_write_only_their_report_on_a_fresh_or_a_set_up_home(
-        home):
+def test_the_body_check_and_the_night_hold_read_settings_and_write_nothing_on_a_fresh_or_a_set_up_home(home):
     with given("hub's files are in a fresh HOME but hub was never applied, so there is no state, no settings and no link"):
         shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
         step = [sys.executable, "-I", os.path.join(home.plugin, "lib", "hub_switch.py")]
-        check, night_hold, tested = [*step, "pr-check"], [*step, "pr-night"], [*step, "pr-tested"]
+        check, night_hold = [*step, "pr-check"], [*step, "pr-night"]
         hub_made = [home.state, home.config, os.path.join(home.root, ".claude")]
         assert not any(os.path.exists(path) for path in hub_made)
     with and_("a repo commits quiet hours of its own, 20:00 to 08:00, written by hand in .hub/hub.json"):
@@ -802,14 +781,6 @@ def test_the_body_check_the_night_hold_and_pr_tested_read_settings_and_write_onl
     with and_("nothing under HOME or its XDG folders changed: no state, no resolved flags, no settings and no link"):
         assert home_tree(home) == before
         assert not any(os.path.exists(path) for path in hub_made)
-    with when("Claude records a test run of the repo's head with pr-tested"):
-        repo_head = home.git("rev-parse", "HEAD", cwd=repo).stdout.strip()
-        recorded = run_at(home, [*tested, *TESTED_RUN], "2026-03-02T21:00:00Z", repo)
-    with then("the run passes, and its report and log for that head are the only new files under HOME"):
-        assert recorded.returncode == 0, recorded.stderr
-        assert recorded_reports(repo) == [repo_head + ".json", repo_head + ".log"]
-        assert outside_reports(home_tree(home), home, repo) == outside_reports(before, home, repo)
-        assert not any(os.path.exists(path) for path in hub_made)
     with when("the user's own settings sit under the settings folder's old name, with quiet hours from 21:00"):
         old_name = os.path.join(".config", "hubctl")
         new_name = os.path.relpath(home.config, home.root)
@@ -838,15 +809,11 @@ def test_the_body_check_the_night_hold_and_pr_tested_read_settings_and_write_onl
         assert os.path.islink(tuner_link)
         os.unlink(tuner_link)
         set_up = home_tree(home)
-    with and_("Claude runs the check, the night hold and pr-tested as the linked skill gives them"):
+    with and_("Claude runs the check and the night hold as the linked skill gives them"):
         checked = run_at(home, [*skill_command(home, "pr-check"), draft], "2026-03-02T12:00:00Z", home.work)
         held = run_at(home, skill_command(home, "pr-night"), "2026-03-02T12:00:00Z", home.work)
-        recorded = run_at(home, [*skill_command(home, "pr-tested"), *TESTED_RUN], "2026-03-02T12:00:00Z", repo)
-    with then("all three answer, the link stays gone, the tuner is not switched off for it, "
-              "and only the report under HOME changed"):
+    with then("both answer, the link stays gone, the tuner is not switched off for it, and nothing under HOME changed"):
         assert checked.returncode == 0, checked.stderr
         assert held.returncode == 0 and not json.loads(held.stdout)["held"], held.stderr
-        assert recorded.returncode == 0, recorded.stderr
         assert not os.path.lexists(tuner_link)
-        assert recorded_reports(repo) == [repo_head + ".json", repo_head + ".log"]
-        assert outside_reports(home_tree(home), home, repo) == outside_reports(set_up, home, repo)
+        assert home_tree(home) == set_up

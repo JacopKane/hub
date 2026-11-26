@@ -1,1 +1,0 @@
-hub stopped this step, because gh would open the PR at {commit}, the commit GitHub has for branch {branch}, and the PR test gate did not check it. gh pushes nothing here, since this repo's copy of {branch} is at {short}. Push the branch, or fetch it, and send the step again.

@@ -1,1 +1,0 @@
-hub stopped this step, because the texts report for {short} lists the changes since {base}, but the PR goes into {into}. Record a texts run against that branch with {{step}} pr-tested texts --base <branch>, or record the scenarios with {{step}} pr-tested run.

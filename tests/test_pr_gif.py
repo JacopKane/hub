@@ -101,21 +101,21 @@ def test_a_new_install_lists_hub_pr_gif_and_its_text_walks_from_recording_to_the
 
 
 def test_an_update_that_brings_pr_gif_keeps_it_off_and_offers_it_and_the_offer_links_the_skill(home):
-    with given("hub from before pr_gif shipped is installed, with pr and pr_test_gate on by default"):
+    with given("hub from before pr_gif shipped is installed, with pr on by default"):
         shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__", PART))
         home.hubctl("apply")
         before = home.show("--all")["flags"]
-        assert PART not in before and before["pr"]["runs"] and before["pr_test_gate"]["runs"]
+        assert PART not in before and before["pr"]["runs"]
         session_start(home)
     with when("the update adds the pr_gif part and apply runs"):
         shutil.copytree(os.path.join(PLUGIN, "parts", PART), os.path.join(home.plugin, "parts", PART),
                         ignore=shutil.ignore_patterns("__pycache__"))
         home.hubctl("apply")
-    with then("pr_gif stays off, is offered once, and the PR parts still run"):
+    with then("pr_gif stays off, is offered once, and the PR part still runs"):
         flags = home.show("--all")["flags"]
         assert (flags[PART]["value"], flags[PART]["runs"]) == ("off", False)
         assert offered(home) == [PART]
-        assert flags["pr"]["runs"] and flags["pr_test_gate"]["runs"]
+        assert flags["pr"]["runs"]
     with and_("no skill is linked for it, and a second apply offers nothing twice"):
         assert not os.path.lexists(skill_link(home)) and SKILL_NAME not in listed_skills(home)
         home.hubctl("apply")

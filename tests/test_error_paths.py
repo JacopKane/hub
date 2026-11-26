@@ -97,10 +97,9 @@ def test_a_part_that_crashes_or_will_not_load_stops_only_public_steps(home, tool
 
 
 def test_after_a_part_crashes_hub_names_a_push_as_public_without_reading_its_commits(home, tool):
-    with given("hub is installed with the PR test gate off, the repo has a local bare remote and a new commit, the "
+    with given("hub is installed, the repo has a local bare remote and a new commit, the "
                "gate's handler raises as soon as it runs, and a git first on PATH logs each call"):
         home.install()
-        home.hubctl_from_mod("off", "pr_test_gate")
         bare = os.path.join(home.root, "remote.git")
         home.git("init", "-q", "--bare", bare)
         home.git("remote", "add", "origin", bare)
