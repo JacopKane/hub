@@ -21,8 +21,9 @@ with open(CONFIG_NAME_FILE, encoding="utf-8") as _name_file:
     CONFIG_NAME = _name_file.read().strip()
 # The folder name the settings had before they moved to config_dir().
 OLD_CONFIG_NAME = "hubctl"
-# Flags that went with the terminal link, which put hubctl on the PATH.
-DROPPED_FLAGS = ("core.terminal_link",)
+# Flags hub no longer has, which a settings file may still name: the terminal link, which put hubctl on the
+# PATH, and the queue's flush job. Loading the settings leaves them out, and the next write drops them.
+DROPPED_FLAGS = ("core.terminal_link", "queue.flush_job", "queue.flush_job.every_seconds")
 
 
 def home():

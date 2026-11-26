@@ -41,8 +41,8 @@ NODE_FIELDS = {"id", "kind", "type", "does", "default", "values", "runs_in", "ne
                "relevant_if", "signals", "cost", "text", "privacy", "reason_not_in", "range", "check",
                "stage", "children"}
 PART_FIELDS = NODE_FIELDS | {"$schema", "family", "offer_when", "never_offered", "handlers", "requires",
-                             "keeps_on_uninstall", "commands", "jobs"}
-JOB_FIELDS = {"name", "flag", "script", "args", "every_seconds", "at_login", "keep_alive", "start", "stop"}
+                             "keeps_on_uninstall", "commands", "when_switched"}
+WHEN_SWITCHED_FIELDS = {"script", "on", "off"}
 # hubctl's own verbs. A part command may not take one of these names.
 CORE_VERBS = {"show", "screen", "on", "off", "set", "pin", "no", "undo", "apply", "doctor", "update",
               "offers", "take", "uninstall", "profile", "setup", "tuner", "open", "mail", "mod-command"}
@@ -322,53 +322,27 @@ def load(parts_dir):
             if name in owners:
                 problems.append(f"{part.source}: {part.id}: the command {name!r} is also named by {owners[name]}")
             owners.setdefault(name, part.id)
-    _check_jobs(parts, tree, problems, parts_dir)
+    _check_when_switched(parts, problems, parts_dir)
     if problems:
         raise TreeError(problems)
     return tree
 
 
-def _check_jobs(parts, tree, problems, parts_dir):
-    """A part's jobs: a known flag of the same part, a script in its folder, a whole number or a number flag."""
-    names = set()
+def _check_when_switched(parts, problems, parts_dir):
+    """A part's on and off commands: a script in its folder and lists of texts for its arguments."""
     for part in parts:
-        jobs = part.data.get("jobs", [])
-        if not isinstance(jobs, list):
-            problems.append(f"{part.source}: {part.id}: jobs must be a list")
+        spec = part.data.get("when_switched")
+        if spec is None:
             continue
-        for job in jobs:
-            where = f"{part.source}: {part.id}: job {job.get('name', '?') if isinstance(job, dict) else '?'}"
-            if not isinstance(job, dict):
-                problems.append(f"{where}: a job must be an object")
-                continue
-            for key in job:
-                if key not in JOB_FIELDS:
-                    problems.append(f"{where}: unknown field {key!r}")
-            name = job.get("name")
-            if not isinstance(name, str) or not name or not name.replace("-", "a").isalnum() or name != name.lower():
-                problems.append(f"{where}: the name must be lowercase words joined by -")
-            elif name in names:
-                problems.append(f"{where}: the name is used twice")
-            names.add(name)
-            flag = job.get("flag")
-            if flag != part.id and not (isinstance(flag, str) and flag.startswith(part.id + ".")) \
-                    or flag not in tree.nodes:
-                problems.append(f"{where}: flag {flag!r} is not a flag of this part")
-            script = job.get("script")
-            if not isinstance(script, str) or os.path.isabs(script) or ".." in script.split("/") \
-                    or not os.path.isfile(os.path.join(parts_dir, part.id, script)):
-                problems.append(f"{where}: script {script!r} is not a file in the part's folder")
-            every = job.get("every_seconds", 0)
-            if isinstance(every, str):
-                node = tree.nodes.get(every)
-                if node is None or node.type != "number":
-                    problems.append(f"{where}: every_seconds {every!r} is not a number flag")
-            elif isinstance(every, bool) or not isinstance(every, int) or every < 0:
-                problems.append(f"{where}: every_seconds must be a whole number or a number flag")
-            for key in ("args", "start", "stop"):
-                value = job.get(key, [])
-                if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                    problems.append(f"{where}: {key} must be a list of texts")
-            for key in ("at_login", "keep_alive"):
-                if not isinstance(job.get(key, False), bool):
-                    problems.append(f"{where}: {key} must be true or false")
+        where = f"{part.source}: {part.id}: when_switched"
+        if not isinstance(spec, dict):
+            problems.append(f"{where} must be an object")
+            continue
+        problems.extend(f"{where}: unknown field {key!r}" for key in spec if key not in WHEN_SWITCHED_FIELDS)
+        script = spec.get("script")
+        if not isinstance(script, str) or os.path.isabs(script) or ".." in script.split("/") \
+                or not os.path.isfile(os.path.join(parts_dir, part.id, script)):
+            problems.append(f"{where}: script {script!r} is not a file in the part's folder")
+        problems.extend(f"{where}: {key} must be a list of texts" for key in ("on", "off")
+                        if not isinstance(spec.get(key, []), list)
+                        or not all(isinstance(item, str) for item in spec.get(key, [])))

@@ -452,9 +452,9 @@ def test_the_bash_group_starts_python_only_while_a_part_that_names_bash_runs(hom
 
 
 
-# Code a Bash call never needs: the job code, which loads an XML parser, and the code that changes a
-# setting. Each would slow every Bash call that the guards check and let through.
-NOT_FOR_A_CHECKED_CALL = ("hub.adapters.jobs", "hub.changes")
+# Code a Bash call never needs: the cleanup of old background jobs, the on and off commands of a part, and
+# the code that changes a setting. Each would slow every Bash call that the guards check and let through.
+NOT_FOR_A_CHECKED_CALL = ("hub.old_jobs", "hub.switched", "hub.changes")
 
 
 def dispatch_loading(home, command):
@@ -481,7 +481,7 @@ def test_a_bash_call_a_part_lets_through_loads_only_the_code_it_needs(home):
     with then("it runs with no answer, and the dispatcher stored that answer for a second copy of the plugin"):
         assert result.output == {} and len(stored_answers(home)) == 1
         assert not os.path.exists(os.path.join(home.state, "errors.log"))
-    with and_("the dispatcher loaded no job or change code"):
+    with and_("the dispatcher loaded no cleanup, switch or change code"):
         assert sorted(set(NOT_FOR_A_CHECKED_CALL) & names) == []
 
 

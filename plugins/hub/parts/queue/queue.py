@@ -5,13 +5,12 @@ As a hook (handler.py calls it):
   PreToolUse on SendMessage  holds the message, or lets the native send run.
   UserPromptSubmit           the chat just woke for another reason, so what is held for it goes now and costs no wake.
 As a command (python3 -I queue.py ...):
-  flush         one pass over the queue, which the flush job runs every few seconds. It also writes the heartbeat,
-                unless --no-heartbeat. All posts of one pass go on one connection, one line each, so a receiver
-                takes them in one turn.
+  flush         one pass over the queue, which a hook starts in the background while something is held. All posts
+                of one pass go on one connection, one line each, so a receiver takes them in one turn.
   report        the numbers that show whether the queue saves wakes.
   off, on       the switch. While off nothing new is held, and what is held goes at the next flush.
-  stop          off first, then a forced flush that hands back what it can not post. The flush job runs it when
-                it is removed, so turning the part off or uninstalling hub never strands a message.
+  stop          off first, then a forced flush that hands back what it can not post. hub runs it when the part is
+                switched off or hub is uninstalled (when_switched in part.json), so neither strands a message.
 
 What is held: a message from a main chat to one other idle main chat, with no urgent mark on its first line, and,
 while the version guard runs, to a chat on a tested Claude Code version. Everything else takes the native path
@@ -27,8 +26,10 @@ resume, and a new session of the same name or on the same address, as after /cle
 the sender is told.
 
 Failure rule: any error in the hook means no answer, which is the native send. A bug may cost a wake, never a
-message. A stale heartbeat means no flush is running, so nothing new is held.
-Hold times, flush times and the heartbeat come from hub's clock, so tests can fix them with HUB_TEST_NOW.
+message.
+Nothing runs between hooks. What is held goes on at the next hook of any chat: a session start or end, a prompt, or a
+SendMessage call. So while no chat runs a hook, a message can wait past the limit.
+Hold times and flush times come from hub's clock, so tests can fix them with HUB_TEST_NOW.
 A sender that is down when its message is given up, as during a restart, gets the notice at its next session start
 or turn, through hub's chat notices.
 A posted message is the sender's: its address, name and true permission class. It is never marked as typed by a
@@ -40,8 +41,8 @@ receiver changed version while a message was held, the message is posted once, s
 sender to send again. A copy is acceptable where a loss is not. On a tested version a receiver that drops a post
 under overload still drops it silently.
 
-Each held item carries the settings it was held under (quiet, limit, every, versions), because the flush runs
-outside the hooks and does not read hub's flags. Run it with python3 -I, so this file's folder is not on the
+Each held item carries the settings it was held under (quiet, limit, versions), because the flush runs in its
+own process and does not read hub's flags. Run it with python3 -I, so this file's folder is not on the
 import path and its name never hides the standard queue module.
 """
 import calendar
@@ -68,7 +69,7 @@ from hub import chat_notices, clock, files, sessions  # noqa: E402
 FOLDER = "queue"
 QUIET_SECONDS = 120  # send when no new message came for this long
 LIMIT_SECONDS = 300  # no message waits longer than this
-EVERY_SECONDS = 30  # how often the flush job runs
+KEEP_AWAKE_MARGIN_SECONDS = 30  # the machine stays awake this long past the limit
 URGENT_MARK = "[urgent]"  # the sender starts the first line with this to send at once
 TESTED_VERSIONS = ["2.1.316", "2.1.318", "2.1.319"]
 MAX_HELD_MESSAGE_BYTES = 64 * 1024  # a larger message goes natively
@@ -95,8 +96,7 @@ MANAGED_SETTINGS = ["/Library/Application Support/ClaudeCode/managed-settings.js
 ADDRESS = re.compile(r"^uds:[A-Za-z0-9%:_/.\\-]{1,300}$")
 CLOSING_TAG = re.compile(r"<(?!\\)(?=\s*/\s*" + TAG + ")", re.I)
 VERSION = re.compile(r"\b(\d+\.\d+\.\d+)\b")
-USAGE = ("usage: queue.py [flush [--receiver SESSION] [--force] [--no-heartbeat] | report [--days N] [--root DIR]"
-         " | off | on | stop]")
+USAGE = "usage: queue.py [flush [--receiver SESSION] [--force] | report [--days N] [--root DIR] | off | on | stop]"
 
 
 class Pass(Exception):
@@ -114,26 +114,15 @@ def settings_from(flags=None):
     return {
         "quiet": value("queue.quiet_seconds", QUIET_SECONDS),
         "limit": value("queue.hold_seconds", LIMIT_SECONDS),
-        "every": value("queue.flush_job.every_seconds", EVERY_SECONDS),
         "urgent": value("queue.urgent_prefix", URGENT_MARK) or URGENT_MARK,
         "versions": list(value("queue.version_guard.versions", TESTED_VERSIONS)) if guard else None,
         "keep_awake": flags is None or flags.runs("queue.keep_awake"),
     }
 
 
-def margin(settings):
-    """Flush this early, so the next tick can not pass the limit."""
-    return settings["every"] + 5
-
-
-def heartbeat_max_age(settings):
-    """A heartbeat older than this means no flush is running."""
-    return 3 * settings["every"]
-
-
 def item_settings(item):
     return {"quiet": item.get("quiet", QUIET_SECONDS), "limit": item.get("limit", LIMIT_SECONDS),
-            "every": item.get("every", EVERY_SECONDS), "versions": item.get("versions", TESTED_VERSIONS)}
+            "versions": item.get("versions", TESTED_VERSIONS)}
 
 
 # files
@@ -204,19 +193,6 @@ def write_held(path, items):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
-
-
-def remember(settings):
-    """What the flush needs outside the hooks: how often it runs, and where claude is when the job's PATH lacks it."""
-    program = shutil.which("claude")
-    data = {"every": settings["every"], "claude_dir": os.path.dirname(program) if program else None}
-    if files.read_json(queue_file("config.json")) != data:
-        files.write_json(queue_file("config.json"), data)
-
-
-def remembered():
-    data = files.read_json(queue_file("config.json"), {})
-    return data if isinstance(data, dict) else {}
 
 
 # chats
@@ -307,13 +283,6 @@ def incoming_hop_chain(transcript_path):
     raise Pass("transcript-unreadable")
 
 
-def heartbeat_fresh(settings):
-    try:
-        return clock.epoch() - os.path.getmtime(queue_file("heartbeat")) <= heartbeat_max_age(settings)
-    except OSError:
-        return False
-
-
 def plan_hold(hook_input, chats, settings):
     """Returns the item to hold and the receiver, or raises Pass."""
     tool_input = hook_input.get("tool_input") or {}
@@ -330,8 +299,6 @@ def plan_hold(hook_input, chats, settings):
         raise Pass("too-large")
     if message.lstrip().lower().startswith(settings["urgent"].lower()):
         raise Pass("urgent")
-    if not heartbeat_fresh(settings):
-        raise Pass("no-heartbeat")
     if chats is None:
         raise Pass("no-listing")
     receiver = resolve_receiver(to, chats)
@@ -376,19 +343,19 @@ def plan_hold(hook_input, chats, settings):
         "body": message,
         "quiet": settings["quiet"],
         "limit": settings["limit"],
-        "every": settings["every"],
         "versions": settings["versions"],
     }
     return item, receiver
 
 
 def keep_awake(settings):
-    """A sleeping machine would stall the flush. A missing tool only risks a late message, so it never stops the hold."""
+    """A sleeping machine runs no hooks, so nothing would send what waits. A missing tool only risks a late message,
+    so it never stops the hold."""
     program = shutil.which("caffeinate")
     if not settings["keep_awake"] or program is None:
         return
     try:
-        subprocess.Popen([program, "-i", "-t", str(settings["limit"] + settings["every"])],
+        subprocess.Popen([program, "-i", "-t", str(settings["limit"] + KEEP_AWAKE_MARGIN_SECONDS)],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     except OSError as error:
@@ -415,7 +382,6 @@ def on_send(hook_input, settings):
         if session and os.path.exists(held_file(session)):
             flush(receiver_session=session, force=True)
         return None
-    remember(settings)
     keep_awake(settings)
     log_event("held", receiver=item["receiver_name"], sender=item["sender_name"])
     return text("queued.md").format(name=item["receiver_name"], quiet=settings["quiet"], limit=settings["limit"],
@@ -434,10 +400,10 @@ def on_prompt(hook_input):
         flush_in_background("--receiver", session, "--force")
 
 
-def on_any_hook(settings):
-    """No flush is running, so whoever runs next moves what is held."""
-    if not heartbeat_fresh(settings) and glob.glob(queue_file("held", "*.jsonl")):
-        flush_in_background("--no-heartbeat")
+def on_any_hook():
+    """Nothing else runs between hooks, so each hook moves what is held."""
+    if glob.glob(queue_file("held", "*.jsonl")):
+        flush_in_background()
 
 
 # posting
@@ -587,7 +553,7 @@ def post_or_keep(path, items, chats, force, now, final):
     settings = item_settings(max(items, key=lambda item: item["held_at"]))
     oldest_age = now - min(item["held_at"] for item in items)
     newest_age = now - max(item["held_at"] for item in items)
-    past_limit = final or oldest_age + margin(settings) >= settings["limit"]
+    past_limit = final or oldest_age >= settings["limit"]
     receiver = current_receiver(items, chats)
     if receiver is None:
         if past_limit:
@@ -653,50 +619,24 @@ def post_or_keep(path, items, chats, force, now, final):
     return 0
 
 
-def beat(now):
-    """Writes the heartbeat, and logs a long gap so the report can tell a sleeping machine from a late message."""
-    path = queue_file("heartbeat")
-    every = remembered().get("every") or EVERY_SECONDS
-    try:
-        gap = now - os.path.getmtime(path)
-        if gap > 3 * every:
-            log_event("gap", start=round(now - gap, 1), end=round(now, 1))
-    except OSError:
-        pass
-    with open(path, "a"):
-        written = clock.epoch()
-        os.utime(path, (written, written))
-
-
-def find_claude():
-    """The flush job may run with a short PATH, so it adds the folder where a hook last found claude."""
-    if shutil.which("claude") is None and remembered().get("claude_dir"):
-        os.environ["PATH"] = remembered()["claude_dir"] + os.pathsep + os.environ.get("PATH", "")
-
-
 def held_paths():
     return sorted(glob.glob(queue_file("held", "*.jsonl")))
 
 
-def flush(receiver_session=None, force=False, heartbeat=False, final=False, lock_wait=LOCK_WAIT_SECONDS):
+def flush(receiver_session=None, force=False, final=False, lock_wait=LOCK_WAIT_SECONDS):
     """Returns how many messages it gave up."""
     given_up = 0
     with QueueLock(lock_wait):
         now = clock.epoch()
-        find_claude()
         chats = live_chats()
         paths = [held_file(receiver_session)] if receiver_session else held_paths()
-        failed = False
         for path in paths:
             if not os.path.exists(path):
                 continue
             try:
                 given_up += flush_file(path, chats, force, now, final)
             except Exception as error:  # one bad file must not stop the others
-                failed = True
                 log_event("flush-failed", error=type(error).__name__)
-        if heartbeat and not failed:
-            beat(now)
     return given_up
 
 
@@ -740,19 +680,10 @@ def stop():
 
 # the report
 
-def over_limit(waits, gaps, limit):
-    """Returns how many messages waited past the limit, and how many of those a sleep or flush gap explains: they
-    would have been on time without it. A sleeping machine delays a message all the same, so it counts as late."""
-    late, across_gap = 0, 0
-    for at, wait, own_limit in waits:
-        own_limit = own_limit or limit
-        if wait <= own_limit:
-            continue
-        late += 1
-        asleep = sum(max(0, min(end, at) - max(start, at - wait)) for start, end in gaps)
-        if wait - asleep <= own_limit:
-            across_gap += 1
-    return late, across_gap
+def over_limit(waits, limit):
+    """How many messages waited past their limit. With no hook to send them, as while the machine sleeps or no chat
+    runs, a message waits longer, and it counts as late all the same."""
+    return sum(1 for _at, wait, own_limit in waits if wait > (own_limit or limit))
 
 
 def transcript_counts(root, start):
@@ -821,7 +752,6 @@ def report(days, root):
             passed[event.get("reason")] = passed.get(event.get("reason"), 0) + 1
     waits = [(event["at"], event["wait_seconds"], event.get("limit")) for event in events
              if event.get("event") == "delivered"]
-    gaps = [(event["start"], event["end"]) for event in events if event.get("event") == "gap"]
     posts = [event for event in events if event.get("event") == "posted"]
 
     def count(name):
@@ -830,10 +760,9 @@ def report(days, root):
     print("last %d days" % days)
     print("held %d, delivered %d in %d posts, passed at once %d %s" % (
         count("held"), len(waits), len(posts), sum(passed.values()), json.dumps(passed, sort_keys=True)))
-    late, across_gap = over_limit(waits, gaps, LIMIT_SECONDS)
-    print("longest wait %.0f s, past the limit %d, %d of them across a sleep or flush gap" % (
-        max([wait for _, wait, _ in waits] or [0]), late, across_gap))
-    print("undelivered %d, machine asleep or flush down %d times" % (count("undelivered"), len(gaps)))
+    print("longest wait %.0f s, past the limit %d" % (max([wait for _, wait, _ in waits] or [0]),
+                                                      over_limit(waits, LIMIT_SECONDS)))
+    print("undelivered %d" % count("undelivered"))
     if root:
         wakes, sent = transcript_counts(root, start)
         print("message wakes %d, messages sent %d, wakes per message %.2f" % (wakes, sent,
@@ -871,8 +800,7 @@ def command(arguments):
     name = arguments[0] if arguments else ""
     if name == "flush":
         session = option(arguments, "--receiver")
-        flush(receiver_session=session, force="--force" in arguments,
-              heartbeat=session is None and "--no-heartbeat" not in arguments)
+        flush(receiver_session=session, force="--force" in arguments)
     elif name == "report":
         report(int(option(arguments, "--days", "7")), option(arguments, "--root"))
     elif name == "off":

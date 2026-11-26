@@ -8,13 +8,13 @@ Claude Code key the user changed (see keys.pin_changed), resolves
 every flag, makes and removes the links and built copies, sets outputStyle
 while hub_style runs (see keys.py), writes the slot
 files and cost.json, marks the parts of the hook groups that start Python
-only when one may run (see pre_check.sh), installs the background jobs whose
-flags run and removes the others (see adapters/jobs.py), adds a line to
-applies.jsonl, and writes resolved.json
-last. So a hook that finds resolved.json fresh also finds the files built
-from it. It returns the lines hubctl apply prints. While cursor_link does
-not run, apply writes no Cursor slots and removes the old ones, since Cursor
-support is beta and off by default.
+only when one may run (see pre_check.sh), takes away the background jobs an
+older hub ran (see old_jobs.py), adds a line to applies.jsonl, and writes
+resolved.json last. So a hook that finds resolved.json fresh also finds the
+files built from it. Then it runs the on and off commands of the parts that
+were switched (see switched.py). It returns the lines hubctl apply prints.
+While cursor_link does not run, apply writes no Cursor slots and removes the
+old ones, since Cursor support is beta and off by default.
 
 After hubctl uninstall, apply changes nothing until a new copy of hub is
 installed (see uninstall.is_out), and ensure_fresh raises Uninstalled.
@@ -55,7 +55,9 @@ def run(tree=None):
     if uninstall.is_out():
         return [uninstall.OUT]
     uninstall.clear_old_mark()
+    from . import old_jobs, switched  # only an apply needs them, not every hook that loads this module
     lines = []
+    ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
     links.pin_deleted(lines)
     keys.pin_changed(lines)
     tree = tree or tree_module.load(files.PARTS_DIR)
@@ -79,11 +81,16 @@ def run(tree=None):
         cost[tool] = {"parts": parts, "total": {"start_text": len(slots.start_text(texts))}}
     files.write_json(files.state_path(COST), cost)
     remove(files.state_path(MARKERS_DONE))
-    from .adapters import jobs  # only an apply needs the job code
-    lines += jobs.sync(wanted_jobs(tree, data))
+    running = switched.running_parts(data)
+    # A part that an old job's stop just stopped starts again before the old record goes. A part that did
+    # not run before gets its "on" below anyway, and one that no longer runs gets its "off".
+    old_lines, _finished = old_jobs.remove(restart=lambda parts: switched.restart(tree, parts & ran_before & running))
+    lines += old_lines
     files.append_line(files.state_path(APPLIES), {"time": resolve.now(), "lines": len(lines)})
     files.write_json(files.state_path(resolve.RESOLVED), data)
     mark_group_parts(data)
+    for part, which in switched.changes(tree, ran_before, running):
+        lines += switched.run(part, which)
     return lines
 
 
@@ -156,34 +163,6 @@ def remove(path):
     else:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path)
-
-
-def wanted_jobs(tree, data):
-    """The jobs that the parts name in part.json, for each job whose flag runs in some tool."""
-    def record(flag_id):
-        for tool in tree_module.TOOLS:
-            found = data["tools"][tool]["flags"].get(flag_id)
-            if found and found["runs"]:
-                return found
-        return None
-
-    from .adapters import jobs
-    wanted = []
-    for part in tree.parts:
-        for spec in part.data.get("jobs", []):
-            if record(spec["flag"]) is None:
-                continue
-            every = spec.get("every_seconds", 0)
-            if isinstance(every, str):
-                every = (record(every) or data["tools"]["claude_code"]["flags"].get(every, {})).get("value") or 0
-            script = "/".join(["parts", part.id, spec["script"]])
-            wanted.append(jobs.Job(
-                name=spec["name"], part=part.id, command=jobs.shim_command(script, *spec.get("args", [])),
-                every_seconds=max(0, int(every)), at_login=spec.get("at_login", False),
-                keep_alive=spec.get("keep_alive", False),
-                start=jobs.shim_command(script, *spec["start"]) if spec.get("start") else [],
-                stop=jobs.shim_command(script, *spec["stop"]) if spec.get("stop") else []))
-    return wanted
 
 
 def is_fresh(data):

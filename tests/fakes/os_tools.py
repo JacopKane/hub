@@ -5,9 +5,8 @@ Copy it into a folder that comes first on PATH under each tool's name. It
 picks its part by the name it runs as. Every call adds a line
 {"tool", "args", "stdin"} to $HUB_FAKE_TOOLS/calls.jsonl, and the tools that
 keep state (what launchd loaded, what systemd runs) keep it in
-$HUB_FAKE_TOOLS/state.json, so a test reads back what the adapter asked for
-and the adapter reads back what it loaded. It never reaches a real job runner,
-terminal or app.
+$HUB_FAKE_TOOLS/state.json, so a test reads back what hub asked for and
+what is still loaded. It never reaches a real job runner, terminal or app.
 
 osascript answers from $HUB_FAKE_TOOLS/iterm.json, a list of [session id, tty]
 for each iTerm session, when the script asks for ttys. A script for one

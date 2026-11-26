@@ -2,11 +2,12 @@
 
 It settles the steps an apply left half done (see links.repair), then
 removes every link and copy in the record that is still as hub left it,
-every background job in the jobs record (each one's stop command runs, even
-when its part is gone), and hub's own state in ~/.local/state/hubctl/ (resolved.json, the slots, the
-built copies, the records, offers, signals and history). It keeps the user's
-settings in ~/.config/hubctl/, the files hub held in ~/.local/state/hubctl/held/,
-and each folder of the state that a part names under keeps_on_uninstall.
+takes away the background jobs an older hub ran (see old_jobs.py), runs the
+off command of each part that runs (see switched.py), and removes hub's own
+state in ~/.local/state/hubctl/ (resolved.json, the slots, the built copies,
+the records, offers, signals and history). It keeps the user's settings in
+~/.config/hubctl/, the files hub held in ~/.local/state/hubctl/held/, and
+each folder of the state that a part names under keeps_on_uninstall.
 
 It puts back each Claude Code value hub wrote, from keys.json, but only where
 the file still holds hub's value, so a value the user changed since stays.
@@ -27,9 +28,9 @@ import subprocess
 
 from . import files, resolve
 
-# Every hook asks is_out, so this module loads on every tool call. It skips only
-# the job code, plistlib and the XML parser. Keys, links and the part tree still
-# load through apply.
+# Every hook asks is_out, so this module loads on every tool call. It loads the
+# cleanup of old jobs and the part switch code only in run(). Keys, links and
+# the part tree still load through apply.
 
 HELD = "held"
 MARK = "uninstalled.json"
@@ -110,8 +111,8 @@ def kept_names():
 
 def run():
     """Returns the lines to print."""
-    from . import links
-    from .adapters import jobs
+    from . import links, old_jobs, switched
+    from . import tree as tree_module
     lines = []
     with files.locked():
         files.write_json(files.state_path(MARK), {"copy": copy_stamp(), "time": resolve.now()})
@@ -121,7 +122,17 @@ def run():
             elif os.path.lexists(entry["path"]):
                 lines.append(f"hub left {entry['path']} as it is, because it changed since hub made it.")
         restore_keys(lines)
-        lines += jobs.remove_all()
+        old_lines, finished = old_jobs.remove()
+        lines += old_lines
+        # A part whose old stop timed out or failed still gets its own "off", so what it holds is sent.
+        running = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED))) - finished
+        try:
+            parts = tree_module.load(files.PARTS_DIR).parts
+        except tree_module.TreeError:
+            parts = []
+        for part in parts:
+            if part.id in running and part.data.get("when_switched"):
+                lines += switched.run(part, "off")
         keep = kept_names()
         state = files.state_dir()
         for name in sorted(os.listdir(state)):
