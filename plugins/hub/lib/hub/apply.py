@@ -4,9 +4,18 @@
     ensure_fresh()   takes the lock and runs apply only when it is stale
 
 A run turns off, pinned, each part whose hub link the user deleted or whose
-Claude Code key the user changed (see keys.pin_changed), resolves
+Claude Code key the user changed (see keys.pin_changed), and
+turns off, pinned, a default-on part whose key the user set to another value
+before hub wrote it or whose opt-out variable is set (see keys.stand_down).
+Before setup, those steps leave the link or key alone and pin nothing (see
+keys.py). Setup's own apply turns remote_control on over a false the user
+set earlier, and keeps that false to put back. An opt-out variable still
+turns it off there. So does a false the user set after they switched the
+part by hand in hub. It resolves
 every flag, makes and removes the links and built copies, sets outputStyle
-while hub_style runs (see keys.py), writes the slot
+while hub_style runs, and while remote_control runs sets remoteControlAtStartup
+to true and attribution.sessionUrl to false, so commits and pull requests
+carry no claude.ai session link (see keys.py). It writes the slot
 files and cost.json, marks the parts of the hook groups that start Python
 only when one may run (see pre_check.sh), takes away the background jobs an
 older hub ran (see old_jobs.py), adds a line to applies.jsonl, and writes
@@ -31,7 +40,7 @@ import os
 import re
 import shutil
 
-from . import files, keys, links, resolve, slots, tree as tree_module, uninstall
+from . import files, keys, links, resolve, settings, slots, tree as tree_module, uninstall
 
 APPLIES = "applies.jsonl"
 COST = "cost.json"
@@ -49,7 +58,23 @@ OLD_MARKERS = ("post_tool_use_parts",)
 # The names pre_check.sh reads from hook input. Any other name starts the dispatcher there.
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
+REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
+SESSION_LINK_KEY = "attribution.sessionUrl"  # false keeps the claude.ai link out of commits and pull requests
+# The Remote Control docs treat both the same, so either one keeps hub from turning it on.
+REMOTE_OPT_OUT = ("DO_NOT_TRACK", "DISABLE_TELEMETRY")
 CURSOR_PART = "cursor_link"
+in_setup = False  # True while setup applies the user's replies (see setup_run)
+
+
+@contextlib.contextmanager
+def setup_run():
+    """Mark the applies inside it as setup's own, which turn remote_control on over an earlier false."""
+    global in_setup
+    in_setup = True
+    try:
+        yield
+    finally:
+        in_setup = False
 
 
 def run(tree=None):
@@ -59,12 +84,15 @@ def run(tree=None):
     from . import old_jobs, switched  # only an apply needs them, not every hook that loads this module
     lines = []
     ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
-    links.pin_deleted(lines)
-    keys.pin_changed(lines)
+    held_links = links.pin_deleted(lines)
+    held = keys.pin_changed(lines, retake=(REMOTE_KEY,) if in_setup and not chosen_by_user(REMOTE_PART) else ())
+    if keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines, REMOTE_OPT_OUT, users_value_counts=not in_setup):
+        held.add(REMOTE_KEY)
     tree = tree or tree_module.load(files.PARTS_DIR)
     data = resolve.apply(tree, write=False)
-    listing = links.reconcile(tree, data, lines)
-    set_style(data, lines)
+    listing = links.reconcile(tree, data, lines, held_links)
+    set_style(data, lines, held)
+    set_remote_control(data, lines, held)
     cost = {}
     for tool in tree_module.TOOLS:
         flags = data["tools"][tool]["flags"]
@@ -95,12 +123,34 @@ def run(tree=None):
     return lines
 
 
-def set_style(data, lines):
+def chosen_by_user(part):
+    """Whether the user switched part by hand in hub, so a key they change stays theirs even in setup."""
+    stored = settings.entry(settings.read(files.user_settings_path()) or settings.empty(), part)
+    return stored is not None and stored.get("by", "user") == "user"
+
+
+def set_style(data, lines, held=()):
     """outputStyle names hub's style while hub_style runs in Claude Code, else the user's earlier value."""
+    if STYLE_KEY in held:
+        return
     if data["tools"]["claude_code"]["flags"].get(STYLE_PART, {}).get("runs"):
         keys.want(STYLE_KEY, STYLE_NAME, STYLE_PART, lines)
     else:
         keys.release(STYLE_KEY, lines)
+
+
+def set_remote_control(data, lines, held=()):
+    """While remote_control runs in Claude Code, remoteControlAtStartup is true and attribution.sessionUrl is
+    false. Otherwise both hold the user's earlier values again. The session link key has no part of its own,
+    so a value the user sets there stays and turns nothing off."""
+    if REMOTE_KEY in held:
+        return
+    if data["tools"]["claude_code"]["flags"].get(REMOTE_PART, {}).get("runs"):
+        keys.want(REMOTE_KEY, True, REMOTE_PART, lines)
+        keys.want(SESSION_LINK_KEY, False, None, lines)
+    else:
+        keys.release(REMOTE_KEY, lines)
+        keys.release(SESSION_LINK_KEY, lines)
 
 
 def first_units(tool, tree, flags):
@@ -169,10 +219,11 @@ def remove(path):
 def is_fresh(data):
     if data is None or data.get("signature") != resolve.signature():
         return False
-    entries = links.read_record()
+    entries, set_up = links.read_record(), keys.setup_done()
     roots = (files.state_dir(), files.PLUGIN_ROOT)
+    # Before setup, a link the user deleted waits for setup's own apply (see links.pin_deleted).
     # A link whose root is another folder points into an earlier state folder, or a plugin copy that moved.
-    return all(os.path.lexists(entry["path"]) and "state" not in entry
+    return all((os.path.lexists(entry["path"]) or not set_up) and "state" not in entry
                and (entry["type"] != "link" or entry.get("root") in roots) for entry in entries)
 
 

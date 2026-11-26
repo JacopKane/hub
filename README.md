@@ -6,7 +6,7 @@ Every part of your Claude Code setup gets its own switch.
 
 hub is a plugin for Claude Code. It puts the parts of a Claude Code setup in one settings file and gives each part its own switch. There is no extra command to learn. You tell Claude what to change in plain words, such as "turn off the status band". The parts include agents for different kinds of work, writing rules, a status band above the prompt and a coordinator chat. The coordinator is one chat that passes your request to the chats that own each topic and reports back in one place.
 
-hub is at version 0.20.1. It is early software, so expect changes that break things.
+hub is at version 0.20.2. It is early software, so expect changes that break things.
 
 ## What works today and what is planned
 
@@ -129,7 +129,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 ## Feature flags
 
 <details>
-<summary>Core and all 37 parts, and how they start</summary>
+<summary>Core and all 36 parts, and how they start</summary>
 
 | Part | What it does | Starts | Runs in | To switch it, say |
 |---|---|---|---|---|
@@ -168,6 +168,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | queue | Holds a message to an idle chat for a short time, so two quick messages wake it once | off | Claude Code | "turn on the queue" |
 | restart | Restarts the running chats, each under its own name | off | Claude Code | "turn on restart" |
 | status_band | Two rows above the prompt with your other chats, hub's state, recent changes and offers | on | Claude Code | "turn off the status band" |
+| remote_control | Starts every new Claude Code chat with Remote Control on, so you can follow it from claude.ai or the Claude app, and keeps the claude.ai chat link out of your commits and pull requests. It needs a Pro, Max, Ultra, Team or Enterprise plan. Setup asks about it, with On first. After setup, an update keeps it off if you set it to false yourself, and DO_NOT_TRACK or DISABLE_TELEMETRY keeps it off. See Help and privacy | on | Claude Code | "turn off remote control" |
 | cursor_link | Beta. Gives Cursor the same parts, hooks and agents | off | Claude Code, Cursor | "turn on the Cursor link" |
 
 Each part also has smaller switches inside it, such as an agent's model and effort. They switch the same way.
@@ -176,7 +177,7 @@ Each part also has smaller switches inside it, such as an agent's model and effo
 
 ## Help and privacy
 
-Report a bug or ask a question in [GitHub issues](https://github.com/JacopKane/hub/issues). Report a security problem as [SECURITY.md](SECURITY.md) says. hub sends no telemetry and opens no network connection of its own. Its first-run setup reads your setup on your own machine.
+Report a bug or ask a question in [GitHub issues](https://github.com/JacopKane/hub/issues). Report a security problem as [SECURITY.md](SECURITY.md) says. hub sends no telemetry and opens no network connection of its own. Its first-run setup reads your setup on your own machine. The remote_control part is on by default and turns on Claude Code's Remote Control. While a chat is connected, Claude Code keeps its transcript on Anthropic's servers so your phone or browser can show it (see the [Remote Control docs](https://code.claude.com/docs/en/remote-control#connection-and-security)). If you remove the plugin without saying "uninstall hub" first, Remote Control stays on for new chats and the chat link stays out of commits.
 
 ## License
 

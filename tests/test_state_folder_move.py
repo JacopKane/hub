@@ -13,6 +13,7 @@ import sys
 
 from conftest import load_fixture
 from steps import and_, given, then, when
+from test_rules_and_writing import REMOTE_KEY, REMOTE_PART, SESSION_LINK, claude_settings, remote_lines, write_claude_settings
 
 OLD_NAME = "hubctl"  # the state folder's name before the move
 
@@ -285,3 +286,31 @@ def test_when_an_earlier_hub_makes_its_folder_again_during_the_move_both_folders
     with then("the old folder is left as it is"):
         assert os.path.isdir(old) and not os.path.islink(old)
         assert tree_bytes(old) == before
+
+
+def test_remote_control_keeps_the_users_earlier_false_through_the_move(home):
+    with given("an earlier hub's layout, where the user had Remote Control off and then turned remote_control on"):
+        write_claude_settings(home, {"theme": "dark", REMOTE_KEY: False})
+        original = read(claude_settings(home))
+        home.install()
+        home.step("on", REMOTE_PART)
+        assert json.loads(read(claude_settings(home))) == {"theme": "dark", REMOTE_KEY: True,
+                                                          "attribution": {SESSION_LINK: False}}
+        make_old_layout(home)
+    with when("this hub runs apply, which moves the folder"):
+        output = home.step("apply").stdout
+    with then("the old name is a link to the new folder"):
+        assert os.path.islink(old_state(home))
+    with and_("remote_control still runs, apply says nothing about it, and the file keeps hub's values"):
+        assert home.show()["flags"][REMOTE_PART]["runs"]
+        assert remote_lines(output) == []
+        assert json.loads(read(claude_settings(home))) == {"theme": "dark", REMOTE_KEY: True,
+                                                          "attribution": {SESSION_LINK: False}}
+    with and_("the record in the new folder still holds the user's false"):
+        with open(os.path.join(new_state(home), "keys.json")) as handle:
+            [entry] = [item for item in json.load(handle)["keys"] if item["key"] == REMOTE_KEY]
+        assert entry["earlier"] is False and entry["had_earlier"]
+    with when("the user turns remote_control off"):
+        home.step("off", REMOTE_PART)
+    with then("the file is exactly as the user left it before hub"):
+        assert read(claude_settings(home)) == original

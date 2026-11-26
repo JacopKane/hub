@@ -14,6 +14,15 @@ since only the user turns one on. Every question gets
 Skip as its last option and an id of hub's own. The agent's id stays as the
 question's topic.
 
+Setup adds one question of its own for remote_control, last, outside
+tuner.setup.questions. On comes first, and a skip counts as On, even over a
+false the user set earlier (see apply.setup_run). When DO_NOT_TRACK or
+DISABLE_TELEMETRY is set, the question says why Remote Control stays off and
+offers no way to turn it on. Setup leaves the question out in Cursor, which
+has no Remote Control. It also leaves it out once the user switched the part
+by hand or picked Off in an earlier setup. The part then stays as they chose
+until they ask for a change in plain words.
+
 The reply scans this machine into the profile, applies the chosen options
 by setup, turns off the instructions compare_rules found, writes hub.json
 (so the first run is over), applies, and returns the summary.
@@ -22,13 +31,24 @@ import json
 import os
 import secrets
 
-from . import apply, changes, files, profile, protect, resolve, scan, screen, settings, tree as tree_module
+from . import apply, changes, files, keys, profile, protect, resolve, scan, screen, settings, tree as tree_module
 
 PENDING = os.path.join("setup", "pending.json")
 SKIP = {"label": "Skip", "does": "Changes nothing."}
 # The facts about this machine a setup question may set, with the values each takes.
 MACHINE_ANSWERS = {"use": {"work", "home", "both"}}
 MAX_TEXT = 300
+REMOTE_TOPIC = "remote_control"
+REMOTE_TEXT = ("Start every new Claude Code chat with Remote Control on? You can then follow and steer a chat "
+               "from claude.ai or the Claude app, and hub keeps the claude.ai chat link out of your commits and "
+               "pull requests. Setup turns it on unless you pick Off.")
+REMOTE_OPTIONS = [{"label": "On", "does": "Turns Remote Control on for every new chat.", "flags": {REMOTE_TOPIC: "on"}},
+                  {"label": "Off", "does": "Leaves Remote Control as your Claude Code settings have it.",
+                   "flags": {REMOTE_TOPIC: "off"}}]
+REMOTE_OPTED_OUT = ("Remote Control stays off, because {variable} is set. Say \"turn on remote_control\" later "
+                    "if you want it.")
+REMOTE_KEEP_OFF = [{"label": "Keep it off", "does": "Leaves Remote Control as your Claude Code settings have it.",
+                    "flags": {REMOTE_TOPIC: "off"}}]
 UNKNOWN_IDS = ("Nothing changed, because setup did not ask {unknown}. Use the question ids that "
                "setup --answer printed: {asked}.")
 
@@ -114,8 +134,26 @@ def check_answer(answer, flags):
     offers = [part_id for part_id in answer.get("offers") or []
               if isinstance(part_id, str) and tree.get(part_id) is not None and tree.get(part_id).parent is None
               and not flags[part_id]["runs"] and not resolve.never_offered(tree, part_id)]
-    return {"this_machine": machine, "questions": valid_questions(tree, answer.get("questions"), limit, flags),
-            "instructions_off": off, "offers": offers}
+    questions = valid_questions(tree, answer.get("questions"), limit, flags)
+    remote = remote_question(tree)
+    if remote:
+        questions = [question for question in questions if question["topic"] != REMOTE_TOPIC] + [remote]
+    return {"this_machine": machine, "questions": questions, "instructions_off": off, "offers": offers}
+
+
+def remote_question(tree):
+    """Setup's own question for remote_control, or None where it does not apply."""
+    if tree.get(REMOTE_TOPIC) is None or os.environ.get("CURSOR_AGENT") == "1":
+        return None
+    stored = settings.entry(settings.read(files.user_settings_path()) or settings.empty(), REMOTE_TOPIC)
+    if apply.chosen_by_user(REMOTE_TOPIC) or (stored is not None and stored.get("value") == "off"):
+        return None
+    variable = keys.opt_out_variable(apply.REMOTE_OPT_OUT)
+    if variable:
+        return {"id": secrets.token_hex(4), "topic": REMOTE_TOPIC, "text": REMOTE_OPTED_OUT.format(variable=variable),
+                "options": REMOTE_KEEP_OFF, "skip": True}
+    return {"id": secrets.token_hex(4), "topic": REMOTE_TOPIC, "text": REMOTE_TEXT, "options": REMOTE_OPTIONS,
+            "skip": False}
 
 
 def take_answer(path, cwd):
@@ -128,8 +166,10 @@ def take_answer(path, cwd):
     flags = resolve.current(cwd)["tools"]["claude_code"]["flags"]
     pending = check_answer(answer, flags)
     files.write_json(files.state_path(PENDING), pending)
-    return {"questions": [dict(question, options=[*({"label": option["label"], "does": option["does"]}
-                                                    for option in question["options"]), SKIP])
+    return {"questions": [{**{key: value for key, value in question.items() if key != "skip"},
+                           "options": [*({"label": option["label"], "does": option["does"]}
+                                         for option in question["options"]),
+                                       *([SKIP] if question.get("skip", True) else [])]}
                           for question in pending["questions"]]}
 
 
@@ -161,6 +201,12 @@ def take_reply(raw, cwd):
     unknown = sorted(reply_id for reply_id in replies if reply_id not in asked)
     if unknown:
         raise SetupError(UNKNOWN_IDS.format(unknown=", ".join(unknown), asked=", ".join(asked) or "none"))
+    with apply.setup_run():
+        return apply_replies(pending, replies, cwd)
+
+
+def apply_replies(pending, replies, cwd):
+    """take_reply's work once the reply checks out, as setup's own run."""
     picks = list(chosen(pending, replies))
     data = profile.from_scan(scan.run(cwd), name=pending.get("this_machine"))
     machine = data["this_machine"]

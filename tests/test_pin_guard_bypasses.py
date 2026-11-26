@@ -235,7 +235,7 @@ def test_setup_can_not_lower_a_gate_or_a_privacy_check(home):
         as_model(home)
         dialog = json.loads(home.step("setup", "--answer", answer).stdout)
     with then("the dialog leaves out the question that would only lower the gate"):
-        assert [question["topic"] for question in dialog["questions"]] == ["use"]
+        assert [question["topic"] for question in dialog["questions"]] == ["use", "remote_control"]
     with when("the reply picks the first option"):
         home.step("setup", "--reply", json.dumps({dialog["questions"][0]["id"]: "Work"}))
     with then("the gate and secrets still run, and the machine fact landed"):

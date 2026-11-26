@@ -16,7 +16,7 @@ from conftest import FIXTURES, PLUGIN, load_fixture
 from steps import and_, given, then, when
 
 ANSWERS = os.path.join(FIXTURES, "agent_answers")
-STARTING_SET = {"core", "tuner", "scout", "demo_gate", "status_band", "pr", "pr_gif"}
+STARTING_SET = {"core", "tuner", "scout", "demo_gate", "status_band", "pr", "pr_gif", "remote_control"}
 # Parts a new user turns on by hand. Setup never turns them on.
 OPT_IN = {"builder", "tier_rule"}
 
@@ -93,10 +93,14 @@ def test_first_run_on_a_work_laptop_with_cursor_scans_asks_at_most_three_questio
         assert "sam@example.com" not in context and "00000000-0000-4000-8000-0000000000aa" not in context
     with when("the recorded setup answer goes to hub setup --answer"):
         dialog = json.loads(setup(home, "--answer", os.path.join(ANSWERS, "work_laptop.json")).stdout)
-    with then("the dialog holds two questions, each with a skip and an id that hub gave it"):
-        assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use"]
-        for question in dialog["questions"]:
+    with then("the dialog holds the tuner's two questions, each with a skip, then hub's own Remote Control "
+              "question with On first and no skip, each with an id that hub gave it"):
+        assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use", "remote_control"]
+        *asked, remote = dialog["questions"]
+        for question in asked:
             assert question["options"][-1]["label"] == "Skip"
+        assert [option["label"] for option in remote["options"]] == ["On", "Off"]
+        for question in dialog["questions"]:
             assert question["id"] != question["topic"]
     with when("the user answers warn and work"):
         summary = setup(home, "--reply", replies(dialog, {"gate_mode": "warn", "use": "work"})).stdout
@@ -707,8 +711,8 @@ def test_the_hub_setup_skill_runs_setup_with_one_dialog_in_claude_code_and_one_m
     with when("the chat passes the recorded answer to the skill's answer command"):
         words = shlex.split(commands["--answer"].replace("<file>", os.path.join(ANSWERS, "work_laptop.json")))
         dialog = json.loads(home.run(step + words).stdout)
-    with then("it gets the questions to ask, each with a skip"):
-        assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use"]
+    with then("it gets the questions to ask, with hub's own Remote Control question last"):
+        assert [question["topic"] for question in dialog["questions"]] == ["gate_mode", "use", "remote_control"]
     with when("the chat passes the user's answers to the skill's reply command"):
         reply = replies(dialog, {"gate_mode": "warn", "use": "work"})
         words = shlex.split(commands["--reply"].replace("<json>", reply))

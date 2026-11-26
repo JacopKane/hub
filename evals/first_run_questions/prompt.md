@@ -1,5 +1,5 @@
 ---
-description: A plain repo task on a fresh machine. hub has no settings yet, so its first run starts the setup agent, and the user sees one dialog with at most three questions. Run it with --scaffold, --allow-tools "Bash(python3 -I *)" Write, and --no-publish.
+description: A plain repo task on a fresh machine. hub has no settings yet, so its first run starts the setup agent, and the user sees one dialog with at most three questions from the setup agent, plus hub's own question about Remote Control. Run it with --scaffold, --allow-tools "Bash(python3 -I *)" Write, and --no-publish.
 plugins: ["../../plugins/hub"]
 runs: 1
 max_turns: 30
