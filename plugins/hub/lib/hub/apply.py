@@ -4,9 +4,12 @@
     ensure_fresh()   takes the lock and runs apply only when it is stale
 
 A run turns off, pinned, each part whose hub link the user deleted or whose
-Claude Code key the user changed (see keys.pin_changed), resolves
+Claude Code key the user changed (see keys.pin_changed), and
+turns off, pinned, a default-on part whose key the user set to another value
+before hub wrote it (see keys.stand_down), resolves
 every flag, makes and removes the links and built copies, sets outputStyle
-while hub_style runs (see keys.py), writes the slot
+while hub_style runs and remoteControlAtStartup while remote_control runs
+(see keys.py), writes the slot
 files and cost.json, marks the parts of the hook groups that start Python
 only when one may run (see pre_check.sh), takes away the background jobs an
 older hub ran (see old_jobs.py), adds a line to applies.jsonl, and writes
@@ -49,6 +52,7 @@ OLD_MARKERS = ("post_tool_use_parts",)
 # The names pre_check.sh reads from hook input. Any other name starts the dispatcher there.
 TOOL_NAME = re.compile(r"[A-Za-z0-9_-]+")
 STYLE_PART, STYLE_KEY, STYLE_NAME = "hub_style", "outputStyle", "hub-style"  # the name in style.md
+REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
 CURSOR_PART = "cursor_link"
 
 
@@ -61,10 +65,12 @@ def run(tree=None):
     ran_before = switched.running_parts(files.read_json(files.state_path(resolve.RESOLVED)))
     links.pin_deleted(lines)
     keys.pin_changed(lines)
+    keys.stand_down(REMOTE_KEY, True, REMOTE_PART, lines)
     tree = tree or tree_module.load(files.PARTS_DIR)
     data = resolve.apply(tree, write=False)
     listing = links.reconcile(tree, data, lines)
     set_style(data, lines)
+    set_remote_control(data, lines)
     cost = {}
     for tool in tree_module.TOOLS:
         flags = data["tools"][tool]["flags"]
@@ -101,6 +107,14 @@ def set_style(data, lines):
         keys.want(STYLE_KEY, STYLE_NAME, STYLE_PART, lines)
     else:
         keys.release(STYLE_KEY, lines)
+
+
+def set_remote_control(data, lines):
+    """remoteControlAtStartup is true while remote_control runs in Claude Code, else the user's earlier value."""
+    if data["tools"]["claude_code"]["flags"].get(REMOTE_PART, {}).get("runs"):
+        keys.want(REMOTE_KEY, True, REMOTE_PART, lines)
+    else:
+        keys.release(REMOTE_KEY, lines)
 
 
 def first_units(tool, tree, flags):

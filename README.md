@@ -129,7 +129,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 ## Feature flags
 
 <details>
-<summary>Core and all 37 parts, and how they start</summary>
+<summary>Core and all 36 parts, and how they start</summary>
 
 | Part | What it does | Starts | Runs in | To switch it, say |
 |---|---|---|---|---|
@@ -168,6 +168,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | queue | Holds a message to an idle chat for a short time, so two quick messages wake it once | off | Claude Code | "turn on the queue" |
 | restart | Restarts the running chats, each under its own name | off | Claude Code | "turn on restart" |
 | status_band | Two rows above the prompt with your other chats, hub's state, recent changes and offers | on | Claude Code | "turn off the status band" |
+| remote_control | Starts every new Claude Code chat with Remote Control on, so you can follow it from claude.ai or the Claude app. A false you set yourself stays | on | Claude Code | "turn off remote control" |
 | cursor_link | Beta. Gives Cursor the same parts, hooks and agents | off | Claude Code, Cursor | "turn on the Cursor link" |
 
 Each part also has smaller switches inside it, such as an agent's model and effort. They switch the same way.

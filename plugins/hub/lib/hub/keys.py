@@ -3,6 +3,7 @@
     want(key, value, part, lines)   write one key by its dot path, such as env.HUB_NAME
     release(key, lines)             put back the user's earlier value
     pin_changed(lines)       at apply: a key the user changed since turns its part off
+    stand_down(key, value, part, lines)   at apply: a default-on part whose key the user already set to another value goes off
     restore_all(lines)       at uninstall: put back every earlier value
 
 The key goes into the user's ~/.claude/settings.json. A write keeps the
@@ -198,6 +199,36 @@ def pin_changed(lines):
                      f"Say \"turn on {part}\" to bring it back.")
     settings.write(path, data)
     write_record(kept)
+
+
+def stand_down(key, value, part, lines):
+    """At apply, before resolving: turn a part off, pinned, when the user's own value at key comes first.
+
+    This is for a part that is on by default. When hub has not written key
+    yet, no hub setting names the part, and the file already holds a value
+    other than the one the part wants, that value is the user's choice. So
+    the part goes off with one line, and the file stays as it is. A user who
+    then turns the part on by hand gets hub's value, and hub keeps theirs to
+    put back.
+    """
+    if find(read_record(), key) is not None:
+        return
+    path = files.user_settings_path()
+    data = settings.read(path) or settings.empty()
+    if settings.entry(data, part) is not None:
+        return
+    try:
+        current = get(load(settings_file())[0], key)
+    except ValueError:
+        return  # want names the file that does not parse
+    if current is MISSING or current == value:
+        return
+    shown = json.dumps(current, ensure_ascii=False)
+    settings.put(data, part, "off", "user")
+    history.add(part, "user", "on", "off", "user", "apply", f"{key} was already {shown} in your settings")
+    lines.append(f"Your settings already set {key} to {shown}, so {part} is now off and your value stays. "
+                 f"Say \"turn on {part}\" to bring it back.")
+    settings.write(path, data)
 
 
 def restore_all(lines):

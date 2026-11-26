@@ -4,11 +4,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 
-from conftest import DASH, REPO, load_fixture
+from conftest import DASH, PLUGIN, REPO, load_fixture
 from steps import and_, given, then, when
 from test_start_text_and_links import SLOT_LIMIT, read, session_start, slot_files, text_of, use_cursor_beta
 
@@ -182,13 +183,15 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
         home.install()
         home.step("on", "hub_style")
         text = read(claude_settings(home))
-        assert json.loads(text) == {"theme": "dark", "permissions": {"allow": ["Read"]}, "outputStyle": STYLE_NAME}
-        assert list(json.loads(text)) == ["theme", "permissions", "outputStyle"]
+        assert json.loads(text) == {"theme": "dark", "permissions": {"allow": ["Read"]}, "remoteControlAtStartup": True,
+                                    "outputStyle": STYLE_NAME}
+        assert list(json.loads(text)) == ["theme", "permissions", "remoteControlAtStartup", "outputStyle"]
         assert '\n    "theme": "dark"' in text and '\n        "allow"' in text
         assert os.path.islink(style_link(home))
         assert f"name: {STYLE_NAME}" in read(style_link(home))
     with when("the user picks another style in /output-style, which writes the key"):
-        write_claude_settings(home, {"theme": "dark", "permissions": {"allow": ["Read"]}, "outputStyle": "Explanatory"})
+        write_claude_settings(home, {"theme": "dark", "permissions": {"allow": ["Read"]}, "remoteControlAtStartup": True,
+                                     "outputStyle": "Explanatory"})
     with and_("apply runs"):
         result = home.step("apply")
     with then("hub_style is off by user, one line says so, and outputStyle keeps the user's pick"):
@@ -201,14 +204,14 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
         home.step("on", "hub_style")
     with then("apply writes hub's style and keeps the user's pick to restore later"):
         assert json.loads(read(claude_settings(home)))["outputStyle"] == STYLE_NAME
-        [entry] = home.state_file("keys.json")["keys"]
-        assert entry["key"] == "outputStyle" and entry["earlier"] == "Explanatory" and entry["had_earlier"]
+        [entry] = [item for item in home.state_file("keys.json")["keys"] if item["key"] == "outputStyle"]
+        assert entry["earlier"] == "Explanatory" and entry["had_earlier"]
     with when("the user turns hub_style off"):
         home.step("off", "hub_style")
     with then("the user's pick is back, in the same key order"):
         data = json.loads(read(claude_settings(home)))
-        assert data["outputStyle"] == "Explanatory" and list(data) == ["theme", "permissions", "outputStyle"]
-        assert home.state_file("keys.json")["keys"] == []
+        assert data["outputStyle"] == "Explanatory" and list(data) == ["theme", "permissions", "remoteControlAtStartup", "outputStyle"]
+        assert [item["key"] for item in home.state_file("keys.json")["keys"]] == ["remoteControlAtStartup"]
 
 
 def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names_it(home):
@@ -234,7 +237,7 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
         write_claude_settings(home, {"theme": "dark"})
         home.step("apply")
     with then("outputStyle names hub's style, and the doctor no longer names the file"):
-        assert json.loads(read(path)) == {"theme": "dark", "outputStyle": STYLE_NAME}
+        assert json.loads(read(path)) == {"theme": "dark", "remoteControlAtStartup": True, "outputStyle": STYLE_NAME}
         assert path not in home.step("doctor").stdout
     with when("the file breaks again and the user turns hub_style off"):
         with open(path, "w") as handle:
@@ -243,7 +246,7 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
     with then("the switch finishes, hub keeps its record to put the value back later, and the doctor names the file"):
         assert result.returncode == 0, result.stderr
         assert read(path) == broken
-        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == ["outputStyle"]
+        assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == ["outputStyle", "remoteControlAtStartup"]
         assert path in home.step("doctor").stdout
 
 
@@ -356,25 +359,114 @@ def test_cursor_gets_the_style_as_rule_text(home):
         assert os.path.realpath(style_link(home)).startswith(os.path.realpath(home.state))
 
 
+REMOTE_PART, REMOTE_KEY = "remote_control", "remoteControlAtStartup"
+
+
+def install_before_remote_control(home):
+    """hub as installed before remote_control shipped: the plugin copy has no such part yet."""
+    shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__", REMOTE_PART))
+    home.step("apply")
+
+
+def install_printing(home):
+    """home.install, but returns the lines the first apply printed."""
+    shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
+    return home.step("apply").stdout
+
+
+def remote_lines(output):
+    return [line for line in output.splitlines() if REMOTE_PART in line]
+
+
+def test_an_update_turns_remote_control_on_for_every_new_chat_with_no_offer_and_off_puts_the_file_back(home):
+    path = claude_settings(home)
+    with given("hub was installed before remote_control shipped, and the user's Claude Code settings hold their theme"):
+        write_claude_settings(home, {"theme": "dark"})
+        original = read(path)
+        install_before_remote_control(home)
+        assert read(path) == original
+    with when("the update brings remote_control and apply runs"):
+        shutil.copytree(os.path.join(PLUGIN, "parts", REMOTE_PART), os.path.join(home.plugin, "parts", REMOTE_PART))
+        home.step("apply")
+    with then("remote_control runs by default, nothing is offered, and the file turns Remote Control on in the user's key order and indent"):
+        record = home.show()["flags"][REMOTE_PART]
+        assert record["by"] == "default" and record["runs"]
+        assert REMOTE_PART not in [offer["id"] for offer in home.state_file("offers.json")["offers"]]
+        text = read(path)
+        assert json.loads(text) == {"theme": "dark", REMOTE_KEY: True} and '\n    "theme": "dark"' in text
+        [entry] = home.state_file("keys.json")["keys"]
+        assert (entry["key"], entry["part"], entry["had_earlier"]) == (REMOTE_KEY, REMOTE_PART, False)
+    with when("the user turns remote_control off"):
+        home.step("off", REMOTE_PART)
+    with then("the file is exactly as the user left it, and hub keeps no record of the key"):
+        assert read(path) == original
+        assert home.state_file("keys.json")["keys"] == []
+    with when("the user turns it on again, later sets the key to false by hand, and apply runs"):
+        home.step("on", REMOTE_PART)
+        assert json.loads(read(path))[REMOTE_KEY] is True
+        write_claude_settings(home, {"theme": "dark", REMOTE_KEY: False})
+        result = home.step("apply")
+    with then("remote_control is off by user, one line says so, and the user's false stays"):
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
+        [line] = remote_lines(result.stdout)
+        assert REMOTE_KEY in line and "false" in line and f'Say "turn on {REMOTE_PART}"' in line
+        assert json.loads(read(path))[REMOTE_KEY] is False
+
+
+def test_a_user_who_already_set_remote_control_to_false_keeps_it_and_the_part_stands_down(home):
+    path = claude_settings(home)
+    with given("the user's Claude Code settings already turn Remote Control off"):
+        write_claude_settings(home, {REMOTE_KEY: False, "theme": "dark"}, indent=2)
+        original = read(path)
+    with when("hub is installed"):
+        output = install_printing(home)
+    with then("the file is as the user left it, and remote_control is off and pinned by the user"):
+        assert read(path) == original
+        assert home.settings()["flags"][REMOTE_PART] == {"by": "user", "value": "off"}
+        assert not home.show()["flags"][REMOTE_PART]["runs"]
+        assert not os.path.exists(os.path.join(home.state, "keys.json"))
+    with and_("one line says why and how to bring it back, and the history keeps the reason"):
+        [line] = remote_lines(output)
+        assert REMOTE_KEY in line and "false" in line and f'Say "turn on {REMOTE_PART}"' in line
+        [change] = [item for item in home.history() if item.get("flag") == REMOTE_PART]
+        assert (change["old"], change["new"], change["door"]) == ("on", "off", "apply")
+        assert REMOTE_KEY in change["reason"]
+    with when("apply runs again"):
+        again = home.step("apply").stdout
+    with then("it says nothing more about remote_control"):
+        assert remote_lines(again) == []
+    with when("the user turns remote_control on by hand"):
+        home.step("on", REMOTE_PART)
+    with then("Remote Control is on, and hub keeps the user's false to put back"):
+        assert json.loads(read(path)) == {REMOTE_KEY: True, "theme": "dark"}
+        [entry] = home.state_file("keys.json")["keys"]
+        assert entry["earlier"] is False and entry["had_earlier"]
+    with when("the user turns remote_control off again"):
+        home.step("off", REMOTE_PART)
+    with then("the file is exactly as the user left it"):
+        assert read(path) == original
+
+
 def test_uninstall_puts_back_the_values_hub_wrote(home):
-    with given("keys.py wrote remoteControlAtStartup and outputStyle"):
-        write_claude_settings(home, {"remoteControlAtStartup": False, "outputStyle": "Default"}, indent=2)
+    with given("the user had Remote Control off and outputStyle Default, then turned on remote_control and hub_style"):
+        write_claude_settings(home, {REMOTE_KEY: False, "outputStyle": "Default"}, indent=2)
         home.install()
+        home.step("on", REMOTE_PART)
         home.step("on", "hub_style")
-        run_keys(home, "from hub import keys; keys.want('remoteControlAtStartup', True, 'test', [])")
         data = json.loads(read(claude_settings(home)))
-        assert data == {"remoteControlAtStartup": True, "outputStyle": STYLE_NAME}
+        assert data == {REMOTE_KEY: True, "outputStyle": STYLE_NAME}
     with and_("the user later changed outputStyle by hand"):
         write_claude_settings(home, dict(data, outputStyle="Learning"), indent=2)
     with when('the user runs "hub uninstall"'):
         home.step("uninstall")
     with then("remoteControlAtStartup has the user's earlier value again, and keys.json is gone"):
         data = json.loads(read(claude_settings(home)))
-        assert data["remoteControlAtStartup"] is False
+        assert data[REMOTE_KEY] is False
         assert not os.path.exists(os.path.join(home.state, "keys.json"))
     with and_("outputStyle keeps the value the user chose, and the style link is gone"):
         assert data["outputStyle"] == "Learning"
         assert not os.path.lexists(style_link(home))
+
 
 
 # sha256 hashes of five lines from the long writing guide that hub's humanize

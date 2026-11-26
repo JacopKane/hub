@@ -12,8 +12,8 @@ export const DAY9: HubScreen = /* json */ {
   "header": {
     "machine": "laptop",
     "use": "",
-    "parts_on": 8,
-    "parts_total": 35,
+    "parts_on": 9,
+    "parts_total": 36,
     "start_text": 1210
   },
   "strip": [
@@ -740,6 +740,31 @@ export const DAY9: HubScreen = /* json */ {
           "name": "status_band",
           "depth": 0,
           "does": "Two rows above the prompt. The top row shows your other chats and the features button. The second shows the newest change or offer with its buttons, or hub's state when there is none.",
+          "value": "on",
+          "effective": "on",
+          "runs": true,
+          "by": "default",
+          "scope": "shipped",
+          "relevant": true,
+          "hidden_because": null,
+          "cost": "",
+          "next_session": false,
+          "claude_code_only": true,
+          "stage": null,
+          "children": []
+        }
+      ]
+    },
+    {
+      "family": "tools",
+      "parts_on": 1,
+      "parts_total": 1,
+      "parts": [
+        {
+          "id": "remote_control",
+          "name": "remote_control",
+          "depth": 0,
+          "does": "Starts every new Claude Code chat with Remote Control on, so you can follow and steer it from claude.ai or the Claude app. It sets remoteControlAtStartup in your Claude Code settings. If you already set that key to false, the part stays off and your value stays. Turning the part off puts back what the key held before.",
           "value": "on",
           "effective": "on",
           "runs": true,
