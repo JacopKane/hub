@@ -374,7 +374,7 @@ def test_cursor_gets_the_same_parts_with_mapped_models(home):
         assert all(os.path.join(home.plugin, "lib", "hub", "adapters", "cursor_hooks.py") in command
                    for command in commands)
     with and_("~/.cursor/agents/hub-builder.md names the mapped model"):
-        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-opus-5[effort=high]"
+        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-opus-5-5[effort=high]"
         assert front_matter(cursor_agent(home, "scout"))["name"] == "scout"
         assert MARKER not in read(cursor_agent(home, "builder"))
     with and_("Cursor's sessionStart returns its own slot set, without tier_rule.description_prefix"):
@@ -387,7 +387,7 @@ def test_cursor_gets_the_same_parts_with_mapped_models(home):
     with when("the user sets builder.model to sonnet"):
         home.hubctl("set", "builder.model", "sonnet")
     with then("the Cursor copy follows"):
-        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-sonnet-5[effort=high]"
+        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-sonnet-5-5[effort=high]"
     with and_("every Cursor file is in the link record"):
         recorded = {entry["path"] for entry in home.state_file("links.json")["links"]}
         assert {folder, cursor_agent(home, "builder"), cursor_agent(home, "scout")} <= recorded

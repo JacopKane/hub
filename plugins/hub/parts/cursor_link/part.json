@@ -20,7 +20,7 @@
       "does": "Writes a copy of each agent that runs to ~/.cursor/agents, with Cursor's model name.",
       "children": [
         {"id": "effort_map", "kind": "option", "type": "list",
-         "default": ["opus=claude-opus-5", "sonnet=claude-sonnet-5", "haiku=claude-haiku-5"],
+         "default": ["opus=claude-opus-5-5", "sonnet=claude-sonnet-5-5", "haiku=claude-haiku-5-5"],
          "does": "Cursor's name for each model, as model=name pairs. The effort goes after the name in brackets."}
       ]
     },

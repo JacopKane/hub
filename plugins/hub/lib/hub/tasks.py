@@ -93,19 +93,30 @@ GLYPHS = {
 }
 SEEN_KEPT = 64  # one reply can fill several lines in a row, so the last few reply keys are enough
 
-# $ per million tokens: input, output, cache read. A cache write costs input x1.25 for five minutes and x2
-# for an hour, and a write with no split counts as an hour. The order matters: a longer name goes first.
+# $ per million tokens: input, output, cache read, from https://platform.claude.com/docs/en/about-claude/pricing.
+# A cache write costs input x1.25 for five minutes and x2 for an hour, and a write with no split counts as an
+# hour. Each row is a family and the first version at that price. A model takes the row of its family with
+# the highest version at or below its own, so Opus 4.1 costs like Opus 4, Opus 5.6 like Opus 5.5, and an
+# alias or a model newer than the table like the newest one of its family.
 PRICES = (
-    ("opus-5-5", (4, 20, 0.20)),
-    ("sonnet-5-5", (2, 10, 0.20)),
-    ("haiku-5-5", (0.10, 0.50, 0.01)),
-    ("fable", (10, 50, 0.25)),
-    ("opus-5", (5, 25, 0.50)),
-    ("sonnet-5", (2, 10, 0.20)),
-    ("opus-4", (5, 25, 0.50)),
-    ("sonnet-4", (3, 15, 0.30)),
-    ("haiku-4", (1, 5, 0.10)),
+    ("opus", (4,), (15, 75, 1.50)),
+    ("opus", (4, 5), (5, 25, 0.50)),
+    ("opus", (5, 5), (4, 20, 0.20)),
+    ("sonnet", (4,), (3, 15, 0.30)),
+    ("sonnet", (5,), (2, 10, 0.20)),
+    ("sonnet", (5, 5), (2, 10, 0.10)),
+    ("haiku", (4, 5), (1, 5, 0.10)),
+    ("haiku", (5, 5), (0.10, 0.50, 0.01)),
+    ("fable", (5,), (10, 50, 1)),
+    ("fable", (5, 1), (10, 50, 0.25)),
+    ("fable", (5, 2), (8, 40, 0.20)),
+    ("mythos", (5,), (10, 50, 1)),
+    ("mythos", (5, 1), (10, 50, 0.25)),
+    ("mythos", (5, 2), (8, 40, 0.20)),
 )
+FAMILIES = {family for family, _version, _price in PRICES}
+# The family, then each version number up to the first word or date: claude-opus-4-1-20250805 is opus 4.1.
+MODEL_ID = re.compile(r"(?:claude-)?([a-z]+)((?:-\d{1,5}(?![0-9]))*)")
 
 
 def now():
@@ -116,9 +127,25 @@ def now():
         return time.time()
 
 
+def family_and_version(model):
+    """("opus", (5, 5)) for claude-opus-5-5, claude-opus-5-5[1m] or claude-opus-5-5-20261001. A date or a word
+    after the version is not part of it."""
+    match = MODEL_ID.match(str(model or ""))
+    if not match:
+        return None, ()
+    return match.group(1), tuple(int(number) for number in match.group(2).split("-")[1:])
+
+
 def price_of(model):
-    name = str(model or "").replace("claude-", "")
-    return next((price for family, price in PRICES if name.startswith(family)), None)
+    """The price row of the model's family with the highest version at or below the model's. An alias such as
+    opus takes the newest row. None when no row fits, such as for a preview with no version."""
+    family, version = family_and_version(model)
+    alias = re.sub(r"\[.*?\]$", "", str(model or "")) in FAMILIES
+    if not version and not alias:
+        return None
+    rows = [(row_version, price) for row_family, row_version, price in PRICES
+            if row_family == family and (alias or row_version <= version)]
+    return max(rows)[1] if rows else None
 
 
 def reply_cost(model, usage):
@@ -679,8 +706,8 @@ def today(task):
 
 
 def model_name(model):
-    name = str(model or "").replace("claude-", "")
-    return next((family.split("-")[0] for family, _ in PRICES if name.startswith(family)), name[:8])
+    family, _version = family_and_version(model)
+    return family if family in FAMILIES else str(model or "").replace("claude-", "")[:8]
 
 
 def money(usd):
