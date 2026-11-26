@@ -21,7 +21,9 @@ export type HubBandFlags = {
   chats: boolean
   problems: boolean
   first_digit: number
-  keep_hours: number
+  // How many minutes a change, undo or update line stays, and how many an offer stays.
+  keep_minutes: number
+  offer_keep_minutes: number
 }
 
 // What the mod's last session start found, as the step keeps it for the doctor.

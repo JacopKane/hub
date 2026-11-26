@@ -1,11 +1,13 @@
 // The day 9 screen model, as `hub screen --json` prints it on the made-up fixture in
 // tests/fixtures/day9. tests/test_doors.py checks that it still is, with the machine name,
-// the times and the doors folder left out. The times are hours before DAY9_NOW, as in that fixture.
+// the times and the doors folder left out. The times are minutes before DAY9_NOW, as in that fixture.
 import type { HubScreen } from '../types'
 
 export const DAY9_NOW = Date.parse('2026-11-09T12:00:00Z')
 
-export const HOUR = 60 * 60 * 1000
+export const MINUTE = 60 * 1000
+
+export const HOUR = 60 * MINUTE
 
 export const DAY9: HubScreen = /* json */ {
   "tool": "claude_code",
@@ -21,7 +23,7 @@ export const DAY9: HubScreen = /* json */ {
       "id": "offer:researcher",
       "kind": "offer",
       "mark": "+",
-      "time": "2026-11-09T10:00:00Z",
+      "time": "2026-11-09T11:58:00Z",
       "text": "hub offers researcher, a reading agent for docs and pages, which reports what it read",
       "reason": "you started 6 long reading jobs this week",
       "buttons": [
@@ -45,7 +47,7 @@ export const DAY9: HubScreen = /* json */ {
       "id": "d9dash000001",
       "kind": "change",
       "mark": "-",
-      "time": "2026-11-09T09:00:00Z",
+      "time": "2026-11-09T11:57:00Z",
       "text": "tuner turned demo_gate.dashes off",
       "reason": "you went ahead after 4 of 5 dash warnings this week",
       "buttons": [
@@ -67,7 +69,8 @@ export const DAY9: HubScreen = /* json */ {
     "chats": false,
     "problems": true,
     "first_digit": 1,
-    "keep_hours": 24
+    "keep_minutes": 5,
+    "offer_keep_minutes": 1440
   },
   "board": {
     "chats": null,

@@ -17,7 +17,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
       "id": "offer:researcher",
       "kind": "offer",
       "mark": "+",
-      "time": "2026-11-09T10:00:00Z",
+      "time": "2026-11-09T11:58:00Z",
       "text": "hub offers researcher, a reading agent for docs and pages, which reports what it read",
       "reason": "you started 6 long reading jobs this week",
       "buttons": [
@@ -41,7 +41,7 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
       "id": "d9dash000001",
       "kind": "change",
       "mark": "-",
-      "time": "2026-11-09T09:00:00Z",
+      "time": "2026-11-09T11:57:00Z",
       "text": "tuner turned demo_gate.dashes off",
       "reason": "you went ahead after 4 of 5 dash warnings this week",
       "buttons": [
@@ -63,7 +63,8 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
     "chats": false,
     "problems": true,
     "first_digit": 1,
-    "keep_hours": 24
+    "keep_minutes": 5,
+    "offer_keep_minutes": 1440
   },
   "board": {
     "chats": null,
@@ -1665,12 +1666,12 @@ export const PICKER_DAY9: HubPickerScreen = /* json */ {
               "waits_for": []
             },
             {
-              "id": "status_band.notices.keep_hours",
-              "name": "notices.keep_hours",
+              "id": "status_band.notices.keep_minutes",
+              "name": "notices.keep_minutes",
               "depth": 2,
-              "does": "How many hours a line stays, unless you act on it first.",
-              "value": 24,
-              "effective": 24,
+              "does": "How many minutes a change line stays, unless you act on it first. Undo still works later through \"undo that\".",
+              "value": 5,
+              "effective": 5,
               "runs": true,
               "by": "default",
               "scope": "shipped",

@@ -25,8 +25,10 @@ OLD_CONFIG_NAME = "hubctl"
 STATE_NAME = CONFIG_NAME
 OLD_STATE_NAME = "hubctl"
 # Flags hub no longer has, which a settings file may still name: the terminal link, which put an older
-# hub's command on the PATH, and the queue's flush job. Loading the settings leaves them out, and the next write drops them.
-DROPPED_FLAGS = ("core.terminal_link", "queue.flush_job", "queue.flush_job.every_seconds")
+# hub's command on the PATH, the queue's flush job, and the band's line time in hours, which is in minutes
+# now. Loading the settings leaves them out, and the next write drops them.
+DROPPED_FLAGS = ("core.terminal_link", "queue.flush_job", "queue.flush_job.every_seconds",
+                 "status_band.notices.keep_hours")
 
 
 def home():

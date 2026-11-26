@@ -57,6 +57,29 @@ def last_undoable():
     return None
 
 
+RECENT = 20
+
+
+def recent(every, count=RECENT):
+    """The newest changes first, at most count, each marked undone or not. An undo is not listed, since it can not be undone."""
+    undone = {line.get("undoes") for line in every}
+    changes = [line for line in every if "undoes" not in line]
+    return [{**line, "undone": line["id"] in undone} for line in reversed(changes)][:count]
+
+
+def value_text(value):
+    from .screen import said
+    return "unset" if value is None else said(value)
+
+
+def row_text(line):
+    """One change as the history step prints it: id, time, what changed, who, and whether it is undone."""
+    from .screen import change_text
+    what = (f"{line['flag']} {value_text(line['old'])} -> {value_text(line['new'])}  by {line['by']}"
+            if "flag" in line else change_text(line))
+    return f"{line['id']}  {line['time']}  {what}" + ("  (undone)" if line["undone"] else "")
+
+
 def undoable(line_id):
     """The change with this id, when it can still be undone. Raises ValueError with the reason."""
     from .changes import ChangeError

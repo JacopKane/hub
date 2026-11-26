@@ -8,7 +8,8 @@
               The beta parts leave their family for a last group, labelled "Beta, untested".
               With --all every row also has its kind, its flag type, the values it takes and
               what it waits for, and each part row says if it is new (offered, not answered yet).
-    band      the status_band flags the band draws from: which zones run, its first digit, keep_hours
+    band      the status_band flags the band draws from: which zones run, its first digit, and how
+              many minutes a change line and an offer line stay
     hidden    how many flags are not relevant here
     command_clash  the names Claude Code refused the mod's command, or None (doctor.py)
     relay     whether permission_relay runs, so the mod asks it for waiting prompts
@@ -16,7 +17,9 @@
 
 Core has no family row and is left out of the counts. The header counts from
 the manifests, so its total follows each new part. A line leaves the strip
-when the user acts on it, or after status_band.notices.keep_hours.
+when the user acts on it. A change, undo or update line also leaves after
+status_band.notices.keep_minutes, and an offer after a day, since only the
+strip takes or declines it. An undo still works later through its id.
 """
 import calendar
 import os
@@ -27,7 +30,9 @@ from . import apply, board as board_module, changes as changes_module, doctor, f
 from . import sessions, tree as tree_module, tuner
 
 STRIP_CHANGES = 5
-KEEP_HOURS = "status_band.notices.keep_hours"
+KEEP_MINUTES = "status_band.notices.keep_minutes"
+KEEP_MINUTES_DEFAULT = 5
+OFFER_KEEP_MINUTES = 24 * 60
 AGENT_KINDS = {"agent", "skill"}
 
 
@@ -78,9 +83,10 @@ def offered(offer):
     return f"hub offers {offer['id']}, " + does[:1].lower() + does[1:] if does else f"hub offers {offer['id']}"
 
 
-def strip(keep_hours, now=None):
+def strip(keep_minutes, now=None):
     now = now or resolve.epoch()
-    oldest = now - keep_hours * 3600
+    oldest = now - keep_minutes * 60
+    oldest_offer = now - OFFER_KEEP_MINUTES * 60
     lines = []
     every = history.lines()
     undone = {line.get("undoes") for line in every}
@@ -98,7 +104,7 @@ def strip(keep_hours, now=None):
             entry["buttons"] = [{"label": "Undo", "args": ["undo", line["id"]]}]
         lines.append(entry)
     for offer in files.read_json(files.state_path("offers.json"), {"offers": []}).get("offers", []):
-        if seconds(offer.get("since")) < oldest:
+        if seconds(offer.get("since")) < oldest_offer:
             continue
         lines.append({"id": f"offer:{offer['id']}", "kind": "offer", "mark": "+", "time": offer.get("since"),
                       "text": offered(offer),
@@ -120,14 +126,15 @@ def strip(keep_hours, now=None):
     return lines
 
 
-def band(flags, keep_hours):
+def band(flags, keep_minutes):
     def runs(flag_id):
         return bool(flags.get(flag_id, {}).get("runs"))
     digit = flags.get("status_band.first_digit", {}).get("value")
     return {"runs": runs("status_band"), "state": runs("status_band.state"),
             "notices": runs("status_band.notices"), "offers": runs("status_band.offers"),
             "chats": runs("status_band.chats"), "problems": runs("status_band.problems"),
-            "first_digit": digit if isinstance(digit, int) else 1, "keep_hours": keep_hours}
+            "first_digit": digit if isinstance(digit, int) else 1, "keep_minutes": keep_minutes,
+            "offer_keep_minutes": OFFER_KEEP_MINUTES}
 
 
 def board_zones(flags, all_flags=None):
@@ -197,8 +204,8 @@ def model(cwd=None, tool="claude_code", everything=False):
     tree = tree_module.load(files.PARTS_DIR)
     profile = resolve.load_profile()
     parts = [part for part in tree.parts if part.family != "core"]
-    keep = flags.get(KEEP_HOURS, {}).get("set")
-    keep = keep if isinstance(keep, (int, float)) else 24
+    keep = flags.get(KEEP_MINUTES, {}).get("set")
+    keep = keep if isinstance(keep, (int, float)) else KEEP_MINUTES_DEFAULT
     families = []
     offered = {offer["id"] for offer in files.read_json(files.state_path("offers.json"), {"offers": []})
                .get("offers", [])} if everything else set()

@@ -232,8 +232,8 @@ def test_a_profile_fact_the_user_types_is_pinned_and_a_scan_or_a_tool_call_leave
 SIGNAL_KEYS = {"flag", "event", "signal", "time"}
 
 
-def on_day(home, day, hour=10):
-    home.env["HUB_TEST_NOW"] = f"2026-11-{day:02d}T{hour:02d}:00:00Z"
+def on_day(home, day, hour=10, minute=0):
+    home.env["HUB_TEST_NOW"] = f"2026-11-{day:02d}T{hour:02d}:{minute:02d}:00Z"
 
 
 def set_up(home):
@@ -482,8 +482,8 @@ def test_when_the_band_showed_the_tuners_change_the_next_start_text_does_not_rep
 def test_when_the_start_text_told_the_tuners_change_the_band_does_not_show_it_again(home):
     with given("a tuner change, and the band on in Claude Code"):
         change = tuner_change(home)
-    with when("the next session starts before the mod reads the screen"):
-        on_day(home, 1, hour=11)
+    with when("the next session starts 3 minutes later, inside the band's 5 minutes, before the mod reads the screen"):
+        on_day(home, 1, minute=3)
         context = context_of(session_start(home, "claude_code"))
     with then("the start text holds the line with its undo"):
         assert f'Say "undo {change["id"]}"' in context

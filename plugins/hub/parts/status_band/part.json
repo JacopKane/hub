@@ -14,8 +14,8 @@
       "default": "on",
       "does": "Shows the newest changes, each with Undo.",
       "children": [
-        {"id": "keep_hours", "kind": "option", "type": "number", "default": 24,
-         "does": "How many hours a line stays, unless you act on it first."}
+        {"id": "keep_minutes", "kind": "option", "type": "number", "default": 5,
+         "does": "How many minutes a change line stays, unless you act on it first. Undo still works later through \"undo that\"."}
       ]
     },
     {"id": "offers", "default": "on", "does": "Shows an offer with Turn on and No."},

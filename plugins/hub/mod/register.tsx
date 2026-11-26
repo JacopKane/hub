@@ -9,6 +9,7 @@ import { FEATURES_LABEL, openPicker, registerPicker } from './picker'
 import { refusePick } from './picker-texts'
 import type {
   HubBand,
+  HubBandFlags,
   HubChatsZone,
   HubCommand,
   HubRelay,
@@ -35,9 +36,9 @@ const SPEC = {
   argumentHint: '[show | on <flag> | off <flag> | set <flag> <value> | undo [id] | doctor]',
 }
 
-const HOUR = 60 * 60 * 1000
+const MINUTE = 60 * 1000
 // How often the band checks the age of its lines, so an old line leaves without a turn.
-const TICK = 10 * 60 * 1000
+const TICK = MINUTE
 const READ_VERBS = new Set(['show', 'screen', 'doctor', 'offers', 'board', 'tasks', '-h', '--help'])
 // The user types at the prompt or writes through the Remote Control bridge. Any other origin,
 // such as a peer chat, a schedule or another plugin, can read a switch but not change it.
@@ -302,8 +303,10 @@ function thousands(count: number) {
   return count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`
 }
 
-function fresh(line: HubStripLine, time: number, keepHours: number) {
-  return time === 0 || Date.parse(line.time) >= time - keepHours * HOUR
+// A change line stays keep_minutes. An offer stays longer, since only the band and /hub take it.
+function fresh(line: HubStripLine, time: number, flags: HubBandFlags) {
+  const keep = line.kind === 'offer' ? flags.offer_keep_minutes : flags.keep_minutes
+  return time === 0 || Date.parse(line.time) >= time - keep * MINUTE
 }
 
 // The band has two rows. The top row is "1 hub ── 2 prompts wait  chats ──── ✗2 [ features ]",
@@ -453,7 +456,7 @@ function notice(screen: HubScreen, time: number, got: HubCommand): Notice | null
       ],
     }
   }
-  const lines = screen.strip.filter(line => line.buttons.length > 0 && fresh(line, time, flags.keep_hours))
+  const lines = screen.strip.filter(line => line.buttons.length > 0 && fresh(line, time, flags))
   const change =
     (flags.notices && lines.find(line => line.kind === 'change' || line.kind === 'update')) ||
     (flags.offers && lines.find(line => line.kind === 'offer')) ||

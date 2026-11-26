@@ -3,7 +3,7 @@
     hub show [--all] [--tool claude_code|cursor]     the screen as text, or the old table with --json
     hub screen --json [--all] [--tool ...] [--band]  the screen model every door draws
     hub on|off <flag>       hub set <flag> <value>...          hub pin <flag>
-    hub undo [id]           hub no <part>
+    hub undo [id]           hub no <part>                      hub history [--json]
     hub apply               hub doctor [--json]                hub update
     hub offers              hub take <part>                    hub uninstall
     hub setup --answer FILE | --reply JSON
@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 
-from . import apply, build, changes, doctor, files, links, resolve, screen, settings, slots, textview, tree as tree_module
+from . import apply, build, changes, doctor, files, history, links, resolve, screen, settings, slots, textview, tree as tree_module
 from . import profile, setup, tuner, uninstall
 
 
@@ -78,6 +78,8 @@ def parser(extra):
     command.add_argument("--json", action="store_true")
     command = commands.add_parser("undo", help="take back the last change, or the change with this id, pinned")
     command.add_argument("id", nargs="?")
+    command.add_argument("--json", action="store_true")
+    command = commands.add_parser("history", help=f"list the last {history.RECENT} changes, newest first, with the ids undo takes")
     command.add_argument("--json", action="store_true")
     commands.add_parser("apply", help="check the parts and write the resolved state")
     command = commands.add_parser("doctor", help="check the setup and name what needs you")
@@ -259,6 +261,12 @@ def main(argv=None):
                 print(f"the offer of {line['part']} is back")
             else:
                 print(f"restored {line['flag']} to {json.dumps(line['old'], ensure_ascii=False)}")
+        elif args.command == "history":
+            listed = history.recent(history.lines())
+            if args.json:
+                print_json({"changes": listed})
+            else:
+                print_lines([history.row_text(line) for line in listed] or ["no changes yet"])
         elif args.command == "apply":
             if uninstall.is_out():
                 print(uninstall.OUT)
