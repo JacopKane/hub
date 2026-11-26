@@ -10,7 +10,7 @@ PATTERN = "slack_write_gate.server_pattern"
 
 
 def hand_edit_pattern(home, pattern):
-    """Write the pattern into the user file as a person editing it would, past hubctl's check."""
+    """Write the pattern into the user file as a person editing it would, past the step's check."""
     data = home.settings()
     data.setdefault("flags", {})[PATTERN] = {"by": "user", "value": pattern}
     home.write_json(home.user_file, data)
@@ -19,7 +19,7 @@ def hand_edit_pattern(home, pattern):
 def test_the_slack_gate_lets_only_read_tools_pass(home):
     with given("slack_write_gate is on, with the read list of the tested version"):
         home.install()
-        home.hubctl("on", "slack_write_gate")
+        home.step("on", "slack_write_gate")
 
     with when("a chat reads a channel's history"):
         result = tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"})
@@ -41,7 +41,7 @@ def test_the_slack_gate_lets_only_read_tools_pass(home):
         assert tool_call(home, "mcp__docs__search", {"query": "x"}).ran
 
     with when("the user moves the server pattern to the name their Slack server has"):
-        home.hubctl("set", "slack_write_gate.server_pattern", "mcp__claude_ai_Slack__.*")
+        home.step("set", "slack_write_gate.server_pattern", "mcp__claude_ai_Slack__.*")
         renamed = tool_call(home, "mcp__claude_ai_Slack__slack_send_message", {})
     with then("that server is gated too, and the old name is not"):
         assert renamed.refused
@@ -51,8 +51,8 @@ def test_the_slack_gate_lets_only_read_tools_pass(home):
 def test_the_claude_ai_slack_connector_lets_only_its_two_sign_in_tools_through_by_their_full_names(home):
     with given("slack_write_gate is on for the claude.ai Slack connector only"):
         home.install()
-        home.hubctl("on", "slack_write_gate")
-        home.hubctl("set", PATTERN, "mcp__claude_ai_Slack__.*")
+        home.step("on", "slack_write_gate")
+        home.step("set", PATTERN, "mcp__claude_ai_Slack__.*")
 
     with when("a chat starts the claude.ai Slack sign-in and then finishes it"):
         start = tool_call(home, "mcp__claude_ai_Slack__authenticate", {})
@@ -79,11 +79,11 @@ def test_the_claude_ai_slack_connector_lets_only_its_two_sign_in_tools_through_b
     with and_("a Slack write on the slack-mcp-server name is left alone, because this pattern does not cover it"):
         assert tool_call(home, "mcp__slack__conversations_add_message", {"channel_id": "C0000LOBBY"}).ran
     with and_("the doctor names both lists"):
-        doctor = home.hubctl("doctor").stdout
+        doctor = home.step("doctor").stdout
         assert "slack-mcp-server 1.3.0" in doctor and "mcp__claude_ai_Slack__authenticate" in doctor
 
     with when("the pattern is widened to cover both Slack servers"):
-        home.hubctl("set", PATTERN, "mcp__(slack|claude_ai_Slack)__.*")
+        home.step("set", PATTERN, "mcp__(slack|claude_ai_Slack)__.*")
         calls = {"server read": tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"}),
                  "server sign-in name": tool_call(home, "mcp__slack__authenticate", {}),
                  "server write": tool_call(home, "mcp__slack__conversations_add_message", {"channel_id": "C1"}),
@@ -99,7 +99,7 @@ def test_the_claude_ai_slack_connector_lets_only_its_two_sign_in_tools_through_b
 def test_the_slack_gate_refuses_writes_when_hub_can_not_read_its_settings(home):
     with given("slack_write_gate is on, and then the user settings file gets merge conflict markers"):
         home.install()
-        home.hubctl("on", "slack_write_gate")
+        home.step("on", "slack_write_gate")
         with open(home.user_file, "w") as handle:
             handle.write(CONFLICT)
 
@@ -123,7 +123,7 @@ def test_the_slack_gate_refuses_every_call_when_its_read_list_is_missing_or_brok
     read_list = os.path.join(home.plugin, "parts", "slack_write_gate", "read_tools.json")
     with given("slack_write_gate is on, and its read_tools.json is gone"):
         home.install()
-        home.hubctl("on", "slack_write_gate")
+        home.step("on", "slack_write_gate")
         os.remove(read_list)
 
     with when("a chat reads a channel's history and posts to it"):
@@ -134,7 +134,7 @@ def test_the_slack_gate_refuses_every_call_when_its_read_list_is_missing_or_brok
             assert result.refused
             assert "read_tools.json" in result.reason
     with and_("the doctor names the missing list"):
-        doctor = home.hubctl("doctor").stdout
+        doctor = home.step("doctor").stdout
         assert "warning: slack_write_gate:" in doctor and "read_tools.json" in doctor
 
     with when("the file is back but holds broken JSON"):
@@ -153,16 +153,16 @@ def test_the_slack_gate_refuses_every_call_when_its_read_list_is_missing_or_brok
         assert read.refused and "read_tools.json" in read.reason
 
 
-def test_hubctl_refuses_a_broken_slack_pattern_and_a_hand_edited_one_still_gates_slack(home):
+def test_the_step_refuses_a_broken_slack_pattern_and_a_hand_edited_one_still_gates_slack(home):
     with given("slack_write_gate is on with its default pattern"):
         home.install()
-        home.hubctl("on", "slack_write_gate")
+        home.step("on", "slack_write_gate")
         before = home.settings()
 
     with when("the user sets a pattern that is not valid, and an empty one"):
-        broken = home.hubctl("set", PATTERN, "mcp__slack__(", check=False)
-        empty = home.hubctl("set", PATTERN, "", check=False)
-    with then("hubctl refuses both, says why, and the settings stay as they were"):
+        broken = home.step("set", PATTERN, "mcp__slack__(", check=False)
+        empty = home.step("set", PATTERN, "", check=False)
+    with then("the step refuses both, says why, and the settings stay as they were"):
         assert broken.returncode == 1 and "not a valid pattern" in broken.stderr
         assert empty.returncode == 1 and "empty" in empty.stderr
         assert home.settings() == before
@@ -177,7 +177,7 @@ def test_hubctl_refuses_a_broken_slack_pattern_and_a_hand_edited_one_still_gates
             assert tool_call(home, "mcp__slack__conversations_history", {"channel_id": "C0000LOBBY"}).ran
         with and_("a tool from another server is not touched, and the doctor names the broken pattern"):
             assert tool_call(home, "mcp__docs__search", {"query": "x"}).ran
-            doctor = home.hubctl("doctor").stdout
+            doctor = home.step("doctor").stdout
             assert "warning: slack_write_gate:" in doctor and "server_pattern" in doctor
 
 
@@ -189,12 +189,12 @@ def test_a_manifest_that_misuses_the_pattern_check_is_named_before_anything_runs
         home.install()
     with when("the Slack gate's manifest ships a default pattern that is not valid"):
         home.edit_manifest("slack_write_gate", lambda data: child(data).update(default="mcp__slack__("))
-        broken = home.hubctl("apply", check=False)
+        broken = home.step("apply", check=False)
     with then("apply exits 1 and names the option and the reason"):
         assert broken.returncode == 1
         assert "slack_write_gate.server_pattern" in broken.stderr and "not a valid pattern" in broken.stderr
     with when("the manifest puts the pattern check on an option that is not a text"):
         home.edit_manifest("slack_write_gate", lambda data: child(data).update(type="number", default=1))
-        misused = home.hubctl("apply", check=False)
+        misused = home.step("apply", check=False)
     with then("apply exits 1 and says the check needs a text"):
         assert misused.returncode == 1 and "check must be" in misused.stderr

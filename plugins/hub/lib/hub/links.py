@@ -6,7 +6,7 @@
     ~/.cursor/plugins/local/hub/        hub's own folder, its hooks call this copy
     ~/.cursor/agents/hub-<id>.md        a copy with Cursor's model name
 
-Every entry goes into ~/.local/state/hubctl/links.json with the part, the
+Every entry goes into ~/.local/state/claude-hub/links.json with the part, the
 kind and the type (link, file or folder). Hub changes or removes only an
 entry it recorded and that is still as hub left it. A path that is in the way
 and is not hub's own stays as it is, and apply names it in one line.
@@ -16,7 +16,7 @@ makes no link, says why in one line, and offers to switch. Cursor reads both
 ~/.cursor/agents and ~/.claude/agents, so a user's agent of the same name in
 either keeps hub from writing its Cursor copy. Every clash goes into
 clashes.json, and hub's doctor names it. Taking the offer
-moves the user's file to ~/.local/state/hubctl/held/agents/, and undo moves
+moves the user's file to ~/.local/state/claude-hub/held/agents/, and undo moves
 it back. A hub link the user deleted turns its part off, pinned, as if the
 user had turned it off. An old terminal link from an earlier hub is removed
 with the rest of the record.
@@ -35,7 +35,7 @@ import importlib.util
 import os
 import shutil
 
-from . import build, files, history, settings
+from . import build, files, history, protect, settings
 
 RECORD = "links.json"
 OFFERS = "switch-offers.json"
@@ -599,7 +599,7 @@ def held_path(source):
     return path
 
 
-def take(part_id, door="step"):
+def take(part_id, door=protect.STEP_DOOR):
     """Move the user's agent of the same name to the held folder, so hub's link can be made."""
     offer = next((offer for offer in offers() if offer["part"] == part_id), None)
     if offer is None:
@@ -615,7 +615,8 @@ def take(part_id, door="step"):
 
 def undo_take(line):
     """Move a held file back where it was."""
-    source, target = line["source"], line["held"]
+    # An earlier hub held the file in its old state folder, which has moved since.
+    source, target = line["source"], files.moved_state_path(line["held"])
     if os.path.lexists(source):
         raise LinkError(f"{source} exists again, so hub can not move {target} back. Move it by hand.")
     if not os.path.lexists(target):

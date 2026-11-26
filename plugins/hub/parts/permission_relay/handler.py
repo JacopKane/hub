@@ -83,7 +83,7 @@ def text_forms(path):
 
 def state_forms():
     found = text_forms(files.state_dir())
-    found |= {"$XDG_STATE_HOME/hubctl", "${XDG_STATE_HOME}/hubctl"}
+    found |= {f"$XDG_STATE_HOME/{files.STATE_NAME}", f"${{XDG_STATE_HOME}}/{files.STATE_NAME}"}
     return found
 
 

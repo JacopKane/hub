@@ -122,7 +122,7 @@ def test_an_update_takes_away_the_old_flush_job_and_its_shim_and_the_queue_sends
         queue.on()
         old_install(home)
     with when("the updated hub applies its settings"):
-        applied = home.hubctl("apply")
+        applied = home.step("apply")
     with then("the job is booted out of launchd, and its plist, the shim, the record and the log are gone"):
         assert ["bootout", f"gui/{os.getuid()}/{LABEL}"] in calls(home, "launchctl")
         assert loaded(home)["launchd"] == []
@@ -143,11 +143,11 @@ def test_an_update_takes_away_the_old_flush_job_and_its_shim_and_the_queue_sends
         assert len(posts) == 1 and "The build is green." in posts[0][0]["message"]["content"]
     with and_("show and the doctor name no flush job flag, and hub logged no error"):
         assert not set(OLD_FLAGS) & set(home.show("--all")["flags"])
-        doctor = home.hubctl("doctor")
+        doctor = home.step("doctor")
         assert "flush_job" not in doctor.stdout + doctor.stderr and "job " not in doctor.stdout
         assert home.errors() == ""
     with when("the user then changes another queue setting"):
-        home.hubctl("set", "queue.quiet_seconds", "5")
+        home.step("set", "queue.quiet_seconds", "5")
     with then("the change goes through, and the settings file no longer holds the old flags"):
         assert home.show()["flags"]["queue.quiet_seconds"]["value"] == 5
         assert not set(OLD_FLAGS) & set(home.settings()["flags"])
@@ -156,17 +156,17 @@ def test_an_update_takes_away_the_old_flush_job_and_its_shim_and_the_queue_sends
 def test_the_cleanup_with_no_record_a_plist_already_gone_or_systemd_instead_of_launchd(home):
     with given("hub is installed with the queue on, and only the old shim is left, with no job record"):
         home.install()
-        home.hubctl("on", "queue")
+        home.step("on", "queue")
         write(shim(home), "#!/bin/sh\n")
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("the shim is gone, and launchctl and systemctl were never called"):
         nothing_left(home)
         assert calls(home, "launchctl") == [] and calls(home, "systemctl") == []
     with given("a launchd record whose plist is already gone and whose job is not loaded"):
         old_install(home, job_file_left=False)
     with when("apply runs"):
-        applied = home.hubctl("apply")
+        applied = home.step("apply")
     with then("the bootout is asked for anyway, its failure is ignored, and nothing is left"):
         assert ["bootout", f"gui/{os.getuid()}/{LABEL}"] in calls(home, "launchctl")
         nothing_left(home, plist_file(home))
@@ -174,7 +174,7 @@ def test_the_cleanup_with_no_record_a_plist_already_gone_or_systemd_instead_of_l
     with given("a systemd record with its service and timer units and a running timer"):
         old_install(home, backend="systemd")
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("the timer is disabled and stopped, the units are gone, and systemd reloads its units"):
         made = calls(home, "systemctl")
         assert ["--user", "disable", "--now", f"hubctl-{JOB}.timer"] in made
@@ -188,10 +188,10 @@ def test_the_cleanup_with_no_record_a_plist_already_gone_or_systemd_instead_of_l
 def test_uninstall_takes_away_an_old_flush_job_too(home):
     with given("an older install with the queue on and its flush job loaded in launchd"):
         home.install()
-        home.hubctl("on", "queue")
+        home.step("on", "queue")
         old_install(home)
     with when("the user uninstalls hub before any update applied"):
-        home.hubctl("uninstall")
+        home.step("uninstall")
     with then("the job is booted out, and its plist, the shim and the record are gone"):
         assert ["bootout", f"gui/{os.getuid()}/{LABEL}"] in calls(home, "launchctl")
         assert loaded(home)["launchd"] == []
@@ -201,11 +201,11 @@ def test_uninstall_takes_away_an_old_flush_job_too(home):
 def test_the_old_flush_job_is_found_by_its_own_name_when_the_state_folder_holds_nothing_of_it(home):
     with given("hub is installed with the queue on, and the state folder has no shim, record or log of the old job"):
         home.install()
-        home.hubctl("on", "queue")
+        home.step("on", "queue")
     with and_("the old flush job is still loaded in launchd from its plist, as after the state folder moved"):
         old_install(home, state_left=False)
     with when("apply runs"):
-        applied = home.hubctl("apply")
+        applied = home.step("apply")
     with then("the job is booted out and its plist is gone"):
         assert ["bootout", f"gui/{os.getuid()}/{LABEL}"] in calls(home, "launchctl")
         assert loaded(home)["launchd"] == []
@@ -214,7 +214,7 @@ def test_the_old_flush_job_is_found_by_its_own_name_when_the_state_folder_holds_
     with given("the old flush job's systemd units are left the same way, and its timer runs"):
         old_install(home, backend="systemd", state_left=False)
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("the timer is disabled and stopped, and the units are gone"):
         assert ["--user", "disable", "--now", f"hubctl-{JOB}.timer"] in calls(home, "systemctl")
         assert loaded(home)["systemd"] == []
@@ -226,11 +226,11 @@ def test_the_old_flush_job_is_found_by_its_own_name_when_the_state_folder_holds_
 def test_the_bin_folder_goes_with_the_shim_unless_something_else_is_in_it(home):
     with given("an older install whose bin folder also holds a file the user put there"):
         home.install()
-        home.hubctl("on", "queue")
+        home.step("on", "queue")
         old_install(home)
         write(os.path.join(os.path.dirname(shim(home)), "notes.txt"), "mine\n")
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("the shim is gone, and the bin folder stays with the user's file"):
         nothing_left(home, plist_file(home), bin_folder_gone=False)
         assert os.listdir(os.path.dirname(shim(home))) == ["notes.txt"]
@@ -245,10 +245,10 @@ def test_an_apply_that_fails_right_after_the_old_stop_still_leaves_the_queue_on(
         os.unlink(log)
         os.makedirs(log)
     with when("the updated hub applies its settings"):
-        home.hubctl("apply", check=False)
+        home.step("apply", check=False)
     with and_("the log can be written again, and apply runs once more"):
         os.rmdir(log)
-        home.hubctl("apply")
+        home.step("apply")
     with then("the old job is gone and the queue is on"):
         nothing_left(home, plist_file(home))
         assert not queue_is_off(home)
@@ -280,7 +280,7 @@ def test_an_old_stop_that_times_out_at_uninstall_is_followed_by_the_new_stop(hom
         release.start()
     with when("the user uninstalls hub"):
         try:
-            home.hubctl("uninstall")
+            home.step("uninstall")
         finally:
             release.cancel()
             lock.close()

@@ -77,7 +77,7 @@ def grader_regex(item):
     return re.compile(item["pattern"].strip("'"))
 
 
-def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades_hubctl_s_change(tmp_path):
+def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades_the_step_s_change(tmp_path):
     with given("the eval folder, its prompt and its case file"):
         assert os.path.isdir(WITHOUT_MODS), "evals/hub_skill_without_mods is missing"
         prompt = read_case("prompt.md")
@@ -110,7 +110,7 @@ def test_the_hub_skill_without_mods_eval_loads_a_copy_without_the_mod_and_grades
         subprocess.run(["bash", str(folder / script)], cwd=workspace, env=environment, check=True)
         done = subprocess.run(["python3", "-I", str(copy / "lib" / "hub_switch.py"), "off", TEXTS_FIRST], cwd=workspace,
                               env=environment, capture_output=True, text=True, check=True)
-    with then("every grader has a known type, and the file and reply graders match what hubctl did"):
+    with then("every grader has a known type, and the file and reply graders match what the step did"):
         graders = {name[:-3]: frontmatter(read_case("graders", name))
                    for name in sorted(os.listdir(os.path.join(WITHOUT_MODS, "graders")))}
         assert all(item["type"] in GRADER_TYPES for item in graders.values())

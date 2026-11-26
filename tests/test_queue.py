@@ -38,11 +38,11 @@ class Queue:
     def on(self, quiet=2, limit=60, chat_names=False):
         self.set_clock()
         self.home.install()
-        self.home.hubctl("on", "queue")
+        self.home.step("on", "queue")
         if chat_names:
-            self.home.hubctl("on", "chat_names")
-        self.home.hubctl("set", "queue.quiet_seconds", str(quiet))
-        self.home.hubctl("set", "queue.hold_seconds", str(limit))
+            self.home.step("on", "chat_names")
+        self.home.step("set", "queue.quiet_seconds", str(quiet))
+        self.home.step("set", "queue.hold_seconds", str(limit))
 
     def start(self, *names, version="2.1.319"):
         self.chats.set_version(version)
@@ -363,7 +363,7 @@ def test_the_tested_versions_guard_is_an_option_and_a_changed_version_hands_the_
     with then("it goes natively, and the reason is counted"):
         assert not untested.refused and queue.events("passed")[-1]["reason"] == "untested-version"
     with when("the user adds that version to the tested list"):
-        home.hubctl_from_mod("set", "queue.version_guard.versions", "2.1.319", "9.0.0")
+        home.step_from_mod("set", "queue.version_guard.versions", "2.1.319", "9.0.0")
     with then("the message is held"):
         assert queue.send("LOBBY", queue.address("WEB"), "Held now.").refused
     with when("WEB restarts on another version while the message waits, and the flush runs"):
@@ -381,7 +381,7 @@ def test_the_tested_versions_guard_is_an_option_and_a_changed_version_hands_the_
         with open(os.path.join(home.state, "queue", "undelivered.jsonl")) as handle:
             assert json.loads(handle.readline())["body"] == "Held now."
     with when("the user switches the guard off in /hub"):
-        home.hubctl_from_mod("off", "queue.version_guard")
+        home.step_from_mod("off", "queue.version_guard")
     with then("a chat on any version gets held messages"):
         assert queue.send("LOBBY", queue.address("WEB"), "Any version.").refused
     with when("WEB ends while the message waits past the limit"):
@@ -496,15 +496,15 @@ def test_turning_the_queue_off_delivers_what_waits_and_on_holds_again(home, queu
         queue.send("LOBBY", queue.address("WEB"), "Second.")
         assert len(queue.held("WEB")) == 2
     with when("the user turns the queue off in /hub"):
-        home.hubctl_from_mod("off", "queue")
-    with then("both messages reach WEB in one post before hubctl returns"):
+        home.step_from_mod("off", "queue")
+    with then("both messages reach WEB in one post before the step returns"):
         posts = queue.posts("WEB")
         assert len(posts) == 1 and "First." in posts[0][0]["message"]["content"]
         assert "Second." in posts[0][0]["message"]["content"] and queue.held("WEB") == []
     with and_("a new message goes natively"):
         assert not queue.send("LOBBY", queue.address("WEB"), "Third.").refused
     with when("the user turns the queue on again"):
-        home.hubctl("on", "queue")
+        home.step("on", "queue")
     with then("messages are held again"):
         assert queue.send("LOBBY", queue.address("WEB"), "Fourth.").refused
 
@@ -521,7 +521,7 @@ def test_turning_the_queue_off_waits_for_a_running_flush_and_still_delivers_ever
         releaser = threading.Timer(4, lock.close)
         releaser.start()
     with when("the user turns the queue off in /hub"):
-        home.hubctl_from_mod("off", "queue")
+        home.step_from_mod("off", "queue")
         releaser.join()
     with then("both messages reach WEB in one post"):
         posts = queue.posts("WEB")
@@ -540,11 +540,11 @@ def test_messages_the_queue_can_not_deliver_as_it_goes_are_kept_and_each_sender_
     with and_("WEB's inbox no longer takes connections"):
         queue.live["WEB"].listener.close()
     with when("the user turns the queue off in /hub"):
-        printed = home.hubctl_from_mod("off", "queue").stdout
+        printed = home.step_from_mod("off", "queue").stdout
     with then("nothing is left held, and both messages are kept in the undelivered file"):
         assert queue.held("WEB") == []
         assert [item["body"] for item in undelivered(home)] == ["First.", "Second."]
-    with and_("hubctl names the count and the file in one line"):
+    with and_("the step names the count and the file in one line"):
         saved = os.path.join(home.state, "queue", "undelivered.jsonl")
         lines = [line for line in printed.splitlines() if saved in line]
         assert len(lines) == 1 and "2 queued messages" in lines[0]
@@ -564,8 +564,8 @@ def test_uninstall_delivers_what_waits_and_keeps_the_queue_folder(home, queue):
         queue.on()
         queue.start("LOBBY", "WEB")
         assert queue.send("LOBBY", queue.address("WEB"), "Before I go.").refused
-    with when("the user runs hubctl uninstall"):
-        home.hubctl("uninstall")
+    with when("the user runs hub uninstall"):
+        home.step("uninstall")
     with then("WEB gets the message, and nothing is left held"):
         posts = queue.posts("WEB")
         assert len(posts) == 1 and "Before I go." in posts[0][0]["message"]["content"]
@@ -579,20 +579,20 @@ def test_a_switch_command_must_name_a_script_in_the_parts_folder(home):
         home.install()
     with when("the queue's manifest names a switch script that is not in its folder"):
         home.edit_manifest("queue", lambda data: data["when_switched"].update(script="../gone.py"))
-        broken = home.hubctl("show", check=False)
+        broken = home.step("show", check=False)
     with then("the part tree fails and names the field and the script"):
         assert broken.returncode == 1 and "when_switched" in broken.stderr and "../gone.py" in broken.stderr
 
 
 def doctor_lines(home):
-    return home.hubctl("doctor").stdout.splitlines()
+    return home.step("doctor").stdout.splitlines()
 
 
 def test_the_doctor_names_the_terminal_while_a_chat_part_runs(home):
     with given("the queue is on"):
         home.install()
-        home.hubctl("on", "queue")
-    with when("the user runs hubctl doctor in a plain terminal"):
+        home.step("on", "queue")
+    with when("the user runs hub doctor in a plain terminal"):
         lines = doctor_lines(home)
     with then("it names the terminal, and no background job"):
         assert "note: terminal: plain" in lines

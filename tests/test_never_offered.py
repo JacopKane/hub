@@ -34,7 +34,7 @@ def offered_as_new(home):
     """hub installed, and the part arrived in an update and waits in an open offer."""
     home.install()
     make_new_in_the_next_apply(home)
-    home.hubctl("apply")
+    home.step("apply")
 
 
 def ship_on_and_never_offered(part):
@@ -52,14 +52,14 @@ def test_a_never_offered_part_drops_its_open_offer_and_runs_for_a_user_who_never
         assert record["by"] == "offer" and not record["runs"]
     with when("the next update ships the part on and marked never_offered, and apply runs"):
         home.edit_manifest(PART, ship_on_and_never_offered)
-        home.hubctl("apply")
+        home.step("apply")
     with then("the offer is gone and the part runs by default"):
         assert offered_ids(home) == [] and f"offer:{PART}" not in strip_ids(home)
         record = home.show()["flags"][PART]
         assert record["by"] == "default" and record["runs"]
     with when("the part is new again in a later apply"):
         make_new_in_the_next_apply(home)
-        home.hubctl("apply")
+        home.step("apply")
     with then("that apply offers nothing and the part still runs"):
         assert offered_ids(home) == [] and home.show()["flags"][PART]["runs"]
 
@@ -67,19 +67,19 @@ def test_a_never_offered_part_drops_its_open_offer_and_runs_for_a_user_who_never
 def test_a_never_offered_part_stays_off_for_a_user_who_said_no_and_setup_never_offers_it(home):
     with given("hub is installed, the part came in an update, and the user said no to its offer"):
         offered_as_new(home)
-        home.hubctl("no", PART)
+        home.step("no", PART)
         assert home.settings()["flags"][PART] == {"by": "user", "value": "off"}
     with when("the next update ships the part on and marked never_offered, and apply runs"):
         home.edit_manifest(PART, ship_on_and_never_offered)
-        home.hubctl("apply")
+        home.step("apply")
     with then("the part stays off and nothing is offered"):
         assert offered_ids(home) == [] and not home.show()["flags"][PART]["runs"]
     with when("a later setup answer from the tuner offers the part"):
         answer = os.path.join(home.root, "answer.json")
         home.write_json(answer, {"profile": {}, "questions": [], "instructions_off": [], "offers": [PART]})
-        home.hubctl("setup", "--answer", answer)
+        home.step("setup", "--answer", answer)
         pending = home.state_file(os.path.join("setup", "pending.json"))
-        home.hubctl("setup", "--reply", "{}")
+        home.step("setup", "--reply", "{}")
     with then("setup drops that offer, so nothing is offered and the part stays off"):
         assert pending["offers"] == []
         assert offered_ids(home) == [] and f"offer:{PART}" not in strip_ids(home)

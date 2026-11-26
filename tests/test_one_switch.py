@@ -1,6 +1,6 @@
 """Slice 1: one switch, end to end.
 
-Every scenario runs the real engine, hubctl and the dispatcher as processes
+Every scenario runs the real engine, the step and the dispatcher as processes
 in a temporary HOME. Scenarios that feed hook input run once per tool.
 """
 import json
@@ -21,32 +21,32 @@ REFUSED = "python3 tool.py REFUSE_ME"
 
 
 def flags(home, cwd=None):
-    """Every flag with its effective value, as hubctl show --json --all works it out in cwd."""
-    return json.loads(home.hubctl("show", "--json", "--all", cwd=cwd or home.work).stdout)["flags"]
+    """Every flag with its effective value, as hub show --json --all works it out in cwd."""
+    return json.loads(home.step("show", "--json", "--all", cwd=cwd or home.work).stdout)["flags"]
 
 
 def test_a_parts_mode_caps_its_children_and_turning_it_off_keeps_their_values(home):
     with given("demo_gate.dashes is set to block while the part is at warn"):
         home.install()
-        home.hubctl("set", f"{GATE}.dashes", "block")
+        home.step("set", f"{GATE}.dashes", "block")
     with when("hub works out the flags"):
         found = flags(home)
     with then("the dash check runs at warn, because the part's mode caps it, and keeps block as its own value"):
         assert found[f"{GATE}.dashes"]["effective"] == "warn"
         assert found[f"{GATE}.dashes"]["value"] == "block"
     with when("the part is set to block"):
-        home.hubctl("set", GATE, "block")
+        home.step("set", GATE, "block")
     with then("the dash check runs at block"):
         assert flags(home)[f"{GATE}.dashes"]["effective"] == "block"
     with when("the part is set to off"):
-        home.hubctl_from_mod("off", GATE)
+        home.step_from_mod("off", GATE)
         while_off = flags(home)
     with then("no child runs while it is off"):
         assert while_off[f"{GATE}.dashes"]["effective"] == "off" and not while_off[f"{GATE}.dashes"]["runs"]
         assert not while_off[f"{GATE}.private_paths"]["runs"]
     with when("the part is set back to warn"):
-        home.hubctl("set", GATE, "warn")
-    with then("dashes is still block, in the file and in hubctl show"):
+        home.step("set", GATE, "warn")
+    with then("dashes is still block, in the file and in hub show"):
         assert home.settings()["flags"][f"{GATE}.dashes"]["value"] == "block"
         assert home.show()["flags"][f"{GATE}.dashes"]["value"] == "block"
 
@@ -54,9 +54,9 @@ def test_a_parts_mode_caps_its_children_and_turning_it_off_keeps_their_values(ho
 def test_the_highest_scope_wins_and_the_local_file_stays_out_of_git(home):
     with given("a repo whose user file says warn, project file says block and local file says off"):
         home.install()
-        home.hubctl("set", GATE, "warn")
-        home.hubctl("set", GATE, "block", "--scope", "project")
-        home.hubctl_from_mod("set", GATE, "off", "--scope", "local")
+        home.step("set", GATE, "warn")
+        home.step("set", GATE, "block", "--scope", "project")
+        home.step_from_mod("set", GATE, "off", "--scope", "local")
     with when("hub works out the flags in that repo"):
         inside = flags(home)
     with then("the part is off, because the local scope wins"):
@@ -77,8 +77,8 @@ def test_a_value_equal_to_the_default_is_dropped_unless_pinned(home):
         home.set_by("setup", GATE, "warn")
     with then("setup's entry is dropped"):
         assert home.settings()["flags"] == {}
-    with when("the user then types hubctl set demo_gate warn"):
-        home.hubctl("set", GATE, "warn")
+    with when("the user then types hub set demo_gate warn"):
+        home.step("set", GATE, "warn")
     with then("the user's entry stays, pinned"):
         assert home.settings()["flags"] == {GATE: {"by": "user", "value": "warn"}}
     with when("an update moves the gate's default to block and the dash check's default to on"):
@@ -101,7 +101,7 @@ def test_a_part_that_is_new_in_an_update_arrives_as_an_offer(home):
         })
         home.edit_manifest(GATE, lambda data: data["children"].append(
             {"id": "new_check", "kind": "behavior", "default": "on", "does": "A check that arrives in an update"}))
-        home.hubctl("apply")
+        home.step("apply")
     with then("the new part stays off and is in offers.json"):
         flags = home.show("--all")["flags"]
         assert flags["demo_extra"]["value"] == "off" and not flags["demo_extra"]["runs"]
@@ -110,11 +110,11 @@ def test_a_part_that_is_new_in_an_update_arrives_as_an_offer(home):
         assert flags[f"{GATE}.new_check"]["runs"]
         assert [change["id"] for change in home.state_file("update-summary.json")["changes"]] == [f"{GATE}.new_check"]
     with and_("a second apply offers nothing twice"):
-        home.hubctl("apply")
+        home.step("apply")
         assert len(home.state_file("offers.json")["offers"]) == 1
         assert len(home.state_file("update-summary.json")["changes"]) == 1
     with when("the user takes the offer"):
-        home.hubctl("on", "demo_extra")
+        home.step("on", "demo_extra")
     with then("the part runs, pinned on"):
         assert home.show()["flags"]["demo_extra"]["runs"]
         assert home.settings()["flags"]["demo_extra"] == {"by": "user", "value": "on"}
@@ -125,20 +125,20 @@ def test_relevance_hides_and_never_turns_off(home):
         home.install()
         home.write_json(os.path.join(home.config, "profile.json"), {
             "version": 1, "repos": {"~/work/demo": {"public": False, "remote": False}}})
-    with when("the user runs hubctl show"):
+    with when("the user runs hub show"):
         shown = home.show()["flags"]
         everything = home.show("--all")["flags"]
-    with then("the gate is hidden, and hubctl show --all lists it with its reason"):
+    with then("the gate is hidden, and hub show --all lists it with its reason"):
         assert GATE not in shown and f"{GATE}.dashes" not in shown
         assert "repos_with_remote" in everything[GATE]["hidden_because"]
         assert everything[GATE]["runs"]
-        assert "hidden" in home.hubctl("show", "--all").stdout
+        assert "hidden" in home.step("show", "--all").stdout
     with and_("its checks still run while it is hidden"):
         assert everything[f"{GATE}.private_paths"]["runs"]
     with when("the profile gains a repo with a remote"):
         home.write_json(os.path.join(home.config, "profile.json"), {
             "version": 1, "repos": {"~/work/demo": {"public": True, "remote": True}}})
-    with then("hubctl show lists the gate again"):
+    with then("hub show lists the gate again"):
         assert GATE in home.show()["flags"]
 
 
@@ -147,9 +147,9 @@ def test_two_doors_change_two_flags_at_once_and_both_survive(home):
                  "unreadable", "dashes"]
     with given("hub is installed"):
         home.install()
-    with when("eight hubctl processes start together, each changing a different flag, as the mod runs them for "
+    with when("eight step processes start together, each changing a different flag, as the mod runs them for "
               "the user's clicks"):
-        processes = [home.hubctl_from_mod_started("off", f"{GATE}.{name}") for name in behaviors]
+        processes = [home.step_from_mod_started("off", f"{GATE}.{name}") for name in behaviors]
         outputs = [process.communicate(timeout=60) for process in processes]
     with then("the user file parses and holds every entry, and the history has one line each"):
         assert [process.returncode for process in processes] == [0] * len(behaviors), outputs
@@ -159,13 +159,13 @@ def test_two_doors_change_two_flags_at_once_and_both_survive(home):
 
 def test_a_linked_settings_file_stays_a_link(home):
     target = os.path.join(home.root, "dotfiles", "hub.json")
-    with given("~/.config/hubctl/hub.json is a link into another folder"):
+    with given("~/.config/claude-hub/hub.json is a link into another folder"):
         home.install()
         home.write_json(target, {"version": 1, "flags": {}})
         os.makedirs(home.config, exist_ok=True)
         os.symlink(target, home.user_file)
-    with when("the user runs hubctl off demo_gate.dashes"):
-        home.hubctl("off", f"{GATE}.dashes")
+    with when("the user runs hub off demo_gate.dashes"):
+        home.step("off", f"{GATE}.dashes")
     with then("hub.json is still a link, and its target holds the change"):
         assert os.path.islink(home.user_file)
         with open(target) as handle:
@@ -182,8 +182,8 @@ def test_edits_to_different_flags_on_two_machines_merge_without_a_conflict(home,
         seed = os.path.join(home.root, "seed")
         home.git("clone", "-q", bare, seed)
         home.write_json(os.path.join(home.config, "hub.json"), {"version": 1, "flags": {}})
-        home.hubctl("on", f"{GATE}.dashes")
-        home.hubctl("on", f"{GATE}.secrets")
+        home.step("on", f"{GATE}.dashes")
+        home.step("on", f"{GATE}.secrets")
         os.replace(os.path.join(home.config, "hub.json"), os.path.join(seed, "hub.json"))
         home.git("add", "hub.json", cwd=seed)
         home.git("commit", "-q", "-m", "settings", cwd=seed)
@@ -195,9 +195,9 @@ def test_edits_to_different_flags_on_two_machines_merge_without_a_conflict(home,
             os.makedirs(each.config, exist_ok=True)
             os.symlink(os.path.join(clone, "hub.json"), each.user_file)
             clones.append(clone)
-    with when("each HOME changes a different flag through hubctl and commits"):
-        home.hubctl("off", f"{GATE}.dashes")
-        other.hubctl_from_mod("off", f"{GATE}.secrets")
+    with when("each HOME changes a different flag through the step and commits"):
+        home.step("off", f"{GATE}.dashes")
+        other.step_from_mod("off", f"{GATE}.secrets")
         for each, clone in zip((home, other), clones):
             each.git("commit", "-q", "-am", "change", cwd=clone)
         home.git("push", "-q", "origin", "main", cwd=clones[0])
@@ -221,10 +221,10 @@ def test_the_dispatcher_does_less_than_200_ms_of_work_with_every_part_on(home):
         parts = os.path.join(home.plugin, "parts")
         for part in sorted(os.listdir(parts)):
             if os.path.isfile(os.path.join(parts, part, "part.json")):
-                home.hubctl("on", part)
-        home.hubctl("set", "core.private_words", "Quillbrook")
+                home.step("on", part)
+        home.step("set", "core.private_words", "Quillbrook")
         manifests = [name for name in os.listdir(parts) if os.path.isfile(os.path.join(parts, name, "part.json"))]
-        header = json.loads(home.hubctl("screen", "--json").stdout)["header"]
+        header = json.loads(home.step("screen", "--json").stdout)["header"]
         assert len(manifests) > 30 and header["parts_on"] == header["parts_total"] == len(manifests) - 1, header
         data = home.hook_input("claude_code", "PreToolUse", commit("A clean message"))
         home.send("claude_code", "PreToolUse", data)
@@ -338,7 +338,7 @@ def test_a_manifest_that_names_an_unknown_id_or_holds_code_fails_the_check(home)
             "id": "bad_code", "family": "tools", "kind": "extra", "default": "on", "does": "x",
             "relevant_if": f"__import__('os').system('touch {marker}')"})
     with when("the tree loads"):
-        check = home.hubctl("apply", check=False)
+        check = home.step("apply", check=False)
     with then("each fails with its file and id, and the condition is never run"):
         assert check.returncode == 1
         assert os.path.join("bad_needs", "part.json") in check.stderr and "nothing.here" in check.stderr

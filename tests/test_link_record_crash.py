@@ -27,7 +27,7 @@ def install_with_a_blocked_cursor_folder(home):
                                                             "builder": {"value": "on", "by": "user"}}})
     use_cursor_beta(home)
     shutil.copytree(PLUGIN, home.plugin, ignore=shutil.ignore_patterns("__pycache__"))
-    return home.hubctl("apply", check=False)
+    return home.step("apply", check=False)
 
 
 def recorded(home):
@@ -47,7 +47,7 @@ def test_apply_that_stops_between_two_links_is_finished_by_the_next_apply(home):
     with when("the user moves the plain file away and apply runs again"):
         moved = os.path.join(home.root, "my-notes.txt")
         os.rename(blocker, moved)
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("apply finishes every link, and says no path is in its way"):
         assert "is not a file hub made" not in result.stdout
         assert "changed since hub made it" not in result.stdout
@@ -58,8 +58,8 @@ def test_apply_that_stops_between_two_links_is_finished_by_the_next_apply(home):
     with and_("the record holds no step left half done"):
         assert not [entry for entry in home.state_file("links.json")["links"] if "state" in entry]
         assert read(moved) == USER_TEXT
-    with when('the user runs "hubctl uninstall"'):
-        home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        home.step("uninstall")
     with then("every hub link and copy is gone"):
         assert hub_entries(home) == []
 
@@ -69,8 +69,8 @@ def test_uninstall_right_after_a_stopped_apply_removes_the_link_hub_made(home):
     with given("apply stopped after it made the builder link"):
         assert install_with_a_blocked_cursor_folder(home).returncode != 0
         assert os.path.islink(agent_link(home, "builder"))
-    with when('the user runs "hubctl uninstall"'):
-        home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        home.step("uninstall")
     with then("the builder link is gone, and the user's plain file is unchanged"):
         assert not os.path.lexists(agent_link(home, "builder"))
         assert hub_entries(home) == []
@@ -95,7 +95,7 @@ def test_a_users_file_or_link_at_a_path_a_stopped_apply_planned_is_never_touched
         os.unlink(agent_link(home, "builder"))
         os.symlink(mine, agent_link(home, "builder"))
     with when("apply runs again"):
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("hub finishes its other links and leaves both of the user's paths, one line for each"):
         assert os.readlink(agent_link(home, "scout")).startswith(home.plugin + os.sep)
         for path in (agent_link(home, "builder"), cursor_agent(home, "builder")):
@@ -103,8 +103,8 @@ def test_a_users_file_or_link_at_a_path_a_stopped_apply_planned_is_never_touched
             assert path not in recorded(home)
         assert os.readlink(agent_link(home, "builder")) == mine
         assert read(cursor_agent(home, "builder")) == USER_TEXT
-    with when('the user runs "hubctl uninstall"'):
-        home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        home.step("uninstall")
     with then("hub's own links are gone, and the user's link and file are unchanged"):
         assert not os.path.lexists(agent_link(home, "scout"))
         assert os.readlink(agent_link(home, "builder")) == mine
@@ -130,8 +130,8 @@ def test_a_link_of_the_users_in_hubs_cursor_folder_is_never_written_through_or_r
         shutil.rmtree(manifest_link)
         os.symlink(their_folder, manifest_link)
     with when("apply runs twice"):
-        first = home.hubctl("apply")
-        second = home.hubctl("apply")
+        first = home.step("apply")
+        second = home.step("apply")
     with then("the user's files are unchanged and both links still point where they did"):
         assert read(theirs) == USER_TEXT
         assert os.listdir(their_folder) == []
@@ -141,12 +141,12 @@ def test_a_link_of_the_users_in_hubs_cursor_folder_is_never_written_through_or_r
         for result in (first, second):
             for path in (hooks_link, manifest_link):
                 assert len([line for line in result.stdout.splitlines() if "hub left" in line and path in line]) == 1
-    with and_("hubctl doctor names the clash with the user's link"):
-        doctor = [line for line in home.hubctl("doctor").stdout.splitlines() if line.startswith("warning:")]
+    with and_("hub doctor names the clash with the user's link"):
+        doctor = [line for line in home.step("doctor").stdout.splitlines() if line.startswith("warning:")]
         assert len([line for line in doctor if hooks_link in line]) == 1
         assert len([line for line in doctor if manifest_link in line]) == 1
-    with when('the user runs "hubctl uninstall"'):
-        home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        home.step("uninstall")
     with then("the user's links and files are still unchanged"):
         assert read(theirs) == USER_TEXT
         assert os.readlink(hooks_link) == theirs
@@ -164,7 +164,7 @@ def test_the_record_marks_a_step_before_a_stop_can_leave_it_half_done(home):
         assert entries[cursor_agent(home, "builder")].get("state") == "planned"
     with given("hub is installed with scout on, in a home where removing scout's link stops"):
         os.unlink(os.path.join(home.root, ".cursor", "agents"))
-        home.hubctl("apply")
+        home.step("apply")
         assert os.path.islink(agent_link(home, "scout"))
         os.makedirs(crash)
         with open(os.path.join(crash, "sitecustomize.py"), "w") as handle:
@@ -179,14 +179,14 @@ def test_the_record_marks_a_step_before_a_stop_can_leave_it_half_done(home):
                 "os.unlink = unlink\n")
         home.env["PYTHONPATH"] = crash
     with when("the user turns scout off and the removal stops"):
-        assert home.hubctl("off", "scout", check=False).returncode != 0
+        assert home.step("off", "scout", check=False).returncode != 0
     with then("the record held the removing mark for scout's link at the stop"):
         with open(side) as handle:
             held = {entry["path"]: entry for entry in json.load(handle)["links"]}
         assert held[agent_link(home, "scout")].get("state") == "removing"
     with when("apply runs again without the stop"):
         del home.env["PYTHONPATH"]
-        home.hubctl("apply")
+        home.step("apply")
     with then("scout's link is gone and the record holds no half done step"):
         assert not os.path.lexists(agent_link(home, "scout"))
         assert not [entry for entry in home.state_file("links.json")["links"] if "state" in entry]

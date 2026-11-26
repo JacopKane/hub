@@ -49,7 +49,7 @@ class World:
             pytest.fail("tmux is missing; the test image and macOS CI both install it")
         self.home = home
         home.install()
-        home.hubctl("on", "restart")
+        home.step("on", "restart")
         self.chats = str(tmp_path / "chats")
         self.tools = str(tmp_path / "fake-tools")
         tool_bin = str(tmp_path / "fake-bin")
@@ -329,14 +329,14 @@ def test_a_chat_with_anything_to_lose_is_held_untouched(world):
         box = [line for line in world.screen("WEB").splitlines() if line.startswith("❯")]
         assert box == ["❯ half a thought"]
     with when("asking first is switched off and only DOCS restarts"):
-        world.home.hubctl("off", "restart.ask_first")
+        world.home.step("off", "restart.ask_first")
         started, report, results = world.run_to_end("--only", "DOCS", "--wait", "0.1")
     with then("DOCS, idle with nothing to lose, restarts without an answer"):
         assert steps_of(world.events(started), {"WEB", "DOCS", "API"}) == [("stop", "DOCS"), ("resume", "DOCS")]
         assert results["DOCS"] == "back"
         assert "- WEB (interactive): not selected" in report
     with when("the upgrade behavior is off and a run asks for --upgrade"):
-        world.home.hubctl("off", "restart.upgrade")
+        world.home.step("off", "restart.upgrade")
         refused = world.restart("run", "--upgrade", check=False)
     with then("nothing runs, and the answer says how to allow it"):
         assert refused.returncode == 1 and "turn on restart.upgrade" in refused.stderr
@@ -531,7 +531,7 @@ def has_ended(pid):
 
 
 def restart_lines(world):
-    lines = world.home.hubctl("doctor").stdout.splitlines()
+    lines = world.home.step("doctor").stdout.splitlines()
     return [line for line in lines if line.split(": ", 2)[1:2] == ["restart"]]
 
 
@@ -539,7 +539,7 @@ def test_the_doctor_says_what_a_restart_would_do_and_names_the_chats_a_cut_off_r
     with given("WEB runs in a tmux pane and API in a plain terminal"):
         world.start("WEB", "tmux")
         world.start("API", "plain")
-    with when("the user runs hubctl doctor"):
+    with when("the user runs hub doctor"):
         [line] = restart_lines(world)
     with then("one note says the listing works, WEB could come back in tmux, and API would be left with its reason"):
         assert line.startswith("note: restart: the chat listing works.")

@@ -17,9 +17,9 @@ def lock_command(home, session, *words, check=True):
 
 
 def test_only_the_chat_that_holds_the_chrome_lock_drives_chrome(home):
-    with given('chrome_lock is on, and WEB ran hubctl browser-lock take "docs check"'):
+    with given('chrome_lock is on, and WEB ran hub browser-lock take "docs check"'):
         home.install()
-        home.hubctl("on", "chrome_lock")
+        home.step("on", "chrome_lock")
         home.env["HUB_LOCK_POLL"] = "0.1"
         set_clock(home, "2026-03-02T09:00:00Z")
         taken = lock_command(home, SESSION_WEB, "take", "docs check")
@@ -47,7 +47,7 @@ def test_only_the_chat_that_holds_the_chrome_lock_drives_chrome(home):
         assert refused.returncode == 1 and SESSION_WEB in refused.stdout
         assert lock_command(home, SESSION_DOCS, "status", check=False).returncode == 1
 
-    with when('DOCS runs hubctl browser-lock wait "page check", and WEB releases the lock'):
+    with when('DOCS runs hub browser-lock wait "page check", and WEB releases the lock'):
         env = dict(home.env, CLAUDE_CODE_SESSION_ID=SESSION_DOCS)
         waiter = subprocess.Popen([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "browser-lock",
                                    "wait", "page check", "30"], cwd=home.work, env=env,
@@ -66,16 +66,16 @@ def test_only_the_chat_that_holds_the_chrome_lock_drives_chrome(home):
     with then("the lock stays with DOCS"):
         assert result.returncode == 1 and SESSION_DOCS in result.stdout
 
-    with when("a chat runs hubctl browser-lock clear"):
-        result = bash(home, "hubctl browser-lock clear", session=SESSION_WEB)
+    with when("a chat runs hub browser-lock clear"):
+        result = bash(home, "hub browser-lock clear", session=SESSION_WEB)
     with then("the call is refused, because only the user clears a lock"):
         assert result.refused and "only the user" in result.reason.lower()
     with and_("the user runs it in a terminal, and the lock is free"):
-        assert "clearing" in home.hubctl("browser-lock", "clear").stdout
+        assert "clearing" in home.step("browser-lock", "clear").stdout
         assert lock_command(home, SESSION_WEB, "status").returncode == 0
 
     with when("the user turns chrome_lock.one_chat off, and DOCS takes the lock again"):
         lock_command(home, SESSION_DOCS, "take", "page check")
-        home.hubctl("off", "chrome_lock.one_chat")
+        home.step("off", "chrome_lock.one_chat")
     with then("WEB's Chrome calls run"):
         assert tool_call(home, CHROME_TOOL, session=SESSION_WEB).ran

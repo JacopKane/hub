@@ -1,5 +1,5 @@
 // The band and the /hub command, run by `claude plugin test plugins/hub`.
-// The hooks registered here stand for the engine: process.run answers as hubctl would,
+// The hooks registered here stand for the engine: process.run answers as the step would,
 // with the day 9 model from day9.ts, so no test starts a real process.
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, FoundElement } from 'claude-code/testing'
@@ -37,7 +37,7 @@ function json(screen: HubScreen): Answer {
   return ok(JSON.stringify(screen))
 }
 
-// The model after "hubctl undo d9dash000001": the undo line is newest and has no button.
+// The model after "hub undo d9dash000001": the undo line is newest and has no button.
 function afterUndo(): HubScreen {
   const undone = {
     id: 'd9undo000001',
@@ -62,7 +62,7 @@ const TYPED: PromptOrigin = { kind: 'composer' }
 // Claude Code's refusal when the user has a /hub of their own, as slice 0 saw it.
 const USERS_HUB = '"/hub" refused: it is the user\'s /hub'
 
-// Starts a session whose hubctl answers with `answer`, and returns the argument lists it got.
+// Starts a session whose step answers with `answer`, and returns the argument lists it got.
 // `taken` maps a command name to the refusal Claude Code gives when something else has it.
 async function start($: Engine, on: On, answer: (args: string[]) => Answer, taken: Record<string, string> = {}) {
   const calls: string[][] = []
@@ -74,12 +74,12 @@ async function start($: Engine, on: On, answer: (args: string[]) => Answer, take
     return { value: answer(e.argv.slice(3)) }
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  // The band reads hubctl after the session has started, not before.
+  // The band reads the step after the session has started, not before.
   await clock.settle()
   return calls
 }
 
-function hubctlArgs(calls: string[][]) {
+function stepArgs(calls: string[][]) {
   return calls.map(call => call.slice(3).join(' '))
 }
 
@@ -93,7 +93,7 @@ test("the band starts hub's step from the plugin folder", async ($, on) => {
   expect(calls[0].slice(3)).toEqual(['screen', '--json', '--band'])
 })
 
-// One test per surface, so each starts from the day 9 model. The band reads hubctl again
+// One test per surface, so each starts from the day 9 model. The band reads the step again
 // only at a session start, a turn end or a change, not when it is mounted.
 for (const surface of SURFACES) {
   test(`the band shows the tuner's line with undo, then the offer with turn on and no (${surface})`, async ($, on) => {
@@ -121,7 +121,7 @@ for (const surface of SURFACES) {
     expect((await ui.find({ type: 'Box', key: 'top' }))?.children.some(child => (child as FoundElement).props.key === 'features')).toBe(true)
 
     await ui.press({ key: 'd9dash000001:undo' })
-    expect(hubctlArgs(calls).slice(-2)).toEqual(['undo d9dash000001', 'screen --json --band'])
+    expect(stepArgs(calls).slice(-2)).toEqual(['undo d9dash000001', 'screen --json --band'])
 
     const offer = await ui.find({ type: 'Text', text: /researcher/ })
     expect(offer?.text).toBe(
@@ -205,7 +205,7 @@ test('when the step fails the band says so in one line', async ($, on) => {
   await ui.unmount()
 })
 
-test('/hub prints what hubctl show prints, without a model turn', async ($, on) => {
+test('/hub prints what hub show prints, without a model turn', async ($, on) => {
   let engineRan = 0
   on('command.run', () => {
     engineRan += 1
@@ -220,11 +220,11 @@ test('/hub prints what hubctl show prints, without a model turn', async ($, on) 
   const result = await $.command.run({ command: 'hub', args: '' })
 
   expect(result.text).toBe(SHOWN.trimEnd())
-  expect(hubctlArgs(calls)).toContain('show')
+  expect(stepArgs(calls)).toContain('show')
   expect(engineRan).toBe(0)
 })
 
-test('/hub off changes the flag through hubctl, prints the row and redraws the band', async ($, on) => {
+test('/hub off changes the flag through the step, prints the row and redraws the band', async ($, on) => {
   let engineRan = 0
   on('command.run', () => {
     engineRan += 1
@@ -235,7 +235,7 @@ test('/hub off changes the flag through hubctl, prints the row and redraws the b
   const result = await $.command.run({ command: 'hub', args: 'off demo_gate.dashes', origin: TYPED })
 
   expect(result.text).toBe(ROW.trimEnd())
-  expect(hubctlArgs(calls)).toEqual(['screen --json --band', 'off demo_gate.dashes', 'screen --json --band'])
+  expect(stepArgs(calls)).toEqual(['screen --json --band', 'off demo_gate.dashes', 'screen --json --band'])
   expect(engineRan).toBe(0)
 })
 
@@ -284,14 +284,14 @@ test('/hub keeps quoted words together', async ($, on) => {
   expect(calls[1].slice(3)).toEqual(['set', 'some.list', 'two words', 'and more', 'last'])
 })
 
-test("/hub prints hubctl's error when a change fails", async ($, on) => {
+test("/hub prints the step's error when a change fails", async ($, on) => {
   await start($, on, args =>
-    args[0] === 'off' ? { exitCode: 1, stdout: '', stderr: "hubctl: no flag named 'nope'\n" } : json(DAY9),
+    args[0] === 'off' ? { exitCode: 1, stdout: '', stderr: "hub: no flag named 'nope'\n" } : json(DAY9),
   )
 
   const result = await $.command.run({ command: 'hub', args: 'off nope', origin: TYPED })
 
-  expect(result.text).toBe("hubctl: no flag named 'nope'")
+  expect(result.text).toBe("hub: no flag named 'nope'")
 })
 
 test("when the user has a /hub, the command is /hub-flags, the user's /hub still runs, and the band says so", async ($, on) => {
@@ -301,7 +301,7 @@ test("when the user has a /hub, the command is /hub-flags, the user's /hub still
   })
 
   const told = calls.findIndex(call => call[3] === 'mod-command')
-  expect(hubctlArgs(calls)[told]).toBe('mod-command --json')
+  expect(stepArgs(calls)[told]).toBe('mod-command --json')
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /✗/ }))?.text).toBe(
@@ -313,7 +313,7 @@ test("when the user has a /hub, the command is /hub-flags, the user's /hub still
   expect((await $.command.run({ command: 'hub', args: 'hello' })).text).toBe("the user's own /hub")
 })
 
-test('the mod tells hubctl which names were refused, so hubctl doctor can name the clash', async ($, on) => {
+test('the mod tells the step which names were refused, so hub doctor can name the clash', async ($, on) => {
   const stdin: string[] = []
   const clock = mock.clock(on, { now: DAY9_NOW })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -347,10 +347,10 @@ test('when /hub-flags is taken too, hub has no command and the band says to rena
     "✗ /hub is taken (it is the user's /hub), and so is /hub-flags. Rename the other /hub, then use /hub in Claude Code",
   )
   await ui.unmount()
-  expect(hubctlArgs(calls)).toContain('mod-command --json')
+  expect(stepArgs(calls)).toContain('mod-command --json')
 })
 
-test('once /hub is free again, the mod clears the clash hubctl holds', async ($, on) => {
+test('once /hub is free again, the mod clears the clash the step holds', async ($, on) => {
   const held = { used: 'hub-flags', refused: { hub: "it is the user's /hub" }, folder: '/', time: '2026-11-09T09:00:00Z' }
   const stdin: string[] = []
   const clock = mock.clock(on, { now: DAY9_NOW })
@@ -401,7 +401,7 @@ for (const origin of NOT_TYPED) {
         `Nothing changed. Only the user can change a switch, by typing /hub at the prompt. This request came from ${from}.`,
       )
     }
-    expect(hubctlArgs(calls)).toEqual(['screen --json --band'])
+    expect(stepArgs(calls)).toEqual(['screen --json --band'])
 
     expect((await $.command.run({ command: 'hub', args: '', origin })).text).toBe(SHOWN.trimEnd())
   })
@@ -426,7 +426,7 @@ for (const origin of [TYPED, { kind: 'peer' } as PromptOrigin, { kind: 'plugin',
         )
       }
     }
-    const boardCalls = hubctlArgs(calls).filter(args => args.startsWith('board'))
+    const boardCalls = stepArgs(calls).filter(args => args.startsWith('board'))
     expect(boardCalls.slice(0, 4)).toEqual(['board', 'board tasks', 'board show API', 'board --all'])
     expect(boardCalls.length).toBe(origin.kind === 'composer' ? 7 : 4)
   })
@@ -441,7 +441,7 @@ for (const origin of [TYPED, { kind: 'peer' } as PromptOrigin]) {
     for (const args of ['tasks', 'tasks --brief', 'tasks show Run the tests', 'tasks done']) {
       expect((await $.command.run({ command: 'hub', args, origin })).text).toBe(TASKS.trimEnd())
     }
-    expect(hubctlArgs(calls).filter(args => args.startsWith('tasks'))).toEqual(
+    expect(stepArgs(calls).filter(args => args.startsWith('tasks'))).toEqual(
       ['tasks', 'tasks --brief', 'tasks show Run the tests', 'tasks done'])
   })
 }
@@ -454,7 +454,7 @@ test('/hub-flags refuses a change that did not come from the user too', async ($
   expect(result.text).toBe(
     'Nothing changed. Only the user can change a switch, by typing /hub-flags at the prompt. This request came from peer.',
   )
-  expect(hubctlArgs(calls).filter(args => args.startsWith('on '))).toEqual([])
+  expect(stepArgs(calls).filter(args => args.startsWith('on '))).toEqual([])
 })
 
 test('a change the user sends through the Remote Control bridge goes through', async ($, on) => {
@@ -463,12 +463,12 @@ test('a change the user sends through the Remote Control bridge goes through', a
   const result = await $.command.run({ command: 'hub', args: 'off demo_gate.dashes', origin: { kind: 'bridge' } })
 
   expect(result.text).toBe(ROW.trimEnd())
-  expect(hubctlArgs(calls)).toContain('off demo_gate.dashes')
+  expect(stepArgs(calls)).toContain('off demo_gate.dashes')
 })
 
 const TURN = { answer: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as const
 
-// A hubctl whose screen --json --band answers after `late` milliseconds of the test's clock.
+// A step whose screen --json --band answers after `late` milliseconds of the test's clock.
 async function startSlow($: Engine, on: On, late: { ms: number; screen: HubScreen }) {
   const screens: { timeoutMs: number | undefined }[] = []
   const clock = mock.clock(on, { now: DAY9_NOW })
@@ -484,7 +484,7 @@ async function startSlow($: Engine, on: On, late: { ms: number; screen: HubScree
   return { clock, screens }
 }
 
-test('a session start and a turn end do not wait for hubctl, and the band keeps its last state meanwhile', async ($, on) => {
+test('a session start and a turn end do not wait for the step, and the band keeps its last state meanwhile', async ($, on) => {
   const late = { ms: 0, screen: DAY9 }
   const { clock, screens } = await startSlow($, on, late)
 
@@ -506,7 +506,7 @@ test('a session start and a turn end do not wait for hubctl, and the band keeps 
   await ui.unmount()
 })
 
-test('turn ends that come while hubctl is still reading share one more read', async ($, on) => {
+test('turn ends that come while the step is still reading share one more read', async ($, on) => {
   const late = { ms: 0, screen: DAY9 }
   const { clock, screens } = await startSlow($, on, late)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -525,7 +525,7 @@ test('turn ends that come while hubctl is still reading share one more read', as
   expect(screens).toHaveLength(3)
 })
 
-test('a session start does not wait for a hubctl that never answers', async ($, on) => {
+test('a session start does not wait for a step that never answers', async ($, on) => {
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
 
@@ -543,7 +543,7 @@ test('a session start does not wait for a hubctl that never answers', async ($, 
 })
 
 // The chats zone and the failed checks counter, from the board key of the screen model
-// (tests/test_band_zones.py checks what hubctl puts there).
+// (tests/test_band_zones.py checks what the step puts there).
 const API_SESSION = '00000000-0000-4000-8000-0000000000a4'
 const ZONE = {
   full: '! API  ● DOCS 2/3  ○ LOBBY',
@@ -640,7 +640,7 @@ for (const surface of SURFACES) {
     expect(buttons.map(button => [button.props.label, button.props.hotkey])).toEqual([['features', 'f'], ['open', '2']])
 
     await ui.press({ key: `open:${API_SESSION}` })
-    expect(hubctlArgs(calls).slice(-1)).toEqual([`board show ${API_SESSION}`])
+    expect(stepArgs(calls).slice(-1)).toEqual([`board show ${API_SESSION}`])
     expect(logged).toEqual([CARD.trimEnd()])
     await ui.unmount()
   })
@@ -803,7 +803,7 @@ test('names that do not fit become +N, counted in terminal cells, so a wide lett
   await ui.unmount()
 })
 
-test('a question in wide letters and emoji keeps its last letter, since its width in cells comes from hubctl', async ($, on) => {
+test('a question in wide letters and emoji keeps its last letter, since its width in cells comes from the step', async ($, on) => {
   // Python counts 文 and ✅ as two cells each, so the line is 31 cells wide.
   const line = '! 文✅ asks  which retry limit?'
   const chats = {
@@ -951,7 +951,7 @@ test('only the failed checks count has a color, so both rows read the same in an
   }
 })
 
-test('when hubctl cannot show the card, [open] says why in a toast and logs nothing', async ($, on) => {
+test('when the step cannot show the card, [open] says why in a toast and logs nothing', async ($, on) => {
   const logged: string[] = []
   const toasts: string[] = []
   on('ui.log', (_, e) => {
@@ -972,7 +972,7 @@ test('when hubctl cannot show the card, [open] says why in a toast and logs noth
   await ui.unmount()
 })
 
-test('with status_band.chats off the band shows no zone and no [open], even when hubctl sends one', async ($, on) => {
+test('with status_band.chats off the band shows no zone and no [open], even when the step sends one', async ($, on) => {
   await start($, on, () => json(withBoard(ZONE, 0, { chats: false })))
 
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
@@ -982,7 +982,7 @@ test('with status_band.chats off the band shows no zone and no [open], even when
   await ui.unmount()
 })
 
-test('the card from [open] goes to the transcript as hubctl printed it, and hubctl board runs once', async ($, on) => {
+test('the card from [open] goes to the transcript as the step printed it, and hub board runs once', async ($, on) => {
   const logged: string[] = []
   on('ui.log', (_, e) => {
     logged.push(e.text)
@@ -994,18 +994,18 @@ test('the card from [open] goes to the transcript as hubctl printed it, and hubc
   const ui = await $.ui.mount({ ...wide(120), surface: 'terminal' })
   await ui.press({ key: `open:${API_SESSION}` })
   expect(logged).toEqual([card.trimEnd()])
-  expect(hubctlArgs(calls).filter(args => args.startsWith('board'))).toEqual([`board show ${API_SESSION}`])
+  expect(stepArgs(calls).filter(args => args.startsWith('board'))).toEqual([`board show ${API_SESSION}`])
   await ui.unmount()
 })
 
-// hubctl says coordinator only in the chat named as the coordinator while the board part runs
+// The step says coordinator only in the chat named as the coordinator while the board part runs
 // (tests/test_band_zones.py checks that side).
 function asCoordinator(screen: HubScreen, coordinator = true): HubScreen {
   return { ...screen, board: { ...screen.board, coordinator } }
 }
 
 function screenReads(calls: string[][]) {
-  return hubctlArgs(calls).filter(args => args === 'screen --json --band').length
+  return stepArgs(calls).filter(args => args === 'screen --json --band').length
 }
 
 // Like start, with main and subagent turns, and the clock handed back.
@@ -1027,7 +1027,7 @@ async function startWithTurns($: Engine, on: On, answer: (args: string[]) => Ans
 
 test('the coordinator chat rereads the board every 2 seconds while it is idle, and stops when the board part is off', async ($, on) => {
   const fake = { screen: asCoordinator(withBoard(ZONE)), fails: false }
-  const { calls, clock } = await startWithTurns($, on, () => (fake.fails ? { exitCode: 1, stdout: '', stderr: 'hubctl broke' } : json(fake.screen)))
+  const { calls, clock } = await startWithTurns($, on, () => (fake.fails ? { exitCode: 1, stdout: '', stderr: 'the step broke' } : json(fake.screen)))
   expect(screenReads(calls)).toBe(1)
 
   await clock.advance(6000)
@@ -1078,7 +1078,7 @@ test('any other chat rereads the board only at its start and after each turn', a
 })
 
 // The permission relay: the coordinator shows other chats' waiting prompts. The hooks below
-// stand for `hubctl relay`, which keeps the prompts, the marks a pick leaves and the lock.
+// stand for `hub relay`, which keeps the prompts, the marks a pick leaves and the lock.
 const HUB_SESSION = 'hub-session-1'
 
 type Waiting = { id: string; text: string; buttons: string[] }
@@ -1095,7 +1095,7 @@ const API: Waiting = {
   buttons: ['Open the tab', 'Keep it blocked', 'Later'],
 }
 
-// The relay as hubctl keeps it. `hub` is whether this chat is the coordinator that holds the lock,
+// The relay as the step keeps it. `hub` is whether this chat is the coordinator that holds the lock,
 // `off` makes every relay verb fail as it does once the part is switched off.
 function relayFake(waiting: Waiting[]) {
   const fake = {
@@ -1142,7 +1142,7 @@ function relayFake(waiting: Waiting[]) {
       fake.marked.clear()
       return ok(`${fake.waiting.length}\n`)
     }
-    return { exitCode: 2, stdout: '', stderr: 'hubctl relay: no such verb\n' }
+    return { exitCode: 2, stdout: '', stderr: 'hub relay: no such verb\n' }
   }
   return { fake, answer }
 }
@@ -1192,7 +1192,7 @@ async function startRelay($: Engine, on: On, answer: (args: string[]) => Answer 
 }
 
 function relayCalls(calls: string[][]) {
-  return hubctlArgs(calls).filter(args => args.startsWith('relay '))
+  return stepArgs(calls).filter(args => args.startsWith('relay '))
 }
 
 const NEXT = `relay next --session ${HUB_SESSION} --json`
@@ -1236,7 +1236,7 @@ test('a chat where the relay is off never asks it', async ($, on) => {
 
   await $.turn.complete(TURN)
   await clock.advance(10000)
-  expect(hubctlArgs(calls)).toEqual(['screen --json --band', 'screen --json --band'])
+  expect(stepArgs(calls)).toEqual(['screen --json --band', 'screen --json --band'])
   expect(asked).toEqual([])
 })
 
@@ -1357,7 +1357,7 @@ test('while a pick still runs, the same prompt does not open a second dialog', a
   expect(asked.map(one => one.question)).toEqual([WEB.text, API.text])
 })
 
-test('a pick hubctl refuses says why in a toast and the prompt stays', async ($, on) => {
+test('a pick the step refuses says why in a toast and the prompt stays', async ($, on) => {
   const { fake, answer } = relayFake([WEB])
   fake.failPick = "hub could not find that chat's tab or pane, so it stays in the list."
   const { asked, toasts, clock } = await startRelay($, on, answer)
@@ -1410,8 +1410,8 @@ test('the waiting count alone still draws when the band has nothing else to show
 })
 
 // The tuner's side call. When the screen says candidates wait for the mod, the mod asks
-// `hubctl tuner ask`, sends that request to the model, and pipes the pick to `hubctl tuner decide`.
-// The hooks below stand for hubctl and for the model, so no test calls a real model.
+// `hub tuner ask`, sends that request to the model, and pipes the pick to `hub tuner decide`.
+// The hooks below stand for the step and for the model, so no test calls a real model.
 const SINCE = '2026-11-09T10:00:00Z'
 
 const REQUEST = {
@@ -1437,8 +1437,8 @@ function waitingFor(since = SINCE, sideCall = true): HubScreen {
   return { ...DAY9, strip: offer, tuner: { pending: 1, since, side_call: sideCall } }
 }
 
-// Starts a session whose hubctl answers as it would while a candidate waits, and whose model
-// answers with `model`. Returns the hubctl calls with their stdin, and the model requests.
+// Starts a session whose step answers as it would while a candidate waits, and whose model
+// answers with `model`. Returns the step calls with their stdin, and the model requests.
 async function startTuner(
   $: Engine,
   on: On,
@@ -1474,7 +1474,7 @@ async function startTuner(
   return { calls, asked, clock }
 }
 
-test("the mod asks the model beside the chat, pipes only the pick to hubctl tuner decide, and the band shows the tuner's line", async ($, on) => {
+test("the mod asks the model beside the chat, pipes only the pick to hub tuner decide, and the band shows the tuner's line", async ($, on) => {
   const { calls, asked } = await startTuner($, on, answered(`Here is my answer: ${PICK} That is all.`))
 
   expect(calls.map(call => call.args)).toEqual(['screen --json --band', 'tuner ask', 'tuner decide --answer -', 'screen --json --band'])
@@ -1511,9 +1511,9 @@ for (const [what, model] of GAVE_UP) {
   })
 }
 
-test('when hubctl tuner decide refuses the pick, the mod gives the list back', async ($, on) => {
+test('when hub tuner decide refuses the pick, the mod gives the list back', async ($, on) => {
   const { calls } = await startTuner($, on, answered(PICK), {
-    decide: { exitCode: 1, stdout: '', stderr: 'hubctl: the tuner answer must be {"pick": [flag ids]}\n' },
+    decide: { exitCode: 1, stdout: '', stderr: 'hub: the tuner answer must be {"pick": [flag ids]}\n' },
   })
 
   expect(calls.map(call => call.args)).toEqual([

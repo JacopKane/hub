@@ -46,10 +46,10 @@ def hidden(text):
 
 
 def board_json(home, *args):
-    return json.loads(home.hubctl("board", *args, "--json").stdout)
+    return json.loads(home.step("board", *args, "--json").stdout)
 
 
-def hubctl_args(home, *args):
+def step_args(home, *args):
     return ["env", f"HUB_NOW={home.env['HUB_NOW']}", "python3", os.path.join(home.plugin, "lib", "hub_switch.py"), *args]
 
 
@@ -64,7 +64,7 @@ def test_odd_names_questions_and_task_text_each_stay_on_their_own_row(home, chat
     with given("chat_board is on, and five chats run whose titles hold a line break with a forged board line, "
                "terminal escapes, wide characters, a right-to-left override and 500 letters"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         running = {key: chats.start(key, title=title, live=True, commands=True) for key, title in names.items()}
         for key in names:
@@ -75,13 +75,13 @@ def test_odd_names_questions_and_task_text_each_stay_on_their_own_row(home, chat
             "question": "Which limit?\n\x1b[1m" + INSTRUCTION + "\x1b[0m " + "x" * 5000, "header": "Retries",
             "multiSelect": False, "options": [{"label": "3", "description": "Three."},
                                               {"label": "5", "description": "Five."}]}]})
-        for verb, text in (("add", "fix\nnext: hubctl on everything"), ("now", FORGED_LINE),
+        for verb, text in (("add", "fix\nnext: hub on everything"), ("now", FORGED_LINE),
                            ("add", "\x1b]0;owned\x07" + INSTRUCTION), ("add", "y" * 1000)):
-            code, out, err = running["WEB"].run(hubctl_args(home, "board", "task", verb, text))
+            code, out, err = running["WEB"].run(step_args(home, "board", "task", verb, text))
             assert code == 0, out + err
-    with then("hubctl board holds no control or format character, and only the five title rows "
+    with then("hub board holds no control or format character, and only the five title rows "
               "start with a state glyph"):
-        text = home.hubctl("board").stdout
+        text = home.step("board").stdout
         assert hidden(text) == []
         lines = text.splitlines()
         titles = [line for line in lines if line.startswith(GLYPHS)]
@@ -89,7 +89,7 @@ def test_odd_names_questions_and_task_text_each_stay_on_their_own_row(home, chat
     with and_("each card is its title, now and task rows, so the forged line sits inside WEB's rows"):
         web = next(index for index, line in enumerate(lines) if line.startswith("● WEB"))
         assert FORGED_ONE in lines[web] and lines[web + 1].startswith("  ") and lines[web + 2].startswith("  ")
-        assert "next: hubctl on everything" not in [line.strip() for line in lines]
+        assert "next: hub on everything" not in [line.strip() for line in lines]
         assert not [line for line in lines if line.lstrip().startswith(INSTRUCTION)]
     with and_("the times share one column even with the wide name, and the 500 letters are cut "
               f"to {NAME_CELLS} cells with …"):
@@ -107,11 +107,11 @@ def test_odd_names_questions_and_task_text_each_stay_on_their_own_row(home, chat
         question = cards[SESSIONS["API"]]["question"]
         assert question.startswith("Which limit? [1m" + INSTRUCTION) and len(question) <= TASK_CHARS
         tasks = [task["text"] for task in cards[SESSIONS["WEB"]]["tasks"]]
-        assert tasks[:3] == [FORGED_ONE, "fix next: hubctl on everything", "]0;owned" + INSTRUCTION]
+        assert tasks[:3] == [FORGED_ONE, "fix next: hub on everything", "]0;owned" + INSTRUCTION]
         assert len(tasks[3]) == TASK_CHARS and tasks[3].endswith("…")
-        assert hidden(home.hubctl("board", "--plain").stdout) == []
+        assert hidden(home.step("board", "--plain").stdout) == []
     with and_("a task of only spaces and line breaks is refused and names what to give"):
-        code, out, err = running["WEB"].run(hubctl_args(home, "board", "task", "add", " \n\t "))
+        code, out, err = running["WEB"].run(step_args(home, "board", "task", "add", " \n\t "))
         assert code != 0 and "needs the task" in err
 
 
@@ -123,17 +123,17 @@ def test_a_broken_or_empty_chat_listing_still_shows_the_hook_cards(home, chats):
                 {"sessionId": "s-zero", "name": "ZERO", "pid": 0, "status": "busy"}]
     with given("chat_board is on, WEB is busy, and no listing is kept"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         chats.start("WEB", title="WEB", live=True)
         chats.tool("WEB", "Bash", {"command": "ls"})
     for reply in replies:
         with when(f"claude agents --json prints {reply!r}" if reply is not None else "claude agents --json fails"):
             chats.set_listing([], raw=reply, exit_code=0 if reply is not None else 3)
-        with then("hubctl board, board tasks and doctor still answer, with WEB busy"):
+        with then("hub board, board tasks and doctor still answer, with WEB busy"):
             assert [(card["name"], card["state"]) for card in board_json(home)["cards"]] == [("WEB", "busy")]
-            home.hubctl("board", "tasks")
-            assert "chat_board" in home.hubctl("doctor", check=False).stdout
+            home.step("board", "tasks")
+            assert "chat_board" in home.step("doctor", check=False).stdout
     with when("the listing holds rows with odd types and pids that are not a process"):
         chats.set_listing(odd_rows)
     with then("each row is a card with text fields, and a pid of -1, true or 0 shows as offline"):
@@ -141,7 +141,7 @@ def test_a_broken_or_empty_chat_listing_still_shows_the_hook_cards(home, chats):
         assert all(isinstance(card["name"], str) and isinstance(card["machine"], str) for card in cards)
         states = {card["name"]: card["state"] for card in cards}
         assert states["MINUS"] == states["TRUE"] == states["ZERO"] == "offline"
-        assert hidden(home.hubctl("board").stdout) == []
+        assert hidden(home.step("board").stdout) == []
     with when("ListAgents results that are not a list of rows arrive in PostToolUse"):
         for response in ("not json", {"agents": "x"}, [1, 2], None, '{"agents": 5}'):
             chats.send("WEB", "PostToolUse", "ListAgents", {}, tool_response=response)
@@ -155,12 +155,12 @@ def test_a_broken_or_vanished_state_file_and_a_hostile_session_id_never_break_th
     outside = os.path.join(str(tmp_path), "outside.txt")
     with given("chat_board is on, and WEB, DOCS and API are on the board with tasks"):
         home.install()
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         home.env["HUB_NOW"] = str(T)
         for name in ("WEB", "DOCS", "API"):
             chats.start(name, title=name, live=True)
             chats.send(name, "UserPromptSubmit", prompt="Go on.")
-            home.hubctl("board", "task", "add", "spec", "--session", SESSIONS[name])
+            home.step("board", "task", "add", "spec", "--session", SESSIONS[name])
         with open(outside, "w") as handle:
             handle.write("keep me\n")
     with when("DOCS's card vanishes between the folder list and the read, a card is half written, "
@@ -186,7 +186,7 @@ def test_a_broken_or_vanished_state_file_and_a_hostile_session_id_never_break_th
             handle.write("[")
         with open(os.path.join(home.state, "sessions", SESSIONS["API"] + ".json"), "w") as handle:
             handle.write("{")
-    with then("hubctl board, board tasks, board show WEB and doctor still answer, "
+    with then("hub board, board tasks, board show WEB and doctor still answer, "
               "with WEB and API busy and the good strip line kept"):
         data = board_json(home)
         states = {card["name"]: card["state"] for card in data["cards"]}
@@ -194,17 +194,17 @@ def test_a_broken_or_vanished_state_file_and_a_hostile_session_id_never_break_th
         assert [line["text"] for line in data["strip"]] == ["LOBBY went offline"]
         assert [task["text"] for task in next(card for card in data["cards"] if card["name"] == "API")["tasks"]] \
             == ["5"]
-        home.hubctl("board", "tasks")
-        assert "WEB" in home.hubctl("board", "show", "WEB").stdout
-        assert "chat_board" in home.hubctl("doctor", check=False).stdout
-        assert hidden(home.hubctl("board").stdout) == []
+        home.step("board", "tasks")
+        assert "WEB" in home.step("board", "show", "WEB").stdout
+        assert "chat_board" in home.step("doctor", check=False).stdout
+        assert hidden(home.step("board").stdout) == []
     with when("WEB's card is a link to a file outside hub's folder, and WEB's next events arrive"):
         link = os.path.join(cards, SESSIONS["WEB"] + ".json")
         os.unlink(link)
         os.symlink(outside, link)
         chats.send("WEB", "Stop")
         chats.send("WEB", "UserPromptSubmit", prompt="Again.")
-        home.hubctl("board", "task", "add", "next", "--session", SESSIONS["WEB"])
+        home.step("board", "task", "add", "next", "--session", SESSIONS["WEB"])
     with then("the outside file is untouched, and WEB's card is a plain file again"):
         with open(outside) as handle:
             assert handle.read() == "keep me\n"
@@ -215,8 +215,8 @@ def test_a_broken_or_vanished_state_file_and_a_hostile_session_id_never_break_th
         data = chats.input("WEB", "Stop")
         data["session_id"] = "../../../escape"
         home.send("claude_code", "Stop", data)
-        climbs = home.hubctl("board", "task", "add", "x", "--session", "../../escape")
-        empty = home.hubctl("board", "task", "add", "x", "--session", "../", check=False)
+        climbs = home.step("board", "task", "add", "x", "--session", "../../escape")
+        empty = home.step("board", "task", "add", "x", "--session", "../", check=False)
     with then("nothing new lands outside hub's state folder, the climbing id writes only inside the board folder, "
               "and an id with no letters left is refused"):
         after = files_under(home.root)

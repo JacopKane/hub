@@ -121,16 +121,16 @@ def test_turning_off_one_rule_removes_only_that_sentence_and_the_slots_keep_whol
     with given("working_rules, tier_rule and hub_style are on, and the profile lists Cursor with the Cursor beta on"):
         use_cursor_beta(home)
         home.install()
-        home.hubctl("on", "working_rules")
-        home.hubctl("on", "tier_rule")
-        home.hubctl("on", "hub_style")
+        home.step("on", "working_rules")
+        home.step("on", "tier_rule")
+        home.step("on", "hub_style")
         rules = rule_texts(home)
         assert len(rules) >= 20 and len({flag.split(".")[1] for flag, _ in rules}) == 7
         before, _ = session_start(home)
         assert all(text in before for _flag, text in rules if "published" not in _flag)
         gone_flag, gone_text = next((flag, text) for flag, text in rules if ".knowledge." in flag)
     with when("the user turns off one rule of working_rules.knowledge"):
-        home.hubctl("off", gone_flag)
+        home.step("off", gone_flag)
     with and_("the next SessionStart runs"):
         after, _ = session_start(home)
     with then("the slots hold every other rule, whole and in tree order, and no slot reaches 10,000 characters"):
@@ -151,7 +151,7 @@ def test_turning_off_one_rule_removes_only_that_sentence_and_the_slots_keep_whol
 def test_a_path_rules_text_arrives_the_first_time_a_matching_file_is_read(home, tool):
     with given("path_rules is on, in a repo with tests/test_app.py"):
         home.install()
-        home.hubctl("on", "path_rules")
+        home.step("on", "path_rules")
         path = os.path.join(home.work, "tests", "test_app.py")
         os.makedirs(os.path.dirname(path))
         with open(path, "w") as handle:
@@ -171,7 +171,7 @@ def test_a_path_rules_text_arrives_the_first_time_a_matching_file_is_read(home, 
     with then("the text comes once more"):
         assert tests_text in again
     with when("path_rules.tests is off"):
-        home.hubctl("off", "path_rules.tests")
+        home.step("off", "path_rules.tests")
     with then("nothing comes"):
         assert file_read(home, tool, path, "s3") == ""
 
@@ -180,7 +180,7 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
     with given("hub_style is on, so apply wrote outputStyle, and the settings file kept its key order and indent"):
         write_claude_settings(home, {"theme": "dark", "permissions": {"allow": ["Read"]}})
         home.install()
-        home.hubctl("on", "hub_style")
+        home.step("on", "hub_style")
         text = read(claude_settings(home))
         assert json.loads(text) == {"theme": "dark", "permissions": {"allow": ["Read"]}, "outputStyle": STYLE_NAME}
         assert list(json.loads(text)) == ["theme", "permissions", "outputStyle"]
@@ -190,7 +190,7 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
     with when("the user picks another style in /output-style, which writes the key"):
         write_claude_settings(home, {"theme": "dark", "permissions": {"allow": ["Read"]}, "outputStyle": "Explanatory"})
     with and_("apply runs"):
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("hub_style is off by user, one line says so, and outputStyle keeps the user's pick"):
         assert home.settings()["flags"]["hub_style"] == {"by": "user", "value": "off"}
         lines = [line for line in result.stdout.splitlines() if "hub_style" in line]
@@ -198,13 +198,13 @@ def test_an_output_style_the_user_picks_becomes_a_pinned_choice_with_one_line(ho
         assert json.loads(read(claude_settings(home)))["outputStyle"] == "Explanatory"
         assert not os.path.lexists(style_link(home))
     with when("the user turns hub_style on again"):
-        home.hubctl("on", "hub_style")
+        home.step("on", "hub_style")
     with then("apply writes hub's style and keeps the user's pick to restore later"):
         assert json.loads(read(claude_settings(home)))["outputStyle"] == STYLE_NAME
         [entry] = home.state_file("keys.json")["keys"]
         assert entry["key"] == "outputStyle" and entry["earlier"] == "Explanatory" and entry["had_earlier"]
     with when("the user turns hub_style off"):
-        home.hubctl("off", "hub_style")
+        home.step("off", "hub_style")
     with then("the user's pick is back, in the same key order"):
         data = json.loads(read(claude_settings(home)))
         assert data["outputStyle"] == "Explanatory" and list(data) == ["theme", "permissions", "outputStyle"]
@@ -220,7 +220,7 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
             handle.write(broken)
         home.install()
     with when("the user turns hub_style on"):
-        result = home.hubctl("on", "hub_style", check=False)
+        result = home.step("on", "hub_style", check=False)
     with then("the switch and its apply finish, the style link is there, and the file is as the user left it"):
         assert result.returncode == 0, result.stderr
         assert home.settings()["flags"]["hub_style"]["value"] == "on"
@@ -228,29 +228,29 @@ def test_a_settings_file_that_does_not_parse_stays_as_it_is_and_the_doctor_names
         assert read(path) == broken
     with and_("one line names the file and the key, and so does the doctor"):
         assert [line for line in result.stdout.splitlines() if path in line and "outputStyle" in line]
-        warnings = [line for line in home.hubctl("doctor").stdout.splitlines() if line.startswith("warning:")]
+        warnings = [line for line in home.step("doctor").stdout.splitlines() if line.startswith("warning:")]
         assert [line for line in warnings if path in line and "outputStyle" in line], warnings
     with when("the user fixes the file and apply runs"):
         write_claude_settings(home, {"theme": "dark"})
-        home.hubctl("apply")
+        home.step("apply")
     with then("outputStyle names hub's style, and the doctor no longer names the file"):
         assert json.loads(read(path)) == {"theme": "dark", "outputStyle": STYLE_NAME}
-        assert path not in home.hubctl("doctor").stdout
+        assert path not in home.step("doctor").stdout
     with when("the file breaks again and the user turns hub_style off"):
         with open(path, "w") as handle:
             handle.write(broken)
-        result = home.hubctl("off", "hub_style", check=False)
+        result = home.step("off", "hub_style", check=False)
     with then("the switch finishes, hub keeps its record to put the value back later, and the doctor names the file"):
         assert result.returncode == 0, result.stderr
         assert read(path) == broken
         assert [entry["key"] for entry in home.state_file("keys.json")["keys"]] == ["outputStyle"]
-        assert path in home.hubctl("doctor").stdout
+        assert path in home.step("doctor").stdout
 
 
 def test_link_check_sends_a_reply_back_once_for_a_bare_pr_number(home):
     with given("link_check is on"):
         home.install()
-        home.hubctl("on", "link_check")
+        home.step("on", "link_check")
     with when('a reply mentions "#123" with no link'):
         reason = reply_ends(home, "The fix is in #123, and it is ready.")
     with then("link_check sends it back once and names the number"):
@@ -263,7 +263,7 @@ def test_link_check_sends_a_reply_back_once_for_a_bare_pr_number(home):
     with and_("a colour and a number inside a code block are not references"):
         assert reply_ends(home, "Use colour: #123456 here.\n\n```\nissue #4567\n```") == ""
     with when("link_check.prs is off"):
-        home.hubctl("off", "link_check.prs")
+        home.step("off", "link_check.prs")
     with then("a bare number passes, and a bare ticket id still warns"):
         assert reply_ends(home, "The fix is in #123.") == ""
         reason = reply_ends(home, "The fix for APP-42 is in #123.")
@@ -275,7 +275,7 @@ def test_link_check_sends_a_reply_back_once_for_a_bare_pr_number(home):
 def test_link_check_sends_a_reply_back_once_for_a_local_file_the_terminal_can_not_open(home):
     with given("link_check is on, with its local_paths check on by default"):
         home.install()
-        home.hubctl("on", "link_check")
+        home.step("on", "link_check")
     with when("a reply names files from the home folder, a scratch folder and a home subfolder"):
         reason = reply_ends(home, "I saved the plan to ~/notes/plan.md and the log to scratchpad/build/tests.log. "
                                   "The report is in Desktop/report.pdf.")
@@ -316,12 +316,12 @@ def test_link_check_sends_a_reply_back_once_for_a_local_file_the_terminal_can_no
     with then("one send-back names both"):
         assert "#123" in reason and "~/notes/fix.md" in reason, reason
     with when("the user adds a folder of their own to link_check.local_paths.folders"):
-        home.hubctl("set", "link_check.local_paths.folders", "Desktop", "Projects")
+        home.step("set", "link_check.local_paths.folders", "Desktop", "Projects")
     with then("a path from that folder goes back, and a folder taken off the list passes"):
         assert "Projects/app/README.md" in reply_ends(home, "It is in Projects/app/README.md.")
         assert reply_ends(home, "The draft is in Documents/draft.md.") == ""
     with when("link_check.local_paths is off"):
-        home.hubctl("off", "link_check.local_paths")
+        home.step("off", "link_check.local_paths")
     with then("local paths and file names pass, and a bare PR number still goes back"):
         assert reply_ends(home, "I saved it to ~/notes/plan.md and shot.png.") == ""
         reason = reply_ends(home, "The fix is in #123, see ~/notes/fix.md.")
@@ -333,7 +333,7 @@ def test_cursor_gets_the_style_as_rule_text(home):
         use_cursor_beta(home)
         home.install()
     with when("hub_style is on and apply runs"):
-        home.hubctl("on", "hub_style")
+        home.step("on", "hub_style")
         cursor_text, _ = session_start(home, "cursor")
         claude_text, _ = session_start(home)
     with then("Cursor's slot set holds the style's sections that run"):
@@ -346,7 +346,7 @@ def test_cursor_gets_the_style_as_rule_text(home):
         assert style_section(home, "hub_style.status_block") not in claude_text
         assert os.path.islink(style_link(home))
     with when("one section of the style is off"):
-        home.hubctl("off", "hub_style.linked_sources")
+        home.step("off", "hub_style.linked_sources")
         cursor_text, _ = session_start(home, "cursor")
     with then("Cursor's text and Claude Code's built copy both leave it out"):
         assert style_section(home, "hub_style.linked_sources") not in cursor_text
@@ -360,14 +360,14 @@ def test_uninstall_puts_back_the_values_hub_wrote(home):
     with given("keys.py wrote remoteControlAtStartup and outputStyle"):
         write_claude_settings(home, {"remoteControlAtStartup": False, "outputStyle": "Default"}, indent=2)
         home.install()
-        home.hubctl("on", "hub_style")
+        home.step("on", "hub_style")
         run_keys(home, "from hub import keys; keys.want('remoteControlAtStartup', True, 'test', [])")
         data = json.loads(read(claude_settings(home)))
         assert data == {"remoteControlAtStartup": True, "outputStyle": STYLE_NAME}
     with and_("the user later changed outputStyle by hand"):
         write_claude_settings(home, dict(data, outputStyle="Learning"), indent=2)
-    with when('the user runs "hubctl uninstall"'):
-        home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        home.step("uninstall")
     with then("remoteControlAtStartup has the user's earlier value again, and keys.json is gone"):
         data = json.loads(read(claude_settings(home)))
         assert data["remoteControlAtStartup"] is False
@@ -405,7 +405,7 @@ def line_hashes(texts):
 def test_hubs_humanize_points_to_the_users_own_skill(home):
     with given("humanize is on"):
         home.install()
-        home.hubctl("on", "humanize")
+        home.step("on", "humanize")
         skill = read(os.path.join(home.root, ".claude", "skills", "hub-humanize", "SKILL.md"))
         words = " ".join(skill.split())
     with then("hub-humanize tells Claude to find the user's own writing skill in its skill listing and run it"):
@@ -439,19 +439,19 @@ def test_a_section_for_one_value_of_an_option_stays_only_while_the_option_has_th
     with given("builder is on, and its agent file has a section for effort high and one for effort max"):
         home.install()
         add_value_sections(home, "high", "max")
-        home.hubctl("on", "builder")
+        home.step("on", "builder")
         link = os.path.join(home.root, ".claude", "agents", "hub-builder.md")
     with then("at the default effort the agent keeps the high section only, with no marker left"):
         agent = read(link)
         assert "Say that effort is high." in agent and "effort is max" not in agent
         assert "<!-- hub:" not in agent
     with when("the effort is max"):
-        home.hubctl("set", "builder.effort", "max")
+        home.step("set", "builder.effort", "max")
     with then("the agent keeps the max section only"):
         agent = read(link)
         assert "Say that effort is max." in agent and "effort is high" not in agent
     with when("the effort is low"):
-        home.hubctl("set", "builder.effort", "low")
+        home.step("set", "builder.effort", "low")
     with then("neither section is left"):
         assert "Say that effort" not in read(link)
 
@@ -459,12 +459,12 @@ def test_a_section_for_one_value_of_an_option_stays_only_while_the_option_has_th
 def test_a_section_marker_with_a_value_the_option_does_not_have_is_an_error_not_a_dropped_section(home):
     with given("hub is installed with builder on, and one marker in its agent file names a value that does not exist"):
         home.install()
-        home.hubctl("on", "builder")
+        home.step("on", "builder")
         path = add_value_sections(home, "hgih")
         number = next(index for index, line in enumerate(read(path).split("\n"), 1) if "builder.effort=hgih" in line)
     with when("hub applies, and the user runs the doctor"):
-        applied = home.hubctl("apply", check=False)
-        doctor = home.hubctl("doctor", check=False)
+        applied = home.step("apply", check=False)
+        doctor = home.step("doctor", check=False)
     with then("apply fails and names the file, the line and the bad value"):
         assert applied.returncode == 1
         for text in (path, f":{number}", "hgih"):

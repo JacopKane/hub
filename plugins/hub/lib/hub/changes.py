@@ -231,7 +231,7 @@ def check_change(tree, node, value, by, scope, path, place, user_door, resolved_
     return GO, weakened_flag
 
 
-def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, reason="", undoes=None,
+def set_flag(flag_id, value, by="user", scope="user", door=protect.STEP_DOOR, cwd=None, reason="", undoes=None,
              repo=None, notes=None, expected=ANY):
     """Write one value and apply. Returns the history line, or None when nothing changed.
 
@@ -270,7 +270,7 @@ def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, r
                                       lambda: resolve.current(repo)["tools"])
     if verdict == SKIP:
         return None
-    if found.get("door") == protect.MOD_DOOR and door == "hubctl":
+    if found.get("door") == protect.MOD_DOOR and door == protect.STEP_DOOR:
         door = protect.MOD_DOOR
     with files.locked():
         # The same checks again under the lock, so a file written after the first checks is seen. A change
@@ -316,7 +316,7 @@ def acted_on(flag_id):
         files.write_json(summary_path, {"changes": [change for change in summary["changes"] if change["id"] != flag_id]})
 
 
-def decline_offer(part_id, door="hubctl"):
+def decline_offer(part_id, door=protect.STEP_DOOR):
     """Say no to an offered part. It stays off, and undo brings the offer back."""
     refuse_in_tool_call("say no to an offer")
     with files.locked():
@@ -338,7 +338,7 @@ def decline_offer(part_id, door="hubctl"):
     return found[0]
 
 
-def pin(flag_id, scope="user", door="hubctl", cwd=None, notes=None):
+def pin(flag_id, scope="user", door=protect.STEP_DOOR, cwd=None, notes=None):
     """Write a flag's current value as set by the user, so setup and the tuner leave it."""
     refuse_in_tool_call("pin a flag")
     cwd = cwd or os.getcwd()
@@ -348,7 +348,7 @@ def pin(flag_id, scope="user", door="hubctl", cwd=None, notes=None):
     return set_flag(flag_id, record["set"], by="user", scope=scope, door=door, cwd=cwd, notes=notes)
 
 
-def take_offer(part_id, door="hubctl", notes=None):
+def take_offer(part_id, door=protect.STEP_DOOR, notes=None):
     """Hold the user's agent of the same name and make hub's link. Undo moves it back."""
     refuse_in_tool_call("swap their agent for hub's")
     with files.locked():
@@ -362,7 +362,7 @@ def take_offer(part_id, door="hubctl", notes=None):
     return line
 
 
-def undo(door="hubctl", cwd=None, line_id=None):
+def undo(door=protect.STEP_DOOR, cwd=None, line_id=None):
     """Restore the old value of a change, pinned, in the repo it changed.
 
     With no id it undoes the newest change. When the change took an offer to

@@ -29,8 +29,8 @@ def away(home):
 def test_question_check_refuses_a_thin_dialog_before_away_guard_notes_or_logs_it(home):
     with given("question_check and away_guard are on, and Alex is away"):
         home.install()
-        home.hubctl("on", "question_check")
-        home.hubctl("on", "away_guard")
+        home.step("on", "question_check")
+        home.step("on", "away_guard")
         away(home)
     with when("LOBBY opens an urgent dialog without context"):
         result = ask(home, [question("Ship it?", BARE)], session=SESSION_LOBBY,
@@ -53,8 +53,8 @@ def test_the_coordinators_refusal_comes_before_the_question_parts(home, chats):
     with given("the coordinator named LOBBY, question_check and away_guard are on, LOBBY is live, and Alex is away"):
         home.install()
         for part in ("coordinator", "question_check", "away_guard"):
-            home.hubctl("on", part)
-        home.hubctl("set", "coordinator.name", "LOBBY")
+            home.step("on", part)
+        home.step("set", "coordinator.name", "LOBBY")
         lobby = chats.start("LOBBY", title="LOBBY", live=True, inbox=True)
         chats.start("WEB", title="WEB")
         chats.set_listing([chats.row("LOBBY", pid=lobby.pid), chats.row("WEB", pid=os.getpid())])
@@ -70,7 +70,7 @@ def test_in_cursor_the_questions_family_and_these_gates_do_not_run_and_the_docto
     with given("every part of this slice is on, and the Cursor link runs"):
         home.install()
         for part in SLICE_PARTS + ["cursor_link"]:
-            home.hubctl("on", part)
+            home.step("on", part)
         away(home)
     with when("Cursor sends its hook input for the same events"):
         typed = cursor_send(home, "beforeSubmitPrompt", "beforeSubmitPrompt.json",
@@ -80,13 +80,13 @@ def test_in_cursor_the_questions_family_and_these_gates_do_not_run_and_the_docto
                                           ("mcp__claude-in-chrome__navigate", {"url": "https://example.com"}),
                                           ("mcp__slack__reactions_add", {}),
                                           ("mcp__sentry__update_issue", {}),
-                                          ("Shell", {"command": "hubctl browser-lock clear"})]]
+                                          ("Shell", {"command": "hub browser-lock clear"})]]
     with then("nothing is refused, asked or added"):
         assert typed.output == {}
         assert [call.output for call in calls] == [{}] * len(calls)
-    with when("the user runs hubctl doctor"):
-        text = home.hubctl("doctor").stdout
-        report = json.loads(home.hubctl("doctor", "--json").stdout)
+    with when("the user runs hub doctor"):
+        text = home.step("doctor").stdout
+        report = json.loads(home.step("doctor", "--json").stdout)
     with then("it names each part with its reason from parts.md"):
         gaps = {gap["flag"]: gap["reason"] for gap in report["cursor_gaps"]}
         for part in SLICE_PARTS:

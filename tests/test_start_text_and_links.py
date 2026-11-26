@@ -1,6 +1,6 @@
 """Slice 2: start text and links.
 
-Every scenario runs the real hubctl, the dispatcher, the slot hooks and the
+Every scenario runs the real step, the dispatcher, the slot hooks and the
 Cursor adapter as processes in a temporary HOME. Links and copies land in
 that HOME's ~/.claude and ~/.cursor folders.
 """
@@ -130,8 +130,8 @@ def test_turning_off_one_tier_rule_sentence_removes_only_that_sentence_from_the_
         assert all(text in before for text in sentences.values())
         shown_before = home.show()["start_text"]
         count = applies(home)
-    with when('the user runs "hubctl off tier_rule.check_claims"'):
-        home.hubctl("off", "tier_rule.check_claims")
+    with when('the user runs "hub off tier_rule.check_claims"'):
+        home.step("off", "tier_rule.check_claims")
     with and_("a SessionStart starts the dispatcher and the eight slot hooks at once"):
         after, _ = session_start(home)
     with then("the slots hold every other tier rule sentence, whole and in tree order"):
@@ -139,7 +139,7 @@ def test_turning_off_one_tier_rule_sentence_removes_only_that_sentence_from_the_
         kept = [text for name, text in sentences.items() if name != "check_claims"]
         positions = [after.index(text) for text in kept]
         assert positions == sorted(positions)
-    with and_('apply ran once, and the start text in "hubctl show --json" is shorter by that sentence'):
+    with and_('apply ran once, and the start text in "hub show --json" is shorter by that sentence'):
         assert applies(home) == count + 1
         shown_after = home.show()["start_text"]
         assert shown_after == after
@@ -167,12 +167,12 @@ def test_tier_rows_follow_the_agents_that_run(home):
         assert [row.split("|")[1].strip() for row in rows] == ["Mechanical", "Judgement"]
         assert "| scout | haiku |" in rows[0] and "| builder | opus | high |" in rows[1]
     with when("the user sets builder.model to sonnet"):
-        home.hubctl("set", "builder.model", "sonnet")
+        home.step("set", "builder.model", "sonnet")
         text, _ = session_start(home)
     with then("the judgement row names sonnet at the next session start"):
         assert "| builder | sonnet | high |" in text
     with when("the user turns builder off"):
-        home.hubctl("off", "builder")
+        home.step("off", "builder")
         text, _ = session_start(home)
     with then("the judgement row and ~/.claude/agents/hub-builder.md are gone"):
         assert "Judgement" not in text and "| Mechanical |" in text
@@ -190,7 +190,7 @@ def test_a_changed_agent_gets_a_built_copy_and_a_new_link_the_folder_watch_sees(
         inode = os.lstat(link).st_ino
         assert "builder.instructions.test_first" in read(shipped)
     with when("the user turns off builder.instructions.test_first"):
-        home.hubctl("off", "builder.instructions.test_first")
+        home.step("off", "builder.instructions.test_first")
     with then("the link points at the built copy, with a new inode"):
         target = os.readlink(link)
         assert target == os.path.join(home.state, "built", "agents", "builder.md")
@@ -204,12 +204,12 @@ def test_a_changed_agent_gets_a_built_copy_and_a_new_link_the_folder_watch_sees(
         kept = read(shipped).split("<!-- hub:section builder.instructions.review_own_diff -->\n")[1]
         assert kept.split("<!-- hub:end -->")[0].strip() in copy
     with when("the user sets builder.effort to medium"):
-        home.hubctl("set", "builder.effort", "medium")
+        home.step("set", "builder.effort", "medium")
     with then("the copy's front matter carries the chosen value"):
         assert front_matter(link)["effort"] == "medium"
     with when("the user turns the section on again and sets the effort back"):
-        home.hubctl("on", "builder.instructions.test_first")
-        home.hubctl("set", "builder.effort", "high")
+        home.step("on", "builder.instructions.test_first")
+        home.step("set", "builder.effort", "high")
     with then("the link points at the shipped file"):
         assert os.readlink(link) == shipped
 
@@ -223,7 +223,7 @@ def test_apply_never_replaces_a_file_that_is_not_its_own_link(home):
     with when("the user turns builder on and apply runs"):
         home.switch_on("builder")
         home.install()
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("the file is unchanged, one line names it, and the record has no entry for it"):
         assert not os.path.islink(path) and "My own notes." in read(path)
         lines = [line for line in result.stdout.splitlines() if path in line]
@@ -255,18 +255,18 @@ def test_a_users_own_link_or_file_at_a_recorded_path_is_never_replaced_or_delete
         assert {agent_link(home, "builder"), agent_link(home, "scout"), cursor_folder} <= recorded
     with when("the user puts a link of their own at ~/.claude/agents/hub-builder.md and builder changes"):
         builder = replace_with_own_link(home, agent_link(home, "builder"), "builder")
-        home.hubctl("set", "builder.model", "sonnet")
+        home.step("set", "builder.model", "sonnet")
     with then("the user's link still points at the user's file"):
         assert os.readlink(agent_link(home, "builder")) == builder
     with when("the user puts a link of their own at ~/.claude/agents/hub-scout.md and turns scout off"):
         scout = replace_with_own_link(home, agent_link(home, "scout"), "scout")
-        home.hubctl("off", "scout")
+        home.step("off", "scout")
     with then("the user's link is still there"):
         assert os.readlink(agent_link(home, "scout")) == scout
     with when("the user adds a file of their own to hub's Cursor folder and uninstalls hub"):
         with open(notes, "w") as handle:
             handle.write("my notes\n")
-        result = home.hubctl("uninstall")
+        result = home.step("uninstall")
     with then("the user's links and file are unchanged, and hub's own Cursor files are gone"):
         assert os.readlink(agent_link(home, "builder")) == builder
         assert os.readlink(agent_link(home, "scout")) == scout
@@ -285,20 +285,20 @@ def test_a_users_agent_of_the_same_name_holds_the_hub_link_with_an_offer_to_swit
     with when("the user turns hub's builder on and apply runs"):
         home.switch_on("builder")
         home.install()
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("no hub-builder link is made, one line says why, and the offer is listed"):
         assert not os.path.lexists(agent_link(home, "builder"))
         assert len([line for line in result.stdout.splitlines() if mine in line]) == 1
-        offers = home.hubctl("offers").stdout
+        offers = home.step("offers").stdout
         assert "builder" in offers and mine in offers
     with when("the user takes the offer"):
-        home.hubctl("take", "builder")
+        home.step("take", "builder")
     with then("the user's file is in the held folder and the hub link is there"):
         held = os.path.join(home.state, "held", "agents", "builder.md")
         assert not os.path.exists(mine) and read(held).endswith("Mine.\n")
         assert os.path.islink(agent_link(home, "builder"))
     with when("the user undoes it"):
-        home.hubctl("undo")
+        home.step("undo")
     with then("the user's file is back and the hub link is gone"):
         assert read(mine).endswith("Mine.\n") and not os.path.exists(held)
         assert not os.path.lexists(agent_link(home, "builder"))
@@ -309,12 +309,12 @@ def test_a_deleted_hub_link_becomes_a_pinned_off_with_one_line(home):
         home.install()
     with when("the user deletes ~/.claude/agents/hub-scout.md and apply runs"):
         os.unlink(agent_link(home, "scout"))
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("scout is off by user, no link comes back, and one line says so"):
         assert home.settings()["flags"]["scout"] == {"by": "user", "value": "off"}
         assert not os.path.lexists(agent_link(home, "scout"))
         assert len([line for line in result.stdout.splitlines() if "scout" in line]) == 1
-        home.hubctl("apply")
+        home.step("apply")
         assert not os.path.lexists(agent_link(home, "scout"))
 
 
@@ -340,7 +340,7 @@ def test_text_that_needs_more_than_eight_slots_makes_the_doctor_warn(home):
                  {f"text/{name}.md": text for name, text in pieces.items()})
         assert sum(len(text) for text in pieces.values()) >= 90_000
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("every slot holds whole instructions under 10,000 characters"):
         slots = slot_files(home, "claude_code")
         assert all(len(slot) < SLOT_LIMIT for slot in slots)
@@ -349,7 +349,7 @@ def test_text_that_needs_more_than_eight_slots_makes_the_doctor_warn(home):
         for name, text in pieces.items():
             assert joined.count(text[:12]) == (1 if name in placed else 0)
     with and_("the doctor names each instruction that did not fit"):
-        doctor = home.hubctl("doctor").stdout
+        doctor = home.step("doctor").stdout
         left_out = [name for name in pieces if name not in placed]
         assert left_out and left_out == sorted(left_out)
         assert left_out[0] == f"piece_{12 - len(left_out):02d}"
@@ -385,7 +385,7 @@ def test_cursor_gets_the_same_parts_with_mapped_models(home):
         claude_text, _ = session_start(home)
         assert sentences["description_prefix"] in claude_text
     with when("the user sets builder.model to sonnet"):
-        home.hubctl("set", "builder.model", "sonnet")
+        home.step("set", "builder.model", "sonnet")
     with then("the Cursor copy follows"):
         assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-sonnet-5-5[effort=high]"
     with and_("every Cursor file is in the link record"):
@@ -440,7 +440,7 @@ def test_after_an_update_every_link_points_at_the_new_copy(home):
     with given("links and built copies made from a first plugin copy, with builder on"):
         home.switch_on("builder")
         home.install()
-        home.hubctl("off", "builder.instructions.test_first")
+        home.step("off", "builder.instructions.test_first")
         assert os.readlink(agent_link(home, "scout")).startswith(home.plugin + os.sep)
     with when("a second copy is installed and apply runs"):
         shutil.copytree(home.plugin, second)
@@ -448,7 +448,7 @@ def test_after_an_update_every_link_points_at_the_new_copy(home):
         with open(path, "a") as handle:
             handle.write("\nA line only the second copy has.\n")
         home.plugin = second
-        home.hubctl("apply")
+        home.step("apply")
     with then("every recorded link points into the second copy, and every built copy is built again from it"):
         for entry in home.state_file("links.json")["links"]:
             if entry["type"] == "link" and not entry["target"].startswith(home.state):
@@ -463,14 +463,14 @@ def test_the_dispatcher_asks_for_a_skill_reload_after_apply_changed_a_skill_link
         add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "off",
                                  "does": "A fixture skill."},
                  {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nTake notes.\n"})
-        home.hubctl("apply")
+        home.step("apply")
         _, first = session_start(home)
         _, settled = session_start(home)
     with then("the first session start asks once for the hub-pr skill that pr links by default, and the next for nothing"):
         assert first["hookSpecificOutput"]["reloadSkills"] is True
         assert "reloadSkills" not in json.dumps(settled)
     with when("the user turns the skill on and a session starts"):
-        home.hubctl("on", "notes")
+        home.step("on", "notes")
         _, second = session_start(home)
     with then("the dispatcher returns reloadSkills once, and the skill folder is linked"):
         assert second["hookSpecificOutput"]["reloadSkills"] is True
@@ -487,19 +487,19 @@ def test_a_built_skill_asks_for_a_reload_only_when_its_built_text_changes(home):
                                  "does": "A fixture skill."},
                  {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n",
                   "skill/references/more.md": "More notes.\n"})
-        home.hubctl("apply")
+        home.step("apply")
         session_start(home)
         link = os.path.join(home.root, ".claude", "skills", "hub-notes")
         assert os.readlink(link) != os.path.join(home.plugin, "parts", "notes", "skill")
     with when("apply runs again with nothing changed, and a session starts"):
-        home.hubctl("apply")
+        home.step("apply")
         _, quiet = session_start(home)
     with then("the session start asks for nothing"):
         assert "reloadSkills" not in json.dumps(quiet)
     with when("the shipped text changes, apply runs and a session starts"):
         with open(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"), "a") as handle:
             handle.write("\nKeep them short.\n")
-        home.hubctl("apply")
+        home.step("apply")
         _, changed = session_start(home)
     with then("the dispatcher asks for a reload, and the built copy holds the new text"):
         assert changed["hookSpecificOutput"]["reloadSkills"] is True
@@ -510,33 +510,33 @@ def test_a_built_skill_asks_for_a_reload_only_when_its_built_text_changes(home):
     with when("a reference file changes, apply runs and a session starts"):
         with open(os.path.join(home.plugin, "parts", "notes", "skill", "references", "more.md"), "w") as handle:
             handle.write("Even more notes.\n")
-        home.hubctl("apply")
+        home.step("apply")
         _, reference = session_start(home)
     with then("the dispatcher asks for a reload again"):
         assert reference["hookSpecificOutput"]["reloadSkills"] is True
     shipped_text = read(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"))
     with when("the user deletes the built copy, apply runs and a session starts"):
         shutil.rmtree(os.path.realpath(link))
-        home.hubctl("apply")
+        home.step("apply")
         _, deleted = session_start(home)
     with then("apply builds the copy again, and the dispatcher asks for a reload"):
         assert deleted["hookSpecificOutput"]["reloadSkills"] is True
         assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
         assert read(os.path.join(link, "references", "more.md")) == "Even more notes.\n"
     with and_("the apply after that leaves the new copy alone"):
-        home.hubctl("apply")
+        home.step("apply")
         assert "reloadSkills" not in json.dumps(session_start(home)[1])
     with when("the user edits the built copy by hand, apply runs and a session starts"):
         with open(os.path.join(link, "SKILL.md"), "a") as handle:
             handle.write("\nMy own line.\n")
-        home.hubctl("apply")
+        home.step("apply")
         _, edited = session_start(home)
     with then("apply puts the built text back, and the dispatcher asks for a reload"):
         assert edited["hookSpecificOutput"]["reloadSkills"] is True
         assert "My own line." not in read(os.path.join(link, "SKILL.md"))
         assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
     with and_("the apply after that leaves the copy alone"):
-        home.hubctl("apply")
+        home.step("apply")
         assert "reloadSkills" not in json.dumps(session_start(home)[1])
     with and_("the shipped skill was never touched"):
         assert read(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md")) == shipped_text
@@ -549,7 +549,7 @@ def test_an_apply_that_stops_after_it_rebuilt_a_skill_still_asks_for_a_reload(ho
         add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "on",
                                  "does": "A fixture skill."},
                  {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n"})
-        home.hubctl("apply")
+        home.step("apply")
         session_start(home)
         link = os.path.join(home.root, ".claude", "skills", "hub-notes")
     with and_("swapping in the skill's link stops apply with an error"):
@@ -567,7 +567,7 @@ def test_an_apply_that_stops_after_it_rebuilt_a_skill_still_asks_for_a_reload(ho
     with when("the shipped text changes and apply stops at that step"):
         with open(os.path.join(home.plugin, "parts", "notes", "skill", "SKILL.md"), "a") as handle:
             handle.write("\nKeep them short.\n")
-        assert home.hubctl("apply", check=False).returncode != 0
+        assert home.step("apply", check=False).returncode != 0
         del home.env["PYTHONPATH"]
     with then("the built copy already holds the new text"):
         assert "Keep them short." in read(os.path.join(link, "SKILL.md"))
@@ -576,7 +576,7 @@ def test_an_apply_that_stops_after_it_rebuilt_a_skill_still_asks_for_a_reload(ho
     with then("the dispatcher asks for a reload, because the copy changed before the stop"):
         assert after_the_stop["hookSpecificOutput"]["reloadSkills"] is True
     with when("apply runs again without the stop, and a session starts"):
-        home.hubctl("apply")
+        home.step("apply")
         _, settled = session_start(home)
     with then("nothing is left to rebuild, so the dispatcher asks for nothing"):
         assert "reloadSkills" not in json.dumps(settled)
@@ -589,7 +589,7 @@ def test_turning_off_a_skill_that_stops_while_its_link_goes_still_asks_for_a_rel
         add_part(home, "notes", {"family": "learning", "kind": "skill", "default": "on",
                                  "does": "A fixture skill."},
                  {"skill/SKILL.md": "---\nname: hub-notes\ndescription: Fixture.\n---\n\nRun {{step}} notes.\n"})
-        home.hubctl("apply")
+        home.step("apply")
         session_start(home)
         link = os.path.join(home.root, ".claude", "skills", "hub-notes")
         assert os.path.islink(link)
@@ -606,7 +606,7 @@ def test_turning_off_a_skill_that_stops_while_its_link_goes_still_asks_for_a_rel
                 "os.unlink = unlink\n")
         home.env["PYTHONPATH"] = stop
     with when("the user turns the skill off and hub stops at that step"):
-        assert home.hubctl("off", "notes", check=False).returncode != 0
+        assert home.step("off", "notes", check=False).returncode != 0
         del home.env["PYTHONPATH"]
     with then("the link is still there, and the mark the next session start reads is already left"):
         assert os.path.islink(link)
@@ -625,11 +625,11 @@ def test_apply_makes_the_agents_folder_and_the_doctor_says_a_new_session_is_need
         home.install()
     with then("the folder exists and the doctor says agents show from the next session"):
         assert os.path.isdir(os.path.join(home.root, ".claude", "agents"))
-        assert "new session" in home.hubctl("doctor").stdout
+        assert "new session" in home.step("doctor").stdout
     with when("a session starts"):
         session_start(home)
     with then("the doctor no longer says it"):
-        assert "new session" not in home.hubctl("doctor").stdout
+        assert "new session" not in home.step("doctor").stdout
 
 
 def test_the_note_about_the_new_agents_folder_stays_for_the_session_whose_start_made_it(home):
@@ -639,11 +639,11 @@ def test_the_note_about_the_new_agents_folder_stays_for_the_session_whose_start_
         hooks_in_order(home, "00000000-0000-4000-8000-0000000000a1", "slot_hook.py", "1")
     with then("the folder exists and the doctor still says agents show from the next session"):
         assert os.path.isdir(os.path.join(home.root, ".claude", "agents"))
-        assert "new session" in home.hubctl("doctor").stdout
+        assert "new session" in home.step("doctor").stdout
     with when("a different session starts"):
         hooks_in_order(home, "00000000-0000-4000-8000-0000000000a2", "slot_hook.py", "1")
     with then("the doctor no longer says it"):
-        assert "new session" not in home.hubctl("doctor").stdout
+        assert "new session" not in home.step("doctor").stdout
 
 
 def utf16(text):
@@ -660,7 +660,7 @@ def test_a_slot_stays_under_the_limit_counted_in_utf16_units(home):
                                 "children": children},
                  {f"text/{name}.md": text for name, text in pieces.items()})
     with when("apply runs"):
-        home.hubctl("apply")
+        home.step("apply")
     with then("every slot is under 10,000 UTF-16 units, and the two texts sit in different slots"):
         slots = slot_files(home, "claude_code")
         assert all(utf16(slot) < SLOT_LIMIT for slot in slots)
@@ -680,12 +680,12 @@ def test_cursors_single_start_text_stays_under_the_limit(home):
                                 "children": children},
                  {f"text/{name}.md": text for name, text in pieces.items()})
     with when("apply runs and a Cursor session starts"):
-        home.hubctl("apply")
+        home.step("apply")
         text, _ = session_start(home, "cursor")
     with then("the one string Cursor gets is under 10,000 UTF-16 units"):
         assert 0 < utf16(text) < SLOT_LIMIT
     with and_("the doctor names what Cursor left out, in a sentence about one string"):
-        doctor = home.hubctl("doctor").stdout
+        doctor = home.step("doctor").stdout
         assert "in Cursor" in doctor and "one string" in doctor
 
 
@@ -693,7 +693,7 @@ def test_show_counts_the_listing_and_the_start_text(home):
     with given("hub is installed, and the user turned builder and the tier rule on"):
         home.switch_on("builder", "tier_rule")
         home.install()
-    with when("the user runs hubctl show --json"):
+    with when("the user runs hub show --json"):
         cost = home.show()["cost"]
     with then("the start text total equals the start text, and each agent has a listing cost"):
         assert cost["total"]["start_text"] == len(home.show()["start_text"])
@@ -715,10 +715,10 @@ def test_uninstall_removes_every_recorded_link_and_keeps_the_users_files(home):
         os.makedirs(home.config)
         use_cursor_beta(home)
         home.install()
-        home.hubctl("off", "builder.instructions.test_first")
+        home.step("off", "builder.instructions.test_first")
         recorded = [entry["path"] for entry in home.state_file("links.json")["links"]]
         assert len(recorded) >= 5 and all(os.path.lexists(path) for path in recorded)
-    with and_("one held file in ~/.local/state/hubctl/held/, and two Claude Code values hub wrote"):
+    with and_("one held file in ~/.local/state/claude-hub/held/, and two Claude Code values hub wrote"):
         held = os.path.join(home.state, "held", "agents", "old.md")
         os.makedirs(os.path.dirname(held))
         with open(held, "w") as handle:
@@ -729,8 +729,8 @@ def test_uninstall_removes_every_recorded_link_and_keeps_the_users_files(home):
              "had_earlier": True},
             {"file": settings_file, "key": "theme", "hub_value": "hub-theme", "earlier": None,
              "had_earlier": False}]})
-    with when('the user runs "hubctl uninstall"'):
-        result = home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        result = home.step("uninstall")
     with then("every recorded entry and hub's own state are gone, and the user's files are unchanged"):
         assert not [path for path in recorded if os.path.lexists(path)]
         assert sorted(os.listdir(home.state)) == ["held", "uninstalled.json"]
@@ -741,7 +741,7 @@ def test_uninstall_removes_every_recorded_link_and_keeps_the_users_files(home):
         assert read(held) == "held\n"
     with and_("only the values that still hold hub's value are put back"):
         assert json.loads(read(settings_file)) == {"outputStyle": "Explanatory", "theme": "mine", "other": 1}
-    with and_("the last lines name ~/.config/hubctl/ and the held folder with the command that deletes each, "
+    with and_("the last lines name ~/.config/claude-hub/ and the held folder with the command that deletes each, "
               "and the plugin removal command"):
         tail = result.stdout.strip().splitlines()[-3:]
         assert f"rm -rf {home.config}" in tail[0]
@@ -766,17 +766,17 @@ def test_uninstall_stays_until_a_new_install(home):
         use_cursor_beta(home)
         home.install()
         assert hub_entries(home)
-    with when('the user runs "hubctl uninstall"'):
-        result = home.hubctl("uninstall")
+    with when('the user runs "hub uninstall"'):
+        result = home.step("uninstall")
     with then("it removes hub's plugin through the claude program, and says so"):
         assert home.claude_calls() == [["plugin", "uninstall", "hub@hub"]]
         assert "claude plugin uninstall hub@hub" not in result.stdout
         assert "hub@hub" in result.stdout.strip().splitlines()[-1]
-    with when("a tool call, a session start in each tool and hubctl apply all run after it"):
+    with when("a tool call, a session start in each tool and hub apply all run after it"):
         pre_tool = home.hook("claude_code", "PreToolUse", "git status")
         text, dispatcher = session_start(home)
         cursor_text, _ = session_start(home, "cursor")
-        again = home.hubctl("apply")
+        again = home.step("apply")
     with then("nothing comes back, and no hook says anything"):
         assert hub_entries(home) == []
         assert pre_tool.ran and pre_tool.output == {}
@@ -787,7 +787,7 @@ def test_uninstall_stays_until_a_new_install(home):
         second = os.path.join(home.root, "plugin-copy-2", "hub")
         shutil.copytree(PLUGIN, second, ignore=shutil.ignore_patterns("__pycache__"))
         home.plugin = second
-        home.hubctl("apply")
+        home.step("apply")
     with then("hub's links are back, and they point into the new copy"):
         assert os.readlink(agent_link(home, "scout")).startswith(second + os.sep)
         assert not os.path.exists(os.path.join(home.state, "uninstalled.json"))
@@ -809,7 +809,7 @@ def test_a_users_agent_of_the_same_name_keeps_hub_from_writing_its_cursor_copy(h
         home.switch_on("builder")
     with when("apply runs"):
         home.install()
-        result = home.hubctl("apply")
+        result = home.step("apply")
     with then("hub writes no Cursor copy of either agent, and the user's files are unchanged"):
         assert not os.path.lexists(cursor_agent(home, "builder"))
         assert not os.path.lexists(cursor_agent(home, "scout"))
@@ -818,8 +818,8 @@ def test_a_users_agent_of_the_same_name_keeps_hub_from_writing_its_cursor_copy(h
         assert os.path.islink(agent_link(home, "builder"))
     with and_("apply names each clash in one line"):
         assert len([line for line in result.stdout.splitlines() if cursor_mine in line]) == 1
-    with and_("hubctl doctor names each clash with the user's file"):
-        doctor = [line for line in home.hubctl("doctor").stdout.splitlines() if line.startswith("warning:")]
+    with and_("hub doctor names each clash with the user's file"):
+        doctor = [line for line in home.step("doctor").stdout.splitlines() if line.startswith("warning:")]
         assert len([line for line in doctor if cursor_mine in line and "builder" in line]) == 1
         scout_lines = [line for line in doctor if claude_mine in line and "scout" in line]
         assert scout_lines and all("Cursor" in line or "Claude Code" in line for line in scout_lines)

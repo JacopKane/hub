@@ -27,7 +27,7 @@ def chats(home):
 
 def chat_names_on(home):
     home.install()
-    home.hubctl("on", "chat_names")
+    home.step("on", "chat_names")
 
 
 def part_text(home, name):
@@ -76,7 +76,7 @@ def test_a_plain_chat_name_reaches_the_live_chat_and_never_a_dead_row(home, chat
     with when("chat_names.resolve is off and only one DOCS runs"):
         second.end()
         chats.set_listing(rows)
-        home.hubctl("off", "chat_names.resolve")
+        home.step("off", "chat_names.resolve")
     with then("the send is left alone"):
         assert rewritten_to(send(chats, "WEB", "DOCS")) is None
 
@@ -104,7 +104,7 @@ def test_a_send_that_met_an_offline_row_or_a_stopped_chat_gets_one_note(home, ch
                               tool_response=OFFLINE, agent_id="agent-7")
         assert subagent.context == ""
     with when("chat_names.offline_note is off"):
-        home.hubctl("off", "chat_names.offline_note")
+        home.step("off", "chat_names.offline_note")
     with then("neither note comes"):
         assert chats.send("WEB", "PostToolUse", "SendMessage", {"to": "API", "message": "Hi."},
                           tool_response=OFFLINE).context == ""

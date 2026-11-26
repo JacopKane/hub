@@ -161,10 +161,10 @@ def test_hook_input_that_is_not_json_or_an_unknown_event_never_lets_a_public_ste
         assert unknown.returncode == 2 and "usage" in unknown.stderr and unknown.stdout == ""
 
 
-def test_hubctl_explains_each_mistake_and_changes_nothing(home):
+def test_the_step_explains_each_mistake_and_changes_nothing(home):
     with given("hub is installed with one value set"):
         home.install()
-        home.hubctl("off", "demo_gate.dashes")
+        home.step("off", "demo_gate.dashes")
         before = home.settings()
         changes = len(home.history())
     with when("the user makes each common mistake"):
@@ -174,7 +174,7 @@ def test_hubctl_explains_each_mistake_and_changes_nothing(home):
             "takes one value": ["set", "demo_gate", "warn", "block"],
             "set it with a value": ["on", "core.private_words"],
         }
-        results = {message: home.hubctl(*args, check=False) for message, args in mistakes.items()}
+        results = {message: home.step(*args, check=False) for message, args in mistakes.items()}
     with then("each exits 1 and says what was wrong"):
         assert {message: (result.returncode, message in result.stderr) for message, result in results.items()} == {
             message: (1, True) for message in mistakes}
@@ -182,13 +182,13 @@ def test_hubctl_explains_each_mistake_and_changes_nothing(home):
         assert home.settings() == before and len(home.history()) == changes
     with when("the user file gets a key hub does not know"):
         write_text(home.user_file, json.dumps(dict(before, colours="loud")))
-        shown = home.hubctl("show", check=False)
+        shown = home.step("show", check=False)
     with then("show exits 1 and names the file and the key"):
         assert shown.returncode == 1 and "hub.json" in shown.stderr and "colours" in shown.stderr
     with when("the history is empty and the user runs undo"):
         os.remove(os.path.join(home.state, "history.jsonl"))
         write_text(home.user_file, json.dumps(before))
-        nothing = home.hubctl("undo", check=False)
+        nothing = home.step("undo", check=False)
     with then("undo exits 1 and says there is nothing to undo"):
         assert nothing.returncode == 1 and "nothing to undo" in nothing.stderr
 
@@ -256,16 +256,16 @@ def test_settings_and_state_from_a_hub_that_had_the_review_loop_load_with_no_err
                                             "since": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                             "does": "Keeps a build and review loop on a written list."}]}))
     with when("hub applies its settings, shows them and runs the doctor"):
-        home.hubctl("apply")
-        shown = home.hubctl("show", "--all", check=False)
-        doctor = home.hubctl("doctor", check=False)
+        home.step("apply")
+        shown = home.step("show", "--all", check=False)
+        doctor = home.step("doctor", check=False)
     with then("each step exits 0, no flag of the review loop is listed, and the doctor does not name it"):
         assert shown.returncode == 0, shown.stderr
         assert not any(flag_id.startswith("review_loop") for flag_id in home.show("--all")["flags"])
         assert doctor.returncode == 0, doctor.stdout + doctor.stderr
         assert "review_loop" not in doctor.stdout + doctor.stderr
     with and_("the screen offers no part that is gone"):
-        screen = json.loads(home.hubctl("screen", "--json").stdout)
+        screen = json.loads(home.step("screen", "--json").stdout)
         assert "offer:review_loop" not in [line["id"] for line in screen["strip"]]
     with when("Claude starts a builder with no acceptance list and a critic hands back with no verdict lines"):
         agent = home.hook_input("claude_code", "PreToolUse", "")

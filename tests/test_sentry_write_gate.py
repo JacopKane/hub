@@ -14,7 +14,7 @@ def reason(result):
 
 
 def hand_edit_pattern(home, pattern):
-    """Write the pattern into the user file as a person editing it would, past hubctl's check."""
+    """Write the pattern into the user file as a person editing it would, past the step's check."""
     data = home.settings()
     data.setdefault("flags", {})[PATTERN] = {"by": "user", "value": pattern}
     home.write_json(home.user_file, data)
@@ -23,7 +23,7 @@ def hand_edit_pattern(home, pattern):
 def test_the_sentry_gate_asks_before_any_write_also_inside_execute_sentry_tool(home):
     with given("sentry_write_gate is on"):
         home.install()
-        home.hubctl("on", "sentry_write_gate")
+        home.step("on", "sentry_write_gate")
 
     with when("a chat looks up issues, on either server name"):
         local = tool_call(home, "mcp__sentry__search_issues", {"query": "is:unresolved"})
@@ -45,7 +45,7 @@ def test_the_sentry_gate_asks_before_any_write_also_inside_execute_sentry_tool(h
         assert "update_issue" in calls["wrapped"].output["hookSpecificOutput"]["permissionDecisionReason"]
 
     with when("the user turns sentry_write_gate.read_tools off"):
-        home.hubctl("off", "sentry_write_gate.read_tools")
+        home.step("off", "sentry_write_gate.read_tools")
         result = tool_call(home, "mcp__sentry__search_issues", {"query": "is:unresolved"})
     with then("reads ask too"):
         assert decision(result) == "ask"
@@ -56,7 +56,7 @@ def test_the_sentry_gate_asks_before_any_write_also_inside_execute_sentry_tool(h
 def test_the_sentry_gate_asks_before_writes_when_hub_can_not_read_its_settings(home):
     with given("sentry_write_gate is on, and then the user settings file gets merge conflict markers"):
         home.install()
-        home.hubctl("on", "sentry_write_gate")
+        home.step("on", "sentry_write_gate")
         with open(home.user_file, "w") as handle:
             handle.write(CONFLICT)
 
@@ -76,7 +76,7 @@ def test_the_sentry_gate_asks_before_every_call_when_its_read_list_is_missing_or
     read_list = os.path.join(home.plugin, "parts", "sentry_write_gate", "read_tools.json")
     with given("sentry_write_gate is on, and its read_tools.json is gone"):
         home.install()
-        home.hubctl("on", "sentry_write_gate")
+        home.step("on", "sentry_write_gate")
         os.remove(read_list)
 
     with when("a chat looks up issues and resolves one"):
@@ -87,7 +87,7 @@ def test_the_sentry_gate_asks_before_every_call_when_its_read_list_is_missing_or
             assert decision(result) == "ask"
             assert "read_tools.json" in reason(result)
     with and_("the doctor names the missing list"):
-        doctor = home.hubctl("doctor").stdout
+        doctor = home.step("doctor").stdout
         assert "warning: sentry_write_gate:" in doctor and "read_tools.json" in doctor
 
     with when("the file is back but holds broken JSON"):
@@ -98,16 +98,16 @@ def test_the_sentry_gate_asks_before_every_call_when_its_read_list_is_missing_or
         assert decision(result) == "ask" and "read_tools.json" in reason(result)
 
 
-def test_hubctl_refuses_a_broken_sentry_pattern_and_a_hand_edited_one_still_gates_sentry(home):
+def test_the_step_refuses_a_broken_sentry_pattern_and_a_hand_edited_one_still_gates_sentry(home):
     with given("sentry_write_gate is on with its default pattern"):
         home.install()
-        home.hubctl("on", "sentry_write_gate")
+        home.step("on", "sentry_write_gate")
         before = home.settings()
 
     with when("the user sets a pattern that is not valid, and an empty one"):
-        broken = home.hubctl("set", PATTERN, "mcp__sentry__[", check=False)
-        empty = home.hubctl("set", PATTERN, "", check=False)
-    with then("hubctl refuses both, says why, and the settings stay as they were"):
+        broken = home.step("set", PATTERN, "mcp__sentry__[", check=False)
+        empty = home.step("set", PATTERN, "", check=False)
+    with then("the step refuses both, says why, and the settings stay as they were"):
         assert broken.returncode == 1 and "not a valid pattern" in broken.stderr
         assert empty.returncode == 1 and "empty" in empty.stderr
         assert home.settings() == before
@@ -122,5 +122,5 @@ def test_hubctl_refuses_a_broken_sentry_pattern_and_a_hand_edited_one_still_gate
             assert decision(tool_call(home, "mcp__sentry__search_issues", {"query": "x"})) is None
         with and_("a tool from another server is not touched, and the doctor names the broken pattern"):
             assert decision(tool_call(home, "mcp__docs__search", {"query": "x"})) is None
-            doctor = home.hubctl("doctor").stdout
+            doctor = home.step("doctor").stdout
             assert "warning: sentry_write_gate:" in doctor and "server_pattern" in doctor

@@ -47,11 +47,11 @@ def clock(home, seconds):
 
 def board_on(home, source=PLUGIN):
     home.install(source)
-    home.hubctl("on", "chat_board")
+    home.step("on", "chat_board")
 
 
 def board(home, *args):
-    return json.loads(home.hubctl("board", "--json", *args).stdout)
+    return json.loads(home.step("board", "--json", *args).stdout)
 
 
 def states(home):
@@ -82,11 +82,11 @@ def test_four_chats_show_needs_you_busy_idle_and_offline_on_one_board(home, chat
         chats.tool("API", "AskUserQuestion", FULL)
         running["LOBBY"].end()
         clock(home, T + 180)
-    with then("hubctl board --json lists API as needs you, WEB as busy, DOCS as idle and LOBBY as offline, "
+    with then("hub board --json lists API as needs you, WEB as busy, DOCS as idle and LOBBY as offline, "
               "in that order"):
         assert states(home) == [("API", "needs_you"), ("WEB", "busy"), ("DOCS", "idle"), ("LOBBY", "offline")]
-    with and_("hubctl board prints four cards on one grid, and its header line reads !1 ●1 ○1 ◌1"):
-        lines = home.hubctl("board").stdout.splitlines()
+    with and_("hub board prints four cards on one grid, and its header line reads !1 ●1 ○1 ◌1"):
+        lines = home.step("board").stdout.splitlines()
         assert lines[0].endswith("!1 ●1 ○1 ◌1")
         titles = [line for line in lines if line[:2] in ("! ", "● ", "○ ", "◌ ") and " · " not in line]
         assert [title.split()[1] for title in titles] == ["API", "WEB", "DOCS", "LOBBY"]
@@ -125,7 +125,7 @@ def test_a_question_makes_the_card_need_the_user_and_the_next_event_clears_it(ho
         chats.tool("WEB", "Read", {"file_path": "README.md"})
     with then("WEB is busy again, and the ! counter is hidden"):
         assert state_of(home, "WEB") == "busy"
-        assert "!" not in home.hubctl("board").stdout.splitlines()[0]
+        assert "!" not in home.step("board").stdout.splitlines()[0]
     with when("a permission_prompt notification arrives for WEB, and then an idle_prompt notification"):
         chats.send("WEB", "Notification", notification_type="permission_prompt", message="Claude needs permission")
         first = state_of(home, "WEB")
@@ -252,7 +252,7 @@ def test_an_ended_chat_leaves_the_board_and_a_reused_pid_still_counts_as_offline
         chats.start("LOBBY", title="LOBBY", live=True)
         chats.send("DOCS", "Stop")
         chats.send("LOBBY", "Stop")
-        home.hubctl("board", "task", "add", "README", "--session", SESSIONS["DOCS"])
+        home.step("board", "task", "add", "README", "--session", SESSIONS["DOCS"])
     with when("DOCS sends SessionEnd"):
         chats.send("DOCS", "SessionEnd", reason="prompt_input_exit")
     with then("its card is gone, and its ledger is kept"):
@@ -323,7 +323,7 @@ def test_a_chat_on_another_machine_shows_its_state_and_no_tasks(home, chats):
     with then("MIX's card names studio in its title row and shows the state the listing gives"):
         card = next(card for card in board(home)["cards"] if card["name"] == "MIX")
         assert card["machine"] == "studio" and card["state"] == "busy"
-        lines = home.hubctl("board").stdout.splitlines()
+        lines = home.step("board").stdout.splitlines()
         title = next(index for index, line in enumerate(lines) if line.startswith("● MIX"))
         assert "studio" in lines[title]
     with and_("its task row says that tasks show only for chats on this machine"):
@@ -351,11 +351,11 @@ def test_with_chat_board_off_no_state_file_is_written_and_with_it_on_each_event_
         clock(home, T)
     with when("hook events of four chats arrive"):
         send_all()
-    with then("~/.local/state/hubctl/board/ is empty"):
+    with then("~/.local/state/claude-hub/board/ is empty"):
         folder = os.path.join(home.state, "board")
         assert not os.path.exists(folder) or not any(files for _, _, files in os.walk(folder))
     with when("the user turns chat_board on and the same events arrive"):
-        home.hubctl("on", "chat_board")
+        home.step("on", "chat_board")
         chats.send("WEB", "UserPromptSubmit", prompt="Start.")
         path = os.path.join(home.state, "board", "chats", SESSIONS["WEB"] + ".json")
         written = os.stat(path).st_mtime_ns
@@ -375,10 +375,10 @@ def test_the_board_text_fits_the_hub_command_and_points_only_to_hub_commands(hom
         for name in names:
             chats.start(name, title=name)
     with then("hub has no terminal view: no top command and no chat_board.top flag"):
-        assert home.hubctl("top", check=False).returncode != 0
-        assert home.hubctl("on", "chat_board.top", check=False).returncode != 0
-    with when("the user types /hub board, which prints what hubctl board prints"):
-        lines = home.hubctl("board").stdout.splitlines()
+        assert home.step("top", check=False).returncode != 0
+        assert home.step("on", "chat_board.top", check=False).returncode != 0
+    with when("the user types /hub board, which prints what hub board prints"):
+        lines = home.step("board").stdout.splitlines()
     with then("the body holds five cards in 15 lines, then a line with the count of the rest and the command for them"):
         first = next(index for index, line in enumerate(lines) if line.startswith("chats"))
         body = lines[first + 1:first + 16]
@@ -388,7 +388,7 @@ def test_the_board_text_fits_the_hub_command_and_points_only_to_hub_commands(hom
         assert lines[-1] == "next: /hub board tasks · /hub board show <chat>"
         assert not any("hubctl" in line for line in lines)
     with when("the user asks for every chat"):
-        every = home.hubctl("board", "--all").stdout
+        every = home.step("board", "--all").stdout
     with then("all seven cards show, and no line says more"):
         every_lines = every.splitlines()
         start = next(index for index, line in enumerate(every_lines) if line.startswith("chats"))
@@ -397,7 +397,7 @@ def test_the_board_text_fits_the_hub_command_and_points_only_to_hub_commands(hom
         assert sorted(titles) == sorted(names)
         assert " more chats" not in every
     with when("the user asks for a chat that is not on the board"):
-        missing = home.hubctl("board", "show", "NOPE", check=False)
+        missing = home.step("board", "show", "NOPE", check=False)
     with then("the answer names /hub board, not a terminal command"):
         assert missing.returncode != 0
         assert "/hub board lists the chats" in missing.stderr and "hubctl" not in missing.stderr
@@ -411,9 +411,9 @@ def test_in_cursor_nothing_is_written_and_the_board_says_cursor_chats_are_not_vi
         chats.cursor("stop")
     with then("nothing is written"):
         assert not os.path.exists(os.path.join(home.state, "board", "chats"))
-    with and_("hubctl board lists the Claude Code chats with one line that Cursor chats are not visible"):
-        text = home.hubctl("board").stdout
+    with and_("hub board lists the Claude Code chats with one line that Cursor chats are not visible"):
+        text = home.step("board").stdout
         assert text.count("Cursor chats are not visible") == 1
-    with and_("hubctl doctor names chat_board and its reason"):
-        doctor = home.hubctl("doctor", check=False).stdout
+    with and_("hub doctor names chat_board and its reason"):
+        doctor = home.step("doctor", check=False).stdout
         assert "chat_board" in doctor and "Cursor" in doctor

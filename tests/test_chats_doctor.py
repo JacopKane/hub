@@ -1,4 +1,4 @@
-"""Slice 10: what hubctl doctor says about the chat parts, and how they stay quiet in Cursor.
+"""Slice 10: what hub doctor says about the chat parts, and how they stay quiet in Cursor.
 
 The coordinator, chat_names, live_notes and restart run only in Claude
 Code. The doctor says for each one that is on whether the chat listing it
@@ -27,7 +27,7 @@ def chats(home):
 
 
 def doctor(home):
-    return home.hubctl("doctor").stdout.splitlines()
+    return home.step("doctor").stdout.splitlines()
 
 
 def lines_about(lines, part):
@@ -41,8 +41,8 @@ def reason_in_cursor(home, part):
 
 def every_part_on(home):
     for part in PARTS:
-        home.hubctl("on", part)
-    home.hubctl("set", "coordinator.name", "LOBBY")
+        home.step("on", part)
+    home.step("set", "coordinator.name", "LOBBY")
 
 
 def test_the_doctor_names_each_chat_part_and_whether_the_listing_works(home, chats):
@@ -54,7 +54,7 @@ def test_the_doctor_names_each_chat_part_and_whether_the_listing_works(home, cha
     with given("the coordinator, chat_names, live_notes and restart are on, and the listing shows a live LOBBY"):
         every_part_on(home)
         chats.set_listing([chats.row("LOBBY", pid=os.getpid()), chats.row("WEB", pid=os.getpid())])
-    with when("the user runs hubctl doctor"):
+    with when("the user runs hub doctor"):
         lines = doctor(home)
     with then("each part has one note, and the coordinator's names LOBBY as running"):
         for part in PARTS:
@@ -98,7 +98,7 @@ def test_in_cursor_none_of_these_parts_run_and_the_doctor_says_why(home, chats):
     with given("every part of this slice is on, Cursor is linked, and the listing names the Cursor chat LOBBY"):
         home.install()
         every_part_on(home)
-        home.hubctl("on", "cursor_link")
+        home.step("on", "cursor_link")
         chats.set_listing([chats.row("LOBBY", pid=os.getpid(), session=CURSOR_CHAT)])
     with and_("the same calls from a Claude Code chat with that id are refused"):
         assert chats.tool(CURSOR_CHAT, "Bash", commit).refused
@@ -116,7 +116,7 @@ def test_in_cursor_none_of_these_parts_run_and_the_doctor_says_why(home, chats):
             assert "updated_input" not in result.output and not result.context
         assert "hub-coordinator" not in json.dumps(started.output)
         assert not os.path.exists(notes)
-    with and_("hubctl doctor names each part and what Cursor lacks for it"):
+    with and_("hub doctor names each part and what Cursor lacks for it"):
         lines = doctor(home)
         for part in PARTS:
             cursor_lines = [line for line in lines_about(lines, part) if "Cursor" in line]
@@ -125,7 +125,7 @@ def test_in_cursor_none_of_these_parts_run_and_the_doctor_says_why(home, chats):
             assert reason_in_cursor(home, part) in cursor_lines[0]
         assert any("ListAgents" in line for line in lines_about(lines, "coordinator"))
     with when("the user turns the Cursor link off"):
-        home.hubctl("off", "cursor_link")
+        home.step("off", "cursor_link")
     with then("the doctor no longer talks about Cursor for these parts"):
         lines = doctor(home)
         assert all("Cursor" not in line for part in PARTS for line in lines_about(lines, part))

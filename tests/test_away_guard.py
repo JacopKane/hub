@@ -16,7 +16,7 @@ def reaches_with_note(result):
 def test_as_a_hub_user_away_when_claude_asks_me_a_question_it_reaches_me_with_at_most_a_note(home):
     with given("away_guard is on, and the fixed clock is 61 minutes past Alex's last typed prompt"):
         home.install()
-        home.hubctl("on", "away_guard")
+        home.step("on", "away_guard")
         set_clock(home, "2026-03-02T08:00:00Z")
         prompt(home, "Add the layout test, then wait for me.")
         set_clock(home, "2026-03-02T09:01:00Z")
@@ -41,7 +41,7 @@ def test_as_a_hub_user_away_when_claude_asks_me_a_question_it_reaches_me_with_at
     with then("Alex still counts as away, no prompt asks the chat to judge, and questions still reach him"):
         assert not (note.context or peer.context or reminder.context)
         assert reaches_with_note(ask(home, [question()]))
-        assert "away" in home.hubctl("away", "status").stdout
+        assert "away" in home.step("away", "status").stdout
 
     with when("Alex types a prompt"):
         back = prompt(home, "I am at my desk again, show me the open questions.")
@@ -52,23 +52,23 @@ def test_as_a_hub_user_away_when_claude_asks_me_a_question_it_reaches_me_with_at
     with and_("a dialog still reaches him with the note until a chat clears the away state"):
         assert reaches_with_note(ask(home, [question()]))
 
-    with when("the chat runs hubctl away clear"):
-        home.hubctl("away", "clear")
+    with when("the chat runs hub away clear"):
+        home.step("away", "clear")
     with then("dialogs open with no note"):
         cleared = ask(home, [question()])
         assert cleared.ran and cleared.context == ""
-        assert home.hubctl("away", "status").stdout.strip() == "not away"
+        assert home.step("away", "status").stdout.strip() == "not away"
 
-    with when('Alex runs hubctl away set "train" --hours 2'):
-        out = home.hubctl("away", "set", "train", "--hours", "2").stdout
+    with when('Alex runs hub away set "train" --hours 2'):
+        out = home.step("away", "set", "train", "--hours", "2").stdout
     with then("he is away for the train, and a dialog reaches him with a note that names the train"):
-        assert "train" in out and "train" in home.hubctl("away", "status").stdout
+        assert "train" in out and "train" in home.step("away", "status").stdout
         on_train = ask(home, [question()])
         assert reaches_with_note(on_train) and "train" in on_train.context
     with when("the clock moves on 2 hours and 1 minute"):
         set_clock(home, "2026-03-02T11:02:00Z")
     with then("the away state has ended, and dialogs open with no note"):
-        assert home.hubctl("away", "status").stdout.strip() == "not away"
+        assert home.step("away", "status").stdout.strip() == "not away"
         assert ask(home, [question()]).context == ""
 
     with when("Alex answers a dialog, and 59 minutes pass"):
@@ -82,9 +82,9 @@ def test_as_a_hub_user_away_when_claude_asks_me_a_question_it_reaches_me_with_at
 def test_quiet_hours_count_as_away_in_the_time_zone_the_user_set(home):
     with given("away_guard is on with quiet hours 22:00-07:00 in Asia/Tokyo, nine hours ahead of UTC"):
         home.install()
-        home.hubctl("on", "away_guard")
-        home.hubctl_from_mod("set", "away_guard.quiet_hours", "22:00-07:00")
-        home.hubctl_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
+        home.step("on", "away_guard")
+        home.step_from_mod("set", "away_guard.quiet_hours", "22:00-07:00")
+        home.step_from_mod("set", "away_guard.time_zone", "Asia/Tokyo")
     with and_("Alex typed his last prompt at 21:50 Tokyo time"):
         set_clock(home, "2026-03-02T12:50:00Z")
         prompt(home, "Add the layout test.")
@@ -109,8 +109,8 @@ def test_quiet_hours_count_as_away_in_the_time_zone_the_user_set(home):
         assert ask(home, [question()]).context == ""
 
     with when("the user switches the quiet hours off with the empty default in /hub, and the time zone too"):
-        home.hubctl_from_mod("set", "away_guard.quiet_hours", "")
-        home.hubctl_from_mod("set", "away_guard.time_zone", "")
+        home.step_from_mod("set", "away_guard.quiet_hours", "")
+        home.step_from_mod("set", "away_guard.time_zone", "")
         set_clock(home, "2026-03-02T13:40:00Z")
     with then("only the idle limit counts"):
         assert ask(home, [question()]).context == ""

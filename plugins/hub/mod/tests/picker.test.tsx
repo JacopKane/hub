@@ -1,6 +1,6 @@
 // The feature picker pane, run by `claude plugin test plugins/hub`.
 // As in hub.test.tsx, the hooks registered here stand for the engine, and process.run answers
-// as hubctl would, with the full day 9 model from picker-day9.ts.
+// as the step would, with the full day 9 model from picker-day9.ts.
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, PromptOrigin } from 'claude-code'
@@ -61,9 +61,9 @@ function rowsOf(model: HubPickerScreen) {
   return found
 }
 
-// A hubctl that keeps the full model. A change sets the row and adds its strip line, newest
+// A step that keeps the full model. A change sets the row and adds its strip line, newest
 // first, and an undo adds an undo line. The band reads the day 9 model throughout.
-function hubctl() {
+function fakeStep() {
   const model = copy()
   const calls: { args: string; stdin: string | undefined }[] = []
   let made = 0
@@ -96,8 +96,8 @@ function hubctl() {
   return { model, calls, answer }
 }
 
-// Starts a session whose hubctl is `fake`, opens the picker as the user would, and mounts its pane.
-async function open($: Engine, on: On, fake = hubctl(), bodyColumns = 100, bodyRows = 30) {
+// Starts a session whose step is `fake`, opens the picker as the user would, and mounts its pane.
+async function open($: Engine, on: On, fake = fakeStep(), bodyColumns = 100, bodyRows = 30) {
   const written: string[] = []
   const landed: string[] = []
   const toasts: string[] = []
@@ -154,7 +154,7 @@ async function partLabels(ui: Mounted) {
     .map(button => String(button.props.label))
 }
 
-function changes(fake: ReturnType<typeof hubctl>) {
+function changes(fake: ReturnType<typeof fakeStep>) {
   return fake.calls.filter(call => !call.args.startsWith('screen ')).map(call => call.args)
 }
 
@@ -214,7 +214,7 @@ test('the picker rows equal the model, and only the first family with a new or w
 })
 
 test('with nothing new, the first family with a part that is on but waits starts open', async ($, on) => {
-  const fake = hubctl()
+  const fake = fakeStep()
   const rows = rowsOf(fake.model)
   for (const family of fake.model.families) {
     for (const part of family.parts) {
@@ -245,7 +245,7 @@ test('a new part shows new, and so does its family', async ($, on) => {
 
 test('instructions sit behind one row per part, and value lines are not buttons', async ($, on) => {
   // A body tall enough for every row, so the folds it opens are all drawn.
-  const { ui } = await open($, on, hubctl(), 100, TALL)
+  const { ui } = await open($, on, fakeStep(), 100, TALL)
 
   expect((await ui.find({ type: 'Button', key: 'more:builder' }))?.props.label).toBe('▸ 5 more')
   await ui.press({ key: 'more:builder' })
@@ -356,8 +356,8 @@ test('u takes back the changes this visit made, newest first, and shows only whi
   await ui.unmount()
 })
 
-test('a change hubctl refuses says why in a toast, and the row keeps its mark', async ($, on) => {
-  const fake = hubctl()
+test('a change the step refuses says why in a toast, and the row keeps its mark', async ($, on) => {
+  const fake = fakeStep()
   const answer = fake.answer
   fake.answer = (args, stdin) =>
     args[0] === 'on' ? { exitCode: 1, stdout: '', stderr: 'researcher needs a model\nmore\n' } : answer(args, stdin)
@@ -370,8 +370,8 @@ test('a change hubctl refuses says why in a toast, and the row keeps its mark', 
   await ui.unmount()
 })
 
-test('when hubctl does not answer, the pane says so in one line', async ($, on) => {
-  const fake = hubctl()
+test('when the step does not answer, the pane says so in one line', async ($, on) => {
+  const fake = fakeStep()
   const answer = fake.answer
   fake.answer = (args, stdin) =>
     args.includes('--all') ? { exitCode: 2, stdout: '', stderr: 'no state folder\n' } : answer(args, stdin)
@@ -409,7 +409,7 @@ for (const from of [
 
 test('at 40 columns every name fits, and no does text is drawn', async ($, on) => {
   // A body tall enough for every row, so the whole list is drawn at once and each label is read.
-  const { ui } = await open($, on, hubctl(), 40, TALL)
+  const { ui } = await open($, on, fakeStep(), 40, TALL)
 
   for (const family of PICKER_DAY9.families) {
     if ((await ui.find({ key: `family:${family.family}` }))?.props.label !== `▾ ${family.label ?? family.family}`) {
@@ -609,7 +609,7 @@ async function footer(ui: Mounted) {
 }
 
 test('at 40 columns the legend, the keys and undo come after the list and stay in view wherever the ring is', { timeoutMs: 20000 }, async ($, on) => {
-  const { ui, landed } = await open($, on, hubctl(), NARROW.columns, NARROW.rows)
+  const { ui, landed } = await open($, on, fakeStep(), NARROW.columns, NARROW.rows)
   const ring = personRing($, ui, landed)
   await ring.enter()
 
@@ -625,7 +625,7 @@ test('at 40 columns the legend, the keys and undo come after the list and stay i
 
 test('at 40 columns Up and Down walk the ring one control at a time through the whole list, past ▼ and ▲, and round at both ends', { timeoutMs: 30000 }, async ($, on) => {
   // A second value line under coordinator, so two value lines sit between two controls.
-  const fake = hubctl()
+  const fake = fakeStep()
   const coordinator = rowsOf(fake.model).get('coordinator') as HubPickerScreen['families'][number]['parts'][number]
   const name = coordinator.children.find(child => child.id === 'coordinator.name')
   expect(name).toBeDefined()
@@ -671,7 +671,7 @@ test('the list window keeps its last row for ▼, and a row for ▲ while lines 
 })
 
 test('at 140 columns the keys line is drawn after the list', async ($, on) => {
-  const { ui } = await open($, on, hubctl(), 140)
+  const { ui } = await open($, on, fakeStep(), 140)
 
   expect(await keysComeFirst(ui)).toBe(false)
   await ui.unmount()
@@ -690,7 +690,7 @@ async function pressAt(ui: Mounted, place: number) {
 
 for (const bodyColumns of [40, 140]) {
   test(`at ${bodyColumns} columns no control comes before the first family row, also once undo shows`, async ($, on) => {
-    const { ui } = await open($, on, hubctl(), bodyColumns)
+    const { ui } = await open($, on, fakeStep(), bodyColumns)
 
     await ui.press({ key: 'row:researcher' })
     expect(await ui.find({ type: 'Button', key: 'undo' })).toBeDefined()
@@ -703,7 +703,7 @@ for (const bodyColumns of [40, 140]) {
 }
 
 test('at 40 columns a second Enter on the same place takes the same row back', async ($, on) => {
-  const { ui, fake } = await open($, on, hubctl(), 40)
+  const { ui, fake } = await open($, on, fakeStep(), 40)
   const place = (await controls(ui)).findIndex(node => node.key === 'row:researcher')
 
   await pressAt(ui, place)
@@ -715,7 +715,7 @@ test('at 40 columns a second Enter on the same place takes the same row back', a
 
 for (const bodyColumns of [40, 140]) {
   test(`at ${bodyColumns} columns the last undo lands on the row it took back`, async ($, on) => {
-    const { ui, fake, stored } = await open($, on, hubctl(), bodyColumns)
+    const { ui, fake, stored } = await open($, on, fakeStep(), bodyColumns)
     await ui.press({ key: 'row:researcher' })
     await ui.press({ key: 'row:scout' })
 
@@ -737,7 +737,7 @@ for (const bodyColumns of [40, 140]) {
 // At 40x13: the ring walks to restart in chats, a press changes it, and the ring walks back up to
 // the top, so the list no longer draws restart.
 async function changeRestartThenGoTop($: Engine, on: On) {
-  const opened = await open($, on, hubctl(), NARROW.columns, NARROW.rows)
+  const opened = await open($, on, fakeStep(), NARROW.columns, NARROW.rows)
   const ring = personRing($, opened.ui, opened.landed)
   await ring.enter()
   expect(await walkTo(ring, 'family:chats')).toBe(true)
@@ -805,7 +805,7 @@ test('after the last undo the stored focus is the landing row, so the narrow doe
 })
 
 test('a last undo of a row in a folded family lands on the family line', async ($, on) => {
-  const { ui, stored } = await open($, on, hubctl(), 140)
+  const { ui, stored } = await open($, on, fakeStep(), 140)
   await ui.press({ key: 'family:chats' })
   await ui.press({ key: 'row:restart' })
   await ui.press({ key: 'family:chats' })
@@ -817,7 +817,7 @@ test('a last undo of a row in a folded family lands on the family line', async (
 })
 
 test('a last undo of a row in a closed part lands on the part row', async ($, on) => {
-  const { ui, stored } = await open($, on, hubctl(), 140)
+  const { ui, stored } = await open($, on, fakeStep(), 140)
   await ui.press({ key: 'more:builder' })
   await ui.press({ key: 'instructions:builder' })
   await ui.press({ key: 'row:builder.instructions.read_first' })
@@ -829,7 +829,7 @@ test('a last undo of a row in a closed part lands on the part row', async ($, on
 })
 
 test('a last undo of an instruction row lands on the instructions fold while it is folded', async ($, on) => {
-  const { ui, stored } = await open($, on, hubctl(), 140)
+  const { ui, stored } = await open($, on, fakeStep(), 140)
   await ui.press({ key: 'more:builder' })
   await ui.press({ key: 'instructions:builder' })
   await ui.press({ key: 'row:builder.instructions.read_first' })
@@ -856,7 +856,7 @@ test('an undo stack stored as plain strings before rows were kept still undoes, 
 })
 
 test('opening a family keeps the open family above it open, and the ring stays on its header', async ($, on) => {
-  const { ui, fake } = await open($, on, hubctl(), 40)
+  const { ui, fake } = await open($, on, fakeStep(), 40)
   const tierRows = await partLabels(ui)
   const place = (await controls(ui)).findIndex(node => node.key === 'family:chats')
 
@@ -880,7 +880,7 @@ const FOLDS = ['family:', 'more:', 'instructions:']
 for (const bodyColumns of [40, 100, 140]) {
   test(`at ${bodyColumns} columns a press or a pick on any control leaves every control above it as it was`, { timeoutMs: 20000 }, async ($, on) => {
     // A body tall enough for every row, so the walk reaches every control without moving the list.
-    const { ui } = await open($, on, hubctl(), bodyColumns, TALL)
+    const { ui } = await open($, on, fakeStep(), bodyColumns, TALL)
     const pressed: string[] = []
     const picked: string[] = []
 

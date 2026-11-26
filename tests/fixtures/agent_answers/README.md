@@ -1,6 +1,6 @@
 # Made-up setup agent answers
 
-The setup agent runs on a cheap model, which costs money, so the tests feed `hubctl setup --answer` these files instead. They are written by hand in the shape the agent's text asks for.
+The setup agent runs on a cheap model, which costs money, so the tests feed `hub setup --answer` these files instead. They are written by hand in the shape the agent's text asks for.
 
 - `work_laptop.json` has two good questions and a third one whose only option sets a flag hub does not have, so setup drops it.
 - `compare_rules.json` names one instruction the user's own CLAUDE.md already holds, and one id hub does not have.

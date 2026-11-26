@@ -89,8 +89,6 @@ def bash_bookkeeping(command, cwd, flags):
         words = shlex.split(command)
     except ValueError:
         return False
-    if words and os.path.basename(words[0]) == "hubctl":
-        return True
     if len(words) > 1 and re.fullmatch(r"python[\d.]*", os.path.basename(words[0])):
         script = next((word for word in words[1:] if not word.startswith("-")), "")
         if os.path.basename(script) == "hub_switch.py":
@@ -218,7 +216,7 @@ def handle(event, hook_input, flags, answer):
 
 
 def doctor(flags):
-    """What hubctl doctor says: who the coordinator is, and whether it runs now."""
+    """What the step's doctor says: who the coordinator is, and whether it runs now."""
     name = coordinator_name(flags)
     rows, problem = sessions.run_listing()
     if problem:

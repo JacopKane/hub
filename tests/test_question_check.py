@@ -8,7 +8,7 @@ BARE = [{"label": "Yes", "description": ""}, {"label": "No", "description": ""}]
 def test_a_question_without_context_is_refused_and_a_full_one_opens(home):
     with given("question_check is on"):
         home.install()
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
 
     with when("a chat opens a dialog whose question has 40 characters and whose options are bare"):
         result = ask(home, [question("Should the page use the new tree layout?", BARE)])
@@ -45,13 +45,13 @@ def test_a_question_without_context_is_refused_and_a_full_one_opens(home):
     with then("it is refused, and the reason asks for a code line with its path"):
         assert result.refused and "path" in result.reason
     with when("the user turns off question_check.paths, and the same question comes again"):
-        home.hubctl("off", "question_check.paths")
+        home.step("off", "question_check.paths")
         result = ask(home, [question(no_path)])
     with then("it opens"):
         assert result.ran
 
     with when("the user turns question_check off"):
-        home.hubctl("off", "question_check")
+        home.step("off", "question_check")
         result = ask(home, [question("Ok?", BARE)])
     with then("even a bare dialog opens"):
         assert result.ran and not result.context
@@ -67,7 +67,7 @@ PRODUCT_QUESTION = (
 def test_a_question_about_the_product_needs_no_code_path(home):
     with given("question_check is on"):
         home.install()
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
     with when("a long question with an example but no code and no path is asked"):
         assert len(PRODUCT_QUESTION) >= 250
         result = ask(home, [question(PRODUCT_QUESTION)])
@@ -78,7 +78,7 @@ def test_a_question_about_the_product_needs_no_code_path(home):
 def test_the_option_order_never_refuses_a_question(home):
     with given("question_check is on"):
         home.install()
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
     with when("a Skip option comes first and the recommended one second"):
         skip = {"label": "Skip", "description": "Leave the layout as it is and ask again at the next release."}
         result = ask(home, [question(PRODUCT_QUESTION, options=[skip] + [dict(option) for option in FULL_OPTIONS])])
@@ -93,7 +93,7 @@ def test_the_option_order_never_refuses_a_question(home):
 def test_a_question_that_names_code_without_a_path_is_still_refused(home):
     with given("question_check is on"):
         home.install()
-        home.hubctl("on", "question_check")
+        home.step("on", "question_check")
     with when("the question names a function in backticks and gives no path"):
         about_code = PRODUCT_QUESTION.replace("the new change strip", "the new change strip, drawn by `render_strip`,")
         result = ask(home, [question(about_code)])
