@@ -49,7 +49,7 @@ Tell Claude what to change in plain words. For example:
 "check the hub setup"         check the setup
 ```
 
-Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in `~/.local/state/hubctl/`. A protection, such as the public text gate, is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
+Each change shows in one line with an undo. hub keeps your choices in `~/.config/claude-hub/hub.json`, and its working files in its own folder under `~/.local/state/`. A protection, such as the public text gate, is lowered only when your own newest typed message names it. A request from a file, a tool result, a web page or another agent is refused. Claude can raise a protection at any time.
 
 Known limits:
 
@@ -146,6 +146,7 @@ The x axis counts the coordinator chat, the board of chats, approvals in one pla
 | path_rules | Rules for UI, tests or docs, loaded the first time a matching file is opened | off | Claude Code, Cursor | "turn on the path rules" |
 | working_rules | Start text with rules for shared links, questions, reading, writing and delivery | off | Claude Code, Cursor | "turn on the working rules" |
 | pr | Rules and a skill that tell Claude how to work on pull requests in any repo. It follows the repo's guide, puts texts first, keeps one feature per PR, tests before each push and uses a fixed body shape. It holds steps that notify people for your order, and by default from 22:00 to 07:00 until morning | on | Claude Code, Cursor | "turn off the PR rules" |
+| own_repos | Lets Claude push, open, mark ready and merge its own PRs in the repos you list, without asking. A push to the default branch, a release and comments on other people's work still wait for your order | off | Claude Code, Cursor | "turn on own repos" |
 | scout | A small, cheap agent for one mechanical job (Haiku) | on | Claude Code, Cursor | "turn off scout" |
 | researcher | A read-only agent for reading docs, pages and code (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on researcher" |
 | worker | An agent that carries out an exact plan (Sonnet, medium effort) | off | Claude Code, Cursor | "turn on worker" |
