@@ -131,3 +131,89 @@ def test_a_table_the_user_pinned_in_part_takes_the_newest_ids_for_what_it_leaves
         assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-opus-5[effort=high]"
         assert front_matter(cursor_agent(home, "scout"))["model"].startswith("claude-haiku-5-5")
         assert home.settings()["flags"][MAP] == {"by": "user", "value": ["opus=claude-opus-5"]}
+
+
+def set_model_default(home, part, alias):
+    """What a hub release that moves an agent to another model changes: that agent's model default."""
+    def change(manifest):
+        next(node for node in nodes(manifest) if node.get("id") == "model")["default"] = alias
+    home.edit_manifest(part, change)
+
+
+TOOL_CALL = {"AI_AGENT": "claude-code_2-1-319_agent", "CLAUDECODE": "1"}
+
+
+def as_claude(home):
+    """The next hubctl runs come from a command Claude runs in a tool call."""
+    home.env = dict(home.env, **TOOL_CALL)
+
+
+def as_user(home):
+    """The next hubctl runs come from the user's own terminal."""
+    home.env = {name: value for name, value in home.env.items() if name not in TOOL_CALL}
+
+
+def test_a_version_pinned_for_the_user_stays_when_it_is_todays_default(home):
+    with given("hub installed with the Cursor beta and builder on"):
+        os.makedirs(home.config)
+        use_cursor_beta(home)
+        home.switch_on("builder")
+        home.install()
+    with when("the user asks Claude to keep scout on haiku, which is its default, and Claude runs hubctl"):
+        as_claude(home)
+        home.hubctl("set", "scout.model", "haiku")
+    with then("the choice is in the settings file, though it equals the default"):
+        assert home.settings()["flags"]["scout.model"] == {"by": "model", "value": "haiku"}
+    with when("Claude tries to set Cursor's table, which belongs to a beta part"):
+        refused = home.hubctl("set", MAP, "opus=claude-opus-5-5", check=False)
+    with then("it is refused, so only the user sets that table"):
+        assert refused.returncode == 1 and "only the user" in refused.stderr
+        assert MAP not in home.settings()["flags"]
+    with when("the user pins Cursor's table to today's default from their own terminal"):
+        as_user(home)
+        today = ["opus=claude-opus-5-5", "sonnet=claude-sonnet-5-5", "haiku=claude-haiku-5-5"]
+        home.hubctl("set", MAP, *today)
+    with then("the table is stored as the user's pin"):
+        assert home.settings()["flags"][MAP] == {"by": "user", "value": today}
+    with when("a release ships newer Cursor ids and moves scout to sonnet"):
+        set_map_default(home, ["opus=claude-opus-6", "sonnet=claude-sonnet-6", "haiku=claude-haiku-6"])
+        set_model_default(home, "scout", "sonnet")
+        home.hubctl("apply")
+    with then("the user keeps the pinned ids, and scout keeps haiku in both tools"):
+        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-opus-5-5[effort=high]"
+        assert front_matter(cursor_agent(home, "scout"))["model"].startswith("claude-haiku-5-5")
+        assert front_matter(agent_link(home, "scout"))["model"] == "haiku"
+    with when("Claude moves builder to sonnet, which is not its default, and the user pins only Opus in the table"):
+        as_claude(home)
+        home.hubctl("set", "builder.model", "sonnet")
+        as_user(home)
+        home.hubctl("set", MAP, "opus=claude-opus-5-5")
+    with then("builder runs sonnet, and the families the table leaves out take the release's ids"):
+        assert home.settings()["flags"]["builder.model"] == {"by": "model", "value": "sonnet"}
+        assert front_matter(agent_link(home, "builder"))["model"] == "sonnet"
+        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-sonnet-6[effort=high]"
+        assert front_matter(cursor_agent(home, "scout"))["model"].startswith("claude-haiku-6")
+    with when("the user clears the pins from the settings file and the next release ships"):
+        data = home.settings()
+        for flag in (MAP, "scout.model", "builder.model"):
+            data["flags"].pop(flag)
+        home.write_json(home.user_file, data)
+        set_map_default(home, ["opus=claude-opus-7", "sonnet=claude-sonnet-7", "haiku=claude-haiku-7"])
+        home.hubctl("apply")
+    with then("every agent follows the newest release again"):
+        assert front_matter(cursor_agent(home, "builder"))["model"] == "claude-opus-7[effort=high]"
+        assert front_matter(cursor_agent(home, "scout"))["model"].startswith("claude-sonnet-7")
+        assert front_matter(agent_link(home, "scout"))["model"] == "sonnet"
+
+
+def test_setup_and_the_tuner_still_leave_a_default_out_of_the_file(home):
+    with given("hub is installed"):
+        home.install()
+    with when("setup and the tuner write scout's default model, and Claude writes another flag's default"):
+        home.set_by("setup", "scout.model", "haiku")
+        home.set_by("tuner", "builder.model", "opus")
+        as_claude(home)
+        home.hubctl("on", "demo_gate.unreadable")
+    with then("nothing is stored, so each follows the next release"):
+        flags = home.settings().get("flags", {})
+        assert not {"scout.model", "builder.model", "demo_gate.unreadable"} & set(flags)

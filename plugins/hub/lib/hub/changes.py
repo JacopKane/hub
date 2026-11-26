@@ -111,11 +111,28 @@ def on_value(node):
     raise ChangeError(f"{node.id} is a {node.type}, so set it with a value")
 
 
+# Options that name a model. A release can move their default to a newer model.
+MODEL_CHOICES = ("model", "effort_map")
+
+
+def drops_default(node, by):
+    """Whether a value equal to the default leaves the file instead of being stored.
+
+    The user's own values are always stored, as pins. A model the user asked
+    Claude for is stored too, so a release that moves the default does not
+    move it. Setup and the tuner store only what differs from the default.
+    """
+    if by == "user":
+        return False
+    return not (by == "model" and node.name in MODEL_CHOICES)
+
+
 def planned(data, node, value, by):
     """A copy of one scope's data with the change in it, as set_flag writes it."""
     changed = copy.deepcopy(data)
     profile = resolve.load_profile()
-    if by != "user" and value == resolve.default_value(node, profile, resolve.facts_for("claude_code", profile)):
+    default = resolve.default_value(node, profile, resolve.facts_for("claude_code", profile))
+    if drops_default(node, by) and value == default:
         settings.drop(changed, node.id)
     else:
         settings.put(changed, node.id, value, by)
@@ -275,7 +292,7 @@ def set_flag(flag_id, value, by="user", scope="user", door="hubctl", cwd=None, r
         if expected is not ANY and old != expected:
             raise ChangeError(f"{undoes or flag_id} can not be undone, because {flag_id} changed since. It is "
                               f"{json.dumps(old, ensure_ascii=False)} now. Set it again by name.")
-        if by != "user" and value == default:
+        if drops_default(node, by) and value == default:
             settings.drop(data, flag_id)
         else:
             settings.put(data, flag_id, value, by)
