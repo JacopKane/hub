@@ -616,6 +616,13 @@ def test_a_hub_link_deleted_before_setup_waits_for_setup_and_then_turns_its_part
         assert link not in first + second
         assert link in [entry["path"] for entry in home.state_file("links.json")["links"]]
         assert "hub setup" in setup_context(home)
+    with when("two new chats start"):
+        applies = os.path.join(home.state, "applies.jsonl")
+        applied = len(read(applies).splitlines())
+        session_start(home)
+        session_start(home)
+    with then("their hooks find apply fresh and do not apply again while the link waits for setup"):
+        assert len(read(applies).splitlines()) == applied
     with when("setup runs"):
         summary = run_setup(home)
     with then("the part is off and pinned by the user, and one line says why"):
