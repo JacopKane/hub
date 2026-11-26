@@ -235,7 +235,7 @@ class Home:
 
         No tool-call mark and no mod mark, and stdin is a terminal (a pty) with one
         line typed into it: the word after the verb, unless `typed` says what to type.
-        the step never reads a terminal, so the typed line shows that typing opens no door.
+        The step never reads a terminal, so the typed line shows that typing opens no door.
         """
         env = {name: value for name, value in self.env.items() if name not in (*TOOL_CALL_MARKERS, "HUB_DOOR")}
         controller, terminal = pty.openpty()

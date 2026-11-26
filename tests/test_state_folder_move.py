@@ -1,13 +1,15 @@
 """hub's state folder is ~/.local/state/claude-hub. An earlier hub kept it in ~/.local/state/hubctl.
 
 The first hub process that finds only the old folder moves it to the new name in one rename,
-with every record, the history and the held files in it. The next apply points the links at
-the moved copies. When both folders exist, the new one is used and the old one is never touched;
-uninstall names it with the command that deletes it.
+with every record, the history and the held files in it, and leaves a link under the old name,
+so a chat that still runs an earlier hub writes into the same folder. The next apply points the
+links at the moved copies. When both folders exist, the new one is used and the old one is never
+touched; uninstall names it and its held files with the commands that delete them.
 """
 import json
 import os
 import subprocess
+import sys
 
 from conftest import load_fixture
 from steps import and_, given, then, when
@@ -98,6 +100,21 @@ def make_old_layout(home):
             os.symlink(entry["target"], entry["path"])
 
 
+def earlier_hub_writes(home, name, text):
+    """What an earlier hub in another chat does: it makes its state folder if it is missing, then writes a file there.
+
+    It knows only the old name, and writes through a temp file and a rename, as hub always has.
+    """
+    script = ("import os, sys, tempfile\n"
+              "folder = os.path.join(sys.argv[1], 'chat_notices')\n"
+              "os.makedirs(folder, exist_ok=True)\n"
+              "handle, temp = tempfile.mkstemp(dir=folder)\n"
+              "os.write(handle, sys.argv[3].encode())\n"
+              "os.close(handle)\n"
+              "os.replace(temp, os.path.join(folder, sys.argv[2]))\n")
+    subprocess.run([sys.executable, "-I", "-c", script, old_state(home), name, text], env=home.env, check=True)
+
+
 def run_hook(home, event):
     """One Claude Code hook as hooks.json starts it, through pre_check.sh."""
     script = os.path.join(home.plugin, "lib", "hub", "pre_check.sh")
@@ -148,9 +165,10 @@ def test_an_earlier_install_is_moved_once_with_its_data_and_its_links_point_at_t
         assert hook.returncode == 0, hook.stderr
         assert finished == [(0, "")] * 4
         assert not os.path.exists(os.path.join(new_state(home), "errors.log"))
-    with and_("the old folder is gone and the new one holds the history and the held file"):
+    with and_("the old name is now only a link to the new folder, which holds the history and the held file"):
         new = new_state(home)
-        assert not os.path.lexists(old)
+        assert os.path.islink(old) and os.path.realpath(old) == os.path.realpath(new)
+        assert os.path.isdir(new) and not os.path.islink(new)
         assert history(new)[:2] == lines_before
         assert read(os.path.join(new, "held", "agents", "builder.md")).endswith("Mine.\n")
     with and_("the builder link points at the built copy in the new folder, and every recorded link resolves"):
@@ -191,6 +209,79 @@ def test_with_both_folders_the_new_one_is_used_and_the_old_one_is_left_alone(hom
         assert tree_bytes(old) == before
     with when("the user uninstalls hub"):
         result = home.step("uninstall")
-    with then("the output names the old folder with the command that deletes it, and the folder stays as it was"):
-        assert f"rm -rf {old}" in result.stdout
+    with then("the output names the old folder and its held files with the commands that delete them"):
+        assert f"to delete the files an earlier hub held for you: rm -rf {os.path.join(old, 'held')}\n" in result.stdout
+        assert f"to delete the state folder of an earlier hub: rm -rf {old}\n" in result.stdout
+    with and_("the old folder stays as it was, a real folder and not a link"):
+        assert not os.path.islink(old)
+        assert tree_bytes(old) == before
+
+
+def test_a_chat_that_still_runs_an_earlier_hub_writes_into_the_moved_folder_and_uninstall_removes_the_link(home):
+    with given("an earlier hub's layout, where the user turned off a builder section"):
+        home.switch_on("builder")
+        home.install()
+        home.step("off", "builder.instructions.test_first")
+        make_old_layout(home)
+        new, old = new_state(home), old_state(home)
+        lines_before = history(old)
+    with when("this hub runs a step, which moves the folder"):
+        home.step("show")
+    with then("the old name is a link to the new folder"):
+        assert os.path.islink(old) and os.path.realpath(old) == os.path.realpath(new)
+    with when("an earlier hub in another chat writes a chat notice through the old name"):
+        earlier_hub_writes(home, "chat-1.jsonl", '{"from": "an earlier hub"}\n')
+    with then("the notice is in the new folder, and there is still only one folder"):
+        assert read(os.path.join(new, "chat_notices", "chat-1.jsonl")) == '{"from": "an earlier hub"}\n'
+        assert os.path.islink(old) and os.path.realpath(old) == os.path.realpath(new)
+    with when("this hub runs a step, a Stop hook and the doctor again"):
+        home.step("show")
+        hook = run_hook(home, "Stop")
+        doctor = home.step("doctor", check=False)
+    with then("the link is not moved or taken for a second install, and the doctor does not name it"):
+        assert hook.returncode == 0, hook.stderr
+        assert os.path.islink(old) and os.readlink(old) == "claude-hub"
+        assert os.path.isdir(new) and not os.path.islink(new)
+        assert history(new)[:len(lines_before)] == lines_before
+        assert old not in doctor.stdout + doctor.stderr
+        assert not os.path.exists(os.path.join(new, "errors.log"))
+    with when("the user uninstalls hub"):
+        result = home.step("uninstall")
+    with then("the link is gone, and the output does not offer to delete an earlier hub's folder"):
+        assert not os.path.lexists(old)
+        assert "earlier hub" not in result.stdout
+    with and_("the new folder is still a real folder"):
+        assert os.path.isdir(new) and not os.path.islink(new)
+
+
+def test_when_an_earlier_hub_makes_its_folder_again_during_the_move_both_folders_stay_and_nothing_fails(home):
+    with given("an earlier hub's layout, where the user turned off a builder section"):
+        home.switch_on("builder")
+        home.install()
+        home.step("off", "builder.instructions.test_first")
+        make_old_layout(home)
+        new, old = new_state(home), old_state(home)
+        lines_before = history(old)
+    with when("this hub moves the folder, and an earlier hub in another chat makes its folder again before the link"):
+        script = ("import os, sys\n"
+                  "sys.path.insert(0, sys.argv[1])\n"
+                  "from hub import files\n"
+                  "rename = os.rename\n"
+                  "def rename_then_earlier_hub(old, new):\n"
+                  "    rename(old, new)\n"
+                  "    os.makedirs(os.path.join(old, 'chat_notices'))\n"
+                  "os.rename = rename_then_earlier_hub\n"
+                  "print(files.state_dir())\n")
+        moved = subprocess.run([sys.executable, "-I", "-c", script, os.path.join(home.plugin, "lib")],
+                               env=home.env, capture_output=True, text=True, timeout=60)
+    with then("the move ends well and the new folder holds the history"):
+        assert moved.returncode == 0 and moved.stdout.strip() == new, moved.stderr
+        assert history(new)[:len(lines_before)] == lines_before
+    with and_("the earlier hub's folder stays a real folder beside it, as when both folders exist"):
+        assert os.path.isdir(old) and not os.path.islink(old)
+        before = tree_bytes(old)
+    with when("this hub runs a step"):
+        home.step("show")
+    with then("the old folder is left as it is"):
+        assert os.path.isdir(old) and not os.path.islink(old)
         assert tree_bytes(old) == before

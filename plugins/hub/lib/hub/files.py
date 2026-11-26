@@ -117,8 +117,11 @@ def move_old_state(old, new):
 
     The links still point into the old folder until the next apply, which sees
     their recorded root and points them at the new one (see apply.is_fresh).
+    After the rename the old name becomes a link to the new folder, so a chat
+    that still runs an earlier hub writes into the same folder and does not
+    start a second one. That link is never moved again, and uninstall removes it.
     When both folders exist, the new one wins and the old one stays as it is.
-    Hooks start together, so a rename another process made first is no error.
+    Hooks start together, so a rename or a link another process made first is no error.
     """
     if os.path.lexists(new) or not os.path.isdir(old) or os.path.islink(old):
         return
@@ -126,6 +129,16 @@ def move_old_state(old, new):
         os.rename(old, new)
     except OSError:
         return
+    try:
+        # A relative link, so it still holds when the whole state base moves.
+        os.symlink(os.path.basename(new), old)
+    except OSError:
+        return  # an earlier hub made a new folder there first; that is the both-folders case
+
+
+def is_old_state_link(old, new):
+    """Whether the old state name is the link move_old_state left, pointing at the new folder."""
+    return os.path.islink(old) and os.path.realpath(old) == os.path.realpath(new)
 
 
 def moved_state_path(path):
