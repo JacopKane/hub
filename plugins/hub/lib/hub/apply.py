@@ -25,6 +25,12 @@ were switched (see switched.py). It returns the lines the step's apply prints.
 While cursor_link does not run, apply writes no Cursor slots and removes the
 old ones, since Cursor support is beta and off by default.
 
+An older hub copy never builds over files that a newer copy built (see
+newest.py). Its run returns one line that says why. It also marks
+resolved.json stale, so the newer copy builds the run's changes on its next
+run. Its hooks get the flags resolved in memory for its own parts, so they
+still follow the settings.
+
 After the step's uninstall, apply changes nothing until a new copy of hub is
 installed (see uninstall.is_out), and ensure_fresh raises Uninstalled.
 
@@ -40,7 +46,7 @@ import os
 import re
 import shutil
 
-from . import files, keys, links, resolve, settings, slots, tree as tree_module, uninstall
+from . import files, keys, links, newest, resolve, settings, slots, tree as tree_module, uninstall
 
 APPLIES = "applies.jsonl"
 COST = "cost.json"
@@ -80,6 +86,10 @@ def setup_run():
 def run(tree=None):
     if uninstall.is_out():
         return [uninstall.OUT]
+    newer = newest.newer_build()
+    if newer:
+        mark_stale()
+        return [newest.left_alone_line(newer)]
     uninstall.clear_old_mark()
     from . import old_jobs, switched  # only an apply needs them, not every hook that loads this module
     lines = []
@@ -116,6 +126,7 @@ def run(tree=None):
     old_lines, _finished = old_jobs.remove(restart=lambda parts: switched.restart(tree, parts & ran_before & running))
     lines += old_lines
     files.append_line(files.state_path(APPLIES), {"time": resolve.now(), "lines": len(lines)})
+    newest.record_build()
     files.write_json(files.state_path(resolve.RESOLVED), data)
     mark_group_parts(data)
     for part, which in switched.changes(tree, ran_before, running):
@@ -230,6 +241,9 @@ def is_fresh(data):
 def ensure_fresh(session=None):
     """resolved.json, after applying first when it is stale.
 
+    When a newer hub copy built the files, it applies nothing and returns
+    this copy's own flags, resolved in memory (see own_flags).
+
     When this run made ~/.claude/agents, the doctor's note about it is marked
     with the session, so that session's own start does not clear it.
     """
@@ -241,14 +255,35 @@ def ensure_fresh(session=None):
         return data
     with files.locked():
         data = files.read_json(path)
-        if not is_fresh(data):
+        if is_fresh(data):
+            return data
+        if not newest.newer_build():
             made_before = files.read_json(files.state_path(links.AGENTS_FOLDER_MADE))
             run()
             data = files.read_json(path)
             note = files.read_json(files.state_path(links.AGENTS_FOLDER_MADE))
             if session and note and not made_before:
                 files.write_json(files.state_path(links.AGENTS_FOLDER_MADE), dict(note, session=session))
-    return data
+            return data
+    return own_flags()
+
+
+def mark_stale():
+    """Make is_fresh fail for every copy, so the next copy that may build does build."""
+    path = files.state_path(resolve.RESOLVED)
+    try:
+        data = files.read_json(path)
+    except ValueError:
+        return
+    if isinstance(data, dict):
+        files.write_json(path, dict(data, signature=None))
+
+
+def own_flags():
+    """What resolved.json would hold for this copy's own parts, resolved in memory and written nowhere."""
+    tree = tree_module.load(files.PARTS_DIR)
+    return {"version": 1, "built": resolve.now(), "signature": resolve.signature(), "texts": resolve.texts(tree),
+            "tools": resolve.in_memory()}
 
 
 def cost(tool):
