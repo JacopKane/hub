@@ -44,11 +44,11 @@ The commit check looks at each commit on its own:
 
 ## Every control works from the coordinator chat
 
-Every control a part offers must work from the coordinator chat. That means turning the part on or off, its kill switch, and any change it protects. The user should never have to type in one topic chat's own window.
+Every control a part offers must work from the coordinator chat. That means turning the part on or off, its kill switch, and any change it protects. The user should never have to type in one topic chat's own window, except to answer a permission prompt there.
 
 The reason is where the user is. They talk to the coordinator chat, while a topic chat often runs the step in a window they may never open. A control that waits for words typed in that window waits forever.
 
 - A change the user asks for in the coordinator chat counts as their order in the chat that runs it, when the coordinator forwards it in the user's words.
-- /hub works in every chat, the coordinator chat too.
+- /hub works in every chat where Claude Code loads plugin mods, the coordinator chat too. When another command already has the name, hub uses /hub-flags.
 - If a part still has to tell the user's order from an agent's, it takes the order in a form the coordinator chat can give, such as the user's answer there.
 - When a part refuses a change, its message says how to make it from the coordinator chat.
