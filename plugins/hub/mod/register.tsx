@@ -12,6 +12,7 @@ import type {
   HubBandFlags,
   HubChatsZone,
   HubCommand,
+  HubCommandClash,
   HubRelay,
   HubRelayDialog,
   HubRelayNext,
@@ -24,12 +25,16 @@ const band = atom({ plugin: 'hub', key: 'band' } as const, { screen: null, failu
 const now = atom({ plugin: 'hub', key: 'now' } as const, 0)
 const command = atom({ plugin: 'hub', key: 'command' } as const, { used: null, refused: {} } as HubCommand)
 const relay = atom({ plugin: 'hub', key: 'relay' } as const, { hub: false, waiting: 0 } as HubRelay)
+// Whether this session's clash is new, so the band shows its line. Null until the first screen read.
+const clashNew = atom({ plugin: 'hub', key: 'clashNew' } as const, null as boolean | null)
+// Whether this session told the step that the band drew the clash line.
+const clashDrawn = atom({ plugin: 'hub', key: 'clashDrawn' } as const, false)
 // The time of the last tuner list the side call took, so each list gets one try in a session.
 const tried = atom({ plugin: 'hub', key: 'tried' } as const, '')
 
 export const COMMAND = 'hub'
 // The name the door takes when Claude Code gives /hub to something else, such as the
-// user's own skill named hub. The band and the doctor both name the clash.
+// user's own skill named hub. The doctor names the clash, and the band names it only while it is new.
 const FALLBACK = 'hub-flags'
 const SPEC = {
   description: "Show hub's parts and flags, or change one, without a model turn",
@@ -67,9 +72,10 @@ type Shown = {
   text: string | null
   textCells: number
   buttons: ShownButton[]
+  isClash: boolean
 }
 
-type Notice = { text: string; cells: number | null; buttons: ShownButton[] }
+type Notice = { text: string; cells: number | null; buttons: ShownButton[]; isClash?: boolean }
 
 // A change may take a while to apply, but reading the screen should be quick. The band keeps
 // its last state until a read ends. So a stuck step never holds up a session start or a turn.
@@ -128,17 +134,54 @@ async function registerCommand($: EngineInterface): Promise<HubCommand> {
   return { used: null, refused }
 }
 
+// The clash an earlier session told the step is the same one this session found.
+function sameClash(got: HubCommand, held: HubCommandClash | null) {
+  if (held === null || held.used !== got.used) {
+    return false
+  }
+  const names = Object.keys(got.refused)
+  return names.length === Object.keys(held.refused).length && names.every(name => held.refused[name] === got.refused[name])
+}
+
+// The band names a clash until it has drawn its line once, and again when the clash changes. A
+// question, a change, an offer or a band that is off can keep the line away, and then the next
+// session shows it. After that the doctor holds it. With /hub-flags taken too hub has no command,
+// so the line stays.
+function isNewClash(got: HubCommand, held: HubCommandClash | null) {
+  return got.used === null || !sameClash(got, held) || held?.shown !== true
+}
+
+// One write to the step's clash record at a time, so a session's report never overwrites the mark
+// that the band drew the line.
+let recordWrites: Promise<void> = Promise.resolve()
+
+function writeRecord($: EngineInterface, record: HubCommand & { shown?: boolean }) {
+  recordWrites = recordWrites.then(async () => {
+    try {
+      await runStep($, ['mod-command', '--json'], JSON.stringify(record))
+    } catch {
+      // The band already says what clashed; the doctor line waits for the next start.
+    }
+  })
+  return recordWrites
+}
+
 // The step keeps the clash for the doctor. A session that gets /hub again clears it.
 async function tellStep($: EngineInterface, got: HubCommand, screen: HubScreen | null) {
   const clashed = Object.keys(got.refused).length > 0
   if (!clashed && (screen === null || screen.command_clash === null)) {
     return
   }
-  try {
-    await runStep($, ['mod-command', '--json'], JSON.stringify(got))
-  } catch {
-    // The band already says what clashed; the doctor line waits for the next start.
+  await writeRecord($, got)
+}
+
+// Called once the band has drawn the clash line, so later sessions with the same clash stay quiet.
+async function markDrawn($: EngineInterface) {
+  if (await read($, clashDrawn)) {
+    return
   }
+  await update($, clashDrawn, () => true)
+  await writeRecord($, { ...(await read($, command)), shown: true })
 }
 
 function firstLine(text: string) {
@@ -158,6 +201,13 @@ async function readScreen($: EngineInterface) {
     next = { screen: null, failure: error instanceof Error ? error.message : String(error) }
   }
   const time = await $.clock.now()
+  // The first read comes before tellStep, so the screen still holds what earlier sessions found.
+  // Noted before the band, so no draw shows the clash line in a session that keeps it quiet.
+  const held = next.screen?.command_clash
+  if (held !== undefined && (await read($, clashNew)) === null) {
+    const got = await read($, command)
+    await update($, clashNew, () => isNewClash(got, held))
+  }
   await update($, band, () => next)
   await update($, now, () => time)
   followBoard($, next)
@@ -443,7 +493,7 @@ function failedText(count: number) {
 }
 
 // Only the question's line comes with its cells from the step; the mod counts the other notices.
-function notice(screen: HubScreen, time: number, got: HubCommand): Notice | null {
+function notice(screen: HubScreen, time: number, got: HubCommand, clashShows: boolean): Notice | null {
   const flags = screen.band
   const digit = flags.first_digit
   const question = flags.chats ? screen.board?.chats?.question ?? null : null
@@ -472,8 +522,8 @@ function notice(screen: HubScreen, time: number, got: HubCommand): Notice | null
       }),
     }
   }
-  if (got.refused[COMMAND] !== undefined) {
-    return { text: clashText(got), cells: null, buttons: [] }
+  if (clashShows && got.refused[COMMAND] !== undefined) {
+    return { text: clashText(got), cells: null, buttons: [], isClash: true }
   }
   if (flags.state) {
     const header = screen.header
@@ -490,11 +540,11 @@ function waitingText(waiting: HubRelay) {
   return waiting.waiting === 1 ? '1 prompt waits' : `${waiting.waiting} prompts wait`
 }
 
-function shown(state: HubBand, time: number, got: HubCommand, columns: number, waiting: HubRelay): Shown | null {
+function shown(state: HubBand, time: number, got: HubCommand, clashShows: boolean, columns: number, waiting: HubRelay): Shown | null {
   const { screen, failure } = state
   if (failure !== null) {
     const text = `✗ hub did not answer: ${failure}`
-    return { top: topRow(columns, '1 hub', '', null, null), text, textCells: cellWidth(text), buttons: [] }
+    return { top: topRow(columns, '1 hub', '', null, null), text, textCells: cellWidth(text), buttons: [], isClash: false }
   }
   if (screen === null || !screen.band.runs) {
     return null
@@ -502,7 +552,7 @@ function shown(state: HubBand, time: number, got: HubCommand, columns: number, w
   const flags = screen.band
   const chats = flags.chats ? screen.board?.chats ?? null : null
   const count = flags.problems ? screen.board?.failed ?? 0 : 0
-  const line = notice(screen, time, got)
+  const line = notice(screen, time, got, clashShows)
   const prompts = waitingText(waiting)
   if (line === null && chats === null && count <= 0 && prompts === '') {
     return null
@@ -514,6 +564,7 @@ function shown(state: HubBand, time: number, got: HubCommand, columns: number, w
     text: line?.text ?? null,
     textCells: line === null ? 0 : line.cells ?? cellWidth(line.text),
     buttons: line?.buttons ?? [],
+    isClash: line?.isClash === true,
   }
 }
 
@@ -541,6 +592,8 @@ function origin(from: PromptOrigin | undefined) {
 
 async function startRead($: EngineInterface, got: HubCommand) {
   await refresh($)
+  // A first read that failed can not tell an old clash from a new one, so the line shows.
+  await update($, clashNew, isNew => isNew ?? true)
   await tellStep($, got, (await read($, band)).screen)
   await askRelay($)
 }
@@ -788,11 +841,17 @@ export const register: Register = on => {
       await read($, band),
       await read($, now),
       await read($, command),
+      (await read($, clashNew)) === true,
       e.props.bodyColumns,
       await read($, relay),
     )
     if (line === null) {
       return next(e)
+    }
+    if (line.isClash) {
+      $.clock.after(0, () => {
+        void markDrawn($)
+      })
     }
     const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns

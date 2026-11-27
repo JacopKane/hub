@@ -374,6 +374,138 @@ test('once /hub is free again, the mod clears the clash the step holds', async (
   expect(stdin.map(text => JSON.parse(text))).toEqual([{ used: 'hub', refused: {} }])
 })
 
+// The clash the step holds from an earlier session whose band drew the line, as `screen --json` sends it.
+const HELD_CLASH = {
+  used: 'hub-flags',
+  refused: { hub: "it is the user's /hub" },
+  folder: '/',
+  time: '2026-11-09T09:00:00Z',
+  shown: true,
+}
+const USERS_HUB_FLAGS = '"/hub-flags" refused: it is the user\'s /hub-flags'
+const DOCTOR_CLASH = 'command_clash: In /, Claude Code gave /hub (it is the user\'s /hub) to something else\n'
+const CLASH_LINE = "✗ /hub is taken (it is the user's /hub), so hub uses /hub-flags"
+// No change or offer line, so the event row shows the clash line or the state line.
+const QUIET = withBand({ notices: false, offers: false })
+
+// A session whose step holds `held(read)` as the clash at each screen read, counted from 1. It
+// returns what the band drew after a turn end, and each record the mod sent to `mod-command`.
+async function clashSession(
+  $: Engine,
+  on: On,
+  taken: Record<string, string>,
+  held: (read: number) => HubScreen['command_clash'],
+  screen: HubScreen = QUIET,
+) {
+  const told: { used: string | null; refused: Record<string, string>; shown?: boolean }[] = []
+  let reads = 0
+  const clock = mock.clock(on, { now: DAY9_NOW })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.complete', () => ({ text: '' }))
+  on('command.register', (_, e) => (e.name in taken ? { deny: taken[e.name] } : { value: { command: e.name } }))
+  on('process.run', (_, e) => {
+    const verb = e.argv[3]
+    if (verb === 'mod-command') told.push(JSON.parse(e.init?.stdin ?? '{}'))
+    if (verb === 'doctor') return { value: ok(DOCTOR_CLASH) }
+    if (verb !== 'screen') return { value: ok('') }
+    reads += 1
+    return { value: json({ ...screen, command_clash: held(reads) }) }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await clock.settle()
+  await $.turn.complete(TURN)
+  await clock.settle()
+  const clash = (await ui.find({ type: 'Text', text: /✗/ }))?.text ?? null
+  const state = (await ui.find({ type: 'Text', text: /start text/ }))?.text ?? null
+  await ui.unmount()
+  return { told, clash, state, reads }
+}
+
+const drawnMarks = (told: { shown?: boolean }[]) => told.filter(record => record.shown === true).length
+
+test('the first session that finds a clash shows its line and tells the step the band drew it', async ($, on) => {
+  const seen = await clashSession($, on, { hub: USERS_HUB }, () => null)
+
+  expect(seen.clash).toBe(CLASH_LINE)
+  expect(seen.state).toBeNull()
+  expect(seen.told[0]).toEqual({ used: 'hub-flags', refused: { hub: "it is the user's /hub" } })
+  expect(drawnMarks(seen.told)).toBe(1)
+})
+
+test('a first session keeps its line while later reads return the record it just marked as drawn', async ($, on) => {
+  const seen = await clashSession($, on, { hub: USERS_HUB }, read => (read === 1 ? null : HELD_CLASH))
+
+  expect(seen.reads).toBe(2)
+  expect(seen.clash).toBe(CLASH_LINE)
+})
+
+test('an offer that keeps the clash line away in the first session leaves the clash new for the next one', async ($, on) => {
+  const seen = await clashSession($, on, { hub: USERS_HUB }, () => null, withBand({ notices: false }))
+
+  expect(seen.clash).toBeNull()
+  expect(seen.told).toEqual([{ used: 'hub-flags', refused: { hub: "it is the user's /hub" } }])
+  expect(drawnMarks(seen.told)).toBe(0)
+})
+
+test('a later session shows the line when the held clash was never drawn, as after an offer or a band that was off', async ($, on) => {
+  const seen = await clashSession($, on, { hub: USERS_HUB }, () => ({ ...HELD_CLASH, shown: false }))
+
+  expect(seen.clash).toBe(CLASH_LINE)
+  expect(drawnMarks(seen.told)).toBe(1)
+})
+
+test('a later session with a clash the band already drew shows the state line, and /hub-flags doctor still names it', async ($, on) => {
+  const seen = await clashSession($, on, { hub: USERS_HUB }, () => HELD_CLASH)
+
+  expect(seen.clash).toBeNull()
+  expect(seen.state).toBe('10 on · start text 1.2k')
+  // The step still gets the clash, so its record stays and the doctor keeps naming it.
+  expect(seen.told).toEqual([{ used: 'hub-flags', refused: { hub: "it is the user's /hub" } }])
+  expect((await $.command.run({ command: 'hub-flags', args: 'doctor' })).text).toBe(DOCTOR_CLASH.trimEnd())
+})
+
+test('a clash that changed since the band drew it shows the line again', async ($, on) => {
+  const seen = await clashSession($, on, { hub: '"/hub" refused: it is the project\'s /hub' }, () => HELD_CLASH)
+
+  expect(seen.clash).toBe("✗ /hub is taken (it is the project's /hub), so hub uses /hub-flags")
+  expect(seen.state).toBeNull()
+})
+
+test('when the first screen read fails, the band can not tell an old clash from a new one, so it shows the line', async ($, on) => {
+  let screens = 0
+  const clock = mock.clock(on, { now: DAY9_NOW })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.complete', () => ({ text: '' }))
+  on('command.register', (_, e) => (e.name === 'hub' ? { deny: USERS_HUB } : { value: { command: e.name } }))
+  on('process.run', (_, e) => {
+    if (e.argv[3] !== 'screen') return { value: ok('') }
+    screens += 1
+    const held = json({ ...QUIET, command_clash: HELD_CLASH })
+    return { value: screens === 1 ? { exitCode: 1, stdout: '', stderr: 'hub: busy\n' } : held }
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.turn.complete(TURN)
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(screens).toBe(2)
+  expect((await ui.find({ type: 'Text', text: /✗/ }))?.text).toBe(CLASH_LINE)
+  await ui.unmount()
+})
+
+test('when /hub and /hub-flags are both taken, every session shows the clash line, even after the band drew it', async ($, on) => {
+  const both = { ...HELD_CLASH, used: null, refused: { hub: "it is the user's /hub", 'hub-flags': "it is the user's /hub-flags" } }
+  const seen = await clashSession($, on, { hub: USERS_HUB, 'hub-flags': USERS_HUB_FLAGS }, () => both)
+
+  expect(seen.clash).toBe(
+    "✗ /hub is taken (it is the user's /hub), and so is /hub-flags. Rename the other /hub, then use /hub in Claude Code",
+  )
+  expect(seen.state).toBeNull()
+})
+
 // Every origin PromptOrigin names that is not the user at the prompt or through the bridge.
 const NOT_TYPED: PromptOrigin[] = [
   { kind: 'sdk' },

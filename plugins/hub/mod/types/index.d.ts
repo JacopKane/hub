@@ -27,7 +27,8 @@ export type HubBandFlags = {
 }
 
 // What the mod's last session start found, as the step keeps it for the doctor.
-export type HubCommandClash = { used: string | null; refused: Record<string, string>; folder: string; time: string }
+// shown says the band drew the clash line. A record from before 0.20.7 has no shown.
+export type HubCommandClash = { used: string | null; refused: Record<string, string>; folder: string; time: string; shown?: boolean }
 
 // The band's chats zone: the other chats in full, folded to counters and one entry per chat, with
 // their width in terminal cells and whether the chat asks (those come first), and the question of
@@ -130,6 +131,6 @@ export type HubRelay = { hub: boolean; waiting: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    hub: { band: HubBand; now: number; command: HubCommand; relay: HubRelay; tried: string; picker: HubPicker }
+    hub: { band: HubBand; now: number; command: HubCommand; clashNew: boolean | null; clashDrawn: boolean; relay: HubRelay; tried: string; picker: HubPicker }
   }
 }
