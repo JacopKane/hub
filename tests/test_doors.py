@@ -543,6 +543,18 @@ def test_when_claude_code_refuses_hub_the_doctor_names_the_clash_and_the_name_th
         assert home.work in lines[0]
     with and_("the screen model holds the clash, so the mod can clear it later"):
         assert screen(home)["command_clash"]["used"] == "hub-flags"
+    with and_("the record says the band has not drawn the clash line yet, so the next band shows it"):
+        assert screen(home)["command_clash"]["shown"] is False
+    with when("the band draws the line, and a later session finds the same clash"):
+        mod_command(home, {"used": "hub-flags", "refused": {"hub": "it is the user's /hub"}, "shown": True})
+        mod_command(home, {"used": "hub-flags", "refused": {"hub": "it is the user's /hub"}})
+    with then("the record keeps the mark, so that session's band stays quiet, and the doctor still names it"):
+        assert screen(home)["command_clash"]["shown"] is True
+        assert len(clash_lines(home)) == 1 and "/hub-flags" in clash_lines(home)[0]
+    with when("a session finds the clash with another reason"):
+        mod_command(home, {"used": "hub-flags", "refused": {"hub": "it is the project's /hub"}})
+    with then("the changed clash starts without the mark, so the band shows it again"):
+        assert screen(home)["command_clash"]["shown"] is False
     with when("the fallback name is taken too"):
         mod_command(home, {"used": None, "refused": {"hub": "it is the user's /hub",
                                                     "hub-flags": "it is the user's /hub-flags"}})
@@ -565,6 +577,12 @@ def test_mod_command_refuses_input_that_is_not_its_record(home):
                        stdin="[1, 2]", check=False)
     with then("it exits 1, says what it takes, and writes nothing"):
         assert bad.returncode == 1 and "used" in bad.stderr
+        assert screen(home)["command_clash"] is None
+    with when("the shown mark is not true or false"):
+        odd = home.run([sys.executable, os.path.join(home.plugin, "lib", "hub_switch.py"), "mod-command", "--json"],
+                       stdin=json.dumps({"used": "hub-flags", "refused": {"hub": "taken"}, "shown": "yes"}), check=False)
+    with then("it is refused the same way"):
+        assert odd.returncode == 1 and "shown" in odd.stderr
         assert screen(home)["command_clash"] is None
 
 

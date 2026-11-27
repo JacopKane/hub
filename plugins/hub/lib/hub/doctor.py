@@ -110,20 +110,26 @@ def cursor_gaps(data=None):
 def note_command(record, folder):
     """Keep what the mod's last session start found: the name it got, and each name refused and why.
 
-    A record with nothing refused clears the clash.
+    A record with nothing refused clears the clash. "shown": true says the band drew the clash line,
+    so later sessions with the same clash leave it to the doctor. The mark stays while the clash
+    stays the same, and a changed clash starts without it.
     """
     if not isinstance(record, dict):
         record = {"refused": None}
-    used, refused = record.get("used"), record.get("refused")
+    used, refused, shown = record.get("used"), record.get("refused"), record.get("shown", False)
     if not (used is None or isinstance(used, str)) or not isinstance(refused, dict) or not all(
-            isinstance(name, str) and isinstance(reason, str) for name, reason in refused.items()):
-        raise ValueError('mod-command takes {"used": a name or null, "refused": {name: reason}}')
+            isinstance(name, str) and isinstance(reason, str) for name, reason in refused.items()) or not isinstance(
+            shown, bool):
+        raise ValueError('mod-command takes {"used": a name or null, "refused": {name: reason}, "shown": true or false}')
     path = files.state_path(COMMAND_RECORD)
     if not refused:
         if os.path.exists(path):
             os.remove(path)
         return None
-    kept = {"used": used, "refused": refused, "folder": folder, "time": resolve.now()}
+    held = command_clash()
+    same = held is not None and held.get("used") == used and held.get("refused") == refused
+    kept = {"used": used, "refused": refused, "folder": folder, "time": resolve.now(),
+            "shown": shown or (same and held.get("shown") is True)}
     files.write_json(path, kept)
     return kept
 
